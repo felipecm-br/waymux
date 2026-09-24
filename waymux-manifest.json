@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "waymux",
+  "version": "0.1.0",
+  "description": "Terminal AI Multiplexer Stack · low-latency · sleek · robust",
+  "engines": {
+    "acpd": {
+      "repo": "fcmiranda/acpd",
+      "version": "v0.1.0",
+      "binary": "acpd",
+      "targets": [
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu"
+      ]
+    },
+    "waymaker": {
+      "repo": "fcmiranda/waymaker",
+      "version": "v0.1.0",
+      "binary": "wm",
+      "targets": [
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc"
+      ]
+    },
+    "lazygitrs": {
+      "repo": "fcmiranda/lazygitrs",
+      "version": "v0.1.0-cockpit",
+      "binary": "lazygitrs",
+      "targets": [
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  }
+}

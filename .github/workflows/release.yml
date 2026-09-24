@@ -1,0 +1,83 @@
+name: Release waymux
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  bundle-and-release:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os_name: linux
+          - target: aarch64-unknown-linux-musl
+            os_name: linux
+          - target: aarch64-apple-darwin
+            os_name: darwin
+          - target: x86_64-apple-darwin
+            os_name: darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract Tag & Version
+        id: vars
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble Distribution Bundle
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.vars.outputs.tag }}"
+          TARGET="${{ matrix.target }}"
+          BUNDLE_DIR="waymux-${TAG}-${TARGET}"
+          mkdir -p "${BUNDLE_DIR}/bin" "${BUNDLE_DIR}/scripts" "${BUNDLE_DIR}/tmux" "${BUNDLE_DIR}/systemd" "${BUNDLE_DIR}/hooks"
+
+          # 1. Download Tier 1 Binaries
+          # acpd (Linux only)
+          if [[ "${{ matrix.os_name }}" == "linux" ]]; then
+            curl -fsSL "https://github.com/fcmiranda/acpd/releases/download/v0.1.0/acpd-v0.1.0-${TARGET}.tar.gz" -o acpd.tar.gz
+            tar -xzf acpd.tar.gz -C "${BUNDLE_DIR}/bin" acpd
+          fi
+
+          # waymaker (wm)
+          curl -fsSL "https://github.com/fcmiranda/waymaker/releases/download/v0.1.0/wm-v0.1.0-${TARGET}.tar.gz" -o wm.tar.gz
+          tar -xzf wm.tar.gz -C "${BUNDLE_DIR}/bin" wm
+
+          # lazygitrs
+          curl -fsSL "https://github.com/fcmiranda/lazygitrs/releases/download/v0.1.0-cockpit/lazygitrs-v0.1.0-cockpit-${TARGET}.tar.gz" -o lazygitrs.tar.gz
+          tar -xzf lazygitrs.tar.gz -C "${BUNDLE_DIR}/bin" lazygitrs
+
+          # 2. Add Sesh drop-in compatibility symlink
+          (cd "${BUNDLE_DIR}/bin" && ln -sf wm sesh)
+
+          # 3. Copy scripts, tmux plugin, systemd unit, hooks, install script
+          cp -r scripts/* "${BUNDLE_DIR}/scripts/"
+          cp -r tmux/* "${BUNDLE_DIR}/tmux/"
+          cp -r systemd/* "${BUNDLE_DIR}/systemd/"
+          cp -r hooks/* "${BUNDLE_DIR}/hooks/"
+          cp install.sh README.md LICENSE "${BUNDLE_DIR}/"
+
+          # 4. Create archive and compute sha256 checksum
+          ARCHIVE="${BUNDLE_DIR}.tar.gz"
+          tar -czf "${ARCHIVE}" "${BUNDLE_DIR}"
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+      - name: Upload Artifact to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            waymux-${{ steps.vars.outputs.tag }}-${{ matrix.target }}.tar.gz
+            waymux-${{ steps.vars.outputs.tag }}-${{ matrix.target }}.tar.gz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
