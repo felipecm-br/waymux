@@ -113,4 +113,4 @@ Unlike traditional tools that pollute project root folders with `.lines.json` or
 
 ## 📜 License
 
-MIT © [Fabricio Miranda](LICENSE)
+MIT © [Felipe Miranda](LICENSE)
