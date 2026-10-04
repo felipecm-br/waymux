@@ -73,7 +73,7 @@ info "Detected environment: $OS ($TARGET_ARCH)"
 
 # 3. Pinned Versions (Tier 1 Engines)
 ACPD_VERSION="v0.1.0"
-WAYMAKER_VERSION="v0.1.0"
+WAYMAKER_VERSION="v0.2.0"
 LAZYGITRS_VERSION="v0.1.0-cockpit"
 
 TEMP_DIR="$(mktemp -d /tmp/waymux-install-XXXXXX)"

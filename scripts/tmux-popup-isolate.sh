@@ -64,7 +64,15 @@ AI_STATE="$(tmux display-message -p '#{@ai_agent_state_raw}' 2>/dev/null || echo
 
 if [[ "$AI_STATE" != "busy" && "$AI_STATE" != "working" ]]; then
     # Zero overhead: spawn popup directly without backdrop pane creation
-    exec tmux display-popup "${POPUP_ARGS[@]}" "${CMD_ARGS[@]}"
+    tmux display-popup "${POPUP_ARGS[@]}" "${CMD_ARGS[@]}" || {
+        rc=$?
+        # SIGHUP (129), SIGINT (130), or cancel (1) are standard popup termination statuses
+        if [[ $rc -eq 129 || $rc -eq 130 || $rc -eq 1 ]]; then
+            exit 0
+        fi
+        exit "$rc"
+    }
+    exit 0
 fi
 
 # 3. Active AI Streaming: Create isolated frozen snapshot backdrop
@@ -100,6 +108,9 @@ cleanup() {
             tmux resize-pane -Z -t "$CURRENT_PANE" 2>/dev/null || true
         fi
     fi
+    if [[ $exit_code -eq 129 || $exit_code -eq 130 || $exit_code -eq 1 ]]; then
+        exit 0
+    fi
     exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
@@ -112,4 +123,5 @@ if [[ -n "$BACKDROP_PANE" ]]; then
 fi
 
 # Run popup over frozen snapshot
-tmux display-popup "${POPUP_ARGS[@]}" "${CMD_ARGS[@]}"
+tmux display-popup "${POPUP_ARGS[@]}" "${CMD_ARGS[@]}" || true
+exit 0

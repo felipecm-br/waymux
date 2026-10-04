@@ -5,6 +5,14 @@ All notable changes to **waymux** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-04
+
+### Changed
+- **Waymaker Engine Bump**: Upgraded `waymaker` (`wm`) to `v0.2.0` with enhanced session matching and Nucleo optimizations.
+- **Dynamic Release Asset Resolution**: Refactored `.github/workflows/release.yml` to dynamically resolve engine repositories and pinned versions from `waymux-manifest.json` via `jq`.
+- **Hardened Popup Isolation**: Synchronized `scripts/tmux-popup-isolate.sh` with graceful exit code handling (`129`, `130`, `1`) to eliminate spurious termination errors on popup dismiss/cancel.
+- **Release Matrix Refinement**: Streamlined release targets to match upstream binary availability (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`, `aarch64-apple-darwin`).
+
 ## [0.1.0] - 2026-09-24
 
 ### Added

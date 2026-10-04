@@ -21,8 +21,6 @@ jobs:
             os_name: linux
           - target: aarch64-apple-darwin
             os_name: darwin
-          - target: x86_64-apple-darwin
-            os_name: darwin
 
     steps:
       - uses: actions/checkout@v4
@@ -43,19 +41,27 @@ jobs:
           BUNDLE_DIR="waymux-${TAG}-${TARGET}"
           mkdir -p "${BUNDLE_DIR}/bin" "${BUNDLE_DIR}/scripts" "${BUNDLE_DIR}/tmux" "${BUNDLE_DIR}/systemd" "${BUNDLE_DIR}/hooks"
 
+          # Read pinned engine repos & versions from waymux-manifest.json
+          ACPD_REPO="$(jq -r '.engines.acpd.repo' waymux-manifest.json)"
+          ACPD_VER="$(jq -r '.engines.acpd.version' waymux-manifest.json)"
+          WM_REPO="$(jq -r '.engines.waymaker.repo' waymux-manifest.json)"
+          WM_VER="$(jq -r '.engines.waymaker.version' waymux-manifest.json)"
+          LZG_REPO="$(jq -r '.engines.lazygitrs.repo' waymux-manifest.json)"
+          LZG_VER="$(jq -r '.engines.lazygitrs.version' waymux-manifest.json)"
+
           # 1. Download Tier 1 Binaries
           # acpd (Linux only)
           if [[ "${{ matrix.os_name }}" == "linux" ]]; then
-            curl -fsSL "https://github.com/fcmiranda/acpd/releases/download/v0.1.0/acpd-v0.1.0-${TARGET}.tar.gz" -o acpd.tar.gz
+            curl -fsSL "https://github.com/${ACPD_REPO}/releases/download/${ACPD_VER}/acpd-${ACPD_VER}-${TARGET}.tar.gz" -o acpd.tar.gz
             tar -xzf acpd.tar.gz -C "${BUNDLE_DIR}/bin" acpd
           fi
 
           # waymaker (wm)
-          curl -fsSL "https://github.com/fcmiranda/waymaker/releases/download/v0.1.0/wm-v0.1.0-${TARGET}.tar.gz" -o wm.tar.gz
+          curl -fsSL "https://github.com/${WM_REPO}/releases/download/${WM_VER}/wm-${WM_VER}-${TARGET}.tar.gz" -o wm.tar.gz
           tar -xzf wm.tar.gz -C "${BUNDLE_DIR}/bin" wm
 
           # lazygitrs
-          curl -fsSL "https://github.com/fcmiranda/lazygitrs/releases/download/v0.1.0-cockpit/lazygitrs-v0.1.0-cockpit-${TARGET}.tar.gz" -o lazygitrs.tar.gz
+          curl -fsSL "https://github.com/${LZG_REPO}/releases/download/${LZG_VER}/lazygitrs-${LZG_VER}-${TARGET}.tar.gz" -o lazygitrs.tar.gz
           tar -xzf lazygitrs.tar.gz -C "${BUNDLE_DIR}/bin" lazygitrs
 
           # 2. Add Sesh drop-in compatibility symlink

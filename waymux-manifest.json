@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "waymux",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Terminal AI Multiplexer Stack · low-latency · sleek · robust",
   "engines": {
     "acpd": {
@@ -17,13 +17,12 @@
     },
     "waymaker": {
       "repo": "fcmiranda/waymaker",
-      "version": "v0.1.0",
+      "version": "v0.2.0",
       "binary": "wm",
       "targets": [
         "x86_64-unknown-linux-musl",
         "aarch64-unknown-linux-musl",
         "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
         "x86_64-pc-windows-msvc"
       ]
     },
