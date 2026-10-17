@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# waymux.tmux: TPM-compliant plugin & configuration loader for the waymux stack
+# waymux.tmux: TPM-compliant plugin & configuration loader for the Waymux AI Cockpit Stack
 set -euo pipefail
-
-CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPTS_DIR="$(cd "$CURRENT_DIR/../scripts" 2>/dev/null && pwd || echo "$HOME/.local/share/waymux/scripts")"
-ISOLATOR="$SCRIPTS_DIR/tmux-popup-isolate.sh"
 
 get_tmux_option() {
     local option="$1"
@@ -18,43 +14,47 @@ get_tmux_option() {
     fi
 }
 
-set_tmux_option() {
-    local option="$1"
-    local value="$2"
-    tmux set-option -gq "$option" "$value"
-}
+# 1. Event-driven status bar (0% idle CPU polling)
+tmux set-option -gq status-interval 0
 
-# 1. Keybindings Configuration
-# Diff & Code Review: default Ctrl+G (table root)
+# 2. Auto-dismiss agent attention badges when focusing a pane
+tmux set-hook -g pane-focus-in 'run-shell -b "waymux dismiss #{pane_id} >/dev/null 2>&1 || true"'
+
+# 3. Keybindings Configuration (Home-Row Anchored, H=0)
+# Cockpit HUD: default Prefix + Space
+KEY_COCKPIT=$(get_tmux_option "@waymux_key_cockpit" "Space")
+if [[ -n "$KEY_COCKPIT" ]]; then
+    tmux bind-key "$KEY_COCKPIT" if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-shell "waymux cockpit"'
+fi
+
+# Alert Triage Popup: default Prefix + i
+KEY_TRIAGE_POPUP=$(get_tmux_option "@waymux_key_triage_popup" "i")
+if [[ -n "$KEY_TRIAGE_POPUP" ]]; then
+    tmux bind-key "$KEY_TRIAGE_POPUP" if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-shell "waymux triage --popup"'
+fi
+
+# Alert Triage Jump (Zero-Modal): default Prefix + I and Ctrl+Shift+I
+KEY_TRIAGE_JUMP=$(get_tmux_option "@waymux_key_triage_jump" "I")
+if [[ -n "$KEY_TRIAGE_JUMP" ]]; then
+    tmux bind-key "$KEY_TRIAGE_JUMP" run-shell "waymux triage --jump"
+fi
+tmux bind-key -n 'C-S-i' run-shell "waymux triage --jump"
+tmux bind-key -n 'C-S-I' run-shell "waymux triage --jump"
+
+# Diff & Code Review: default Ctrl+G (root table)
 KEY_DIFF=$(get_tmux_option "@waymux_key_diff" "C-g")
-if [[ -n "$KEY_DIFF" && -x "$ISOLATOR" ]]; then
-    tmux bind-key -n "$KEY_DIFF" run-shell "$ISOLATOR -w 90% -h 88% lazygitrs"
+if [[ -n "$KEY_DIFF" ]] && command -v lazygitrs >/dev/null 2>&1; then
+    tmux bind-key -n "$KEY_DIFF" display-popup -E -w 90% -h 88% -b rounded -d "#{pane_current_path}" "lazygitrs"
 fi
 
 # Workspace / Session Switcher: default Prefix + s
 KEY_SESSION=$(get_tmux_option "@waymux_key_session" "s")
-if [[ -n "$KEY_SESSION" && -x "$ISOLATOR" ]]; then
-    tmux bind-key "$KEY_SESSION" run-shell "$ISOLATOR -w 75% -h 60% wm session"
+if [[ -n "$KEY_SESSION" ]] && command -v wm >/dev/null 2>&1; then
+    tmux bind-key "$KEY_SESSION" display-popup -E -w 75% -h 60% -b rounded "wm session"
 fi
 
-# Quick Jump to Last Session: default Prefix + C-j
-KEY_LAST=$(get_tmux_option "@waymux_key_last" "C-j")
+# Quick Jump to Last Session: default Prefix + L
+KEY_LAST=$(get_tmux_option "@waymux_key_last" "L")
 if [[ -n "$KEY_LAST" ]]; then
-    tmux bind-key "$KEY_LAST" run-shell "wm connect --last 2>/dev/null || true"
+    tmux bind-key "$KEY_LAST" switch-client -l
 fi
-
-# 2. Status Bar Format Interpolation
-# Replaces #{waymux_status} and #{waymux_spinner} with live broker options
-update_status_option() {
-    local option_name="$1"
-    local option_val
-    option_val=$(tmux show-option -gqv "$option_name")
-    if [[ "$option_val" == *"#{waymux_status}"* || "$option_val" == *"#{waymux_spinner}"* ]]; then
-        option_val="${option_val//\#\{waymux_status\}/\#{@ai_agent_status\}}"
-        option_val="${option_val//\#\{waymux_spinner\}/\#{@ai_agent_spinner\}}"
-        tmux set-option -gq "$option_name" "$option_val"
-    fi
-}
-
-update_status_option "status-right"
-update_status_option "status-left"

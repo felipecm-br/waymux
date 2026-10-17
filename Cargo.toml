@@ -1,0 +1,34 @@
+[package]
+name = "waymux"
+version = "0.2.0"
+edition = "2024"
+default-run = "waymux"
+description = "Autonomous Terminal AI Cockpit, Orchestrator CLI & JSON-RPC Control Plane Daemon"
+license = "MIT"
+repository = "https://github.com/felipecm-br/waymux"
+
+[lib]
+name = "waymux"
+path = "src/lib.rs"
+
+[[bin]]
+name = "waymux"
+path = "src/main.rs"
+
+[[bin]]
+name = "acpd"
+path = "src/bin/acpd.rs"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1.89"
+axum = "0.8"
+nix = { version = "0.29", features = ["signal", "fs", "user"] }
+sd-notify = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.150"
+tokio = { version = "1.52.3", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-journald = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

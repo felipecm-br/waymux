@@ -1,4 +1,4 @@
-name: Release waymux
+name: Release waymux & acpd
 
 on:
   push:
@@ -9,81 +9,44 @@ permissions:
   contents: write
 
 jobs:
-  bundle-and-release:
+  create-release:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/create-gh-release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-assets:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Linux x86_64 (musl - fully static standalone binary)
           - target: x86_64-unknown-linux-musl
-            os_name: linux
+            os: ubuntu-latest
+          # Linux ARM64 (musl - fully static standalone binary)
           - target: aarch64-unknown-linux-musl
-            os_name: linux
-          - target: aarch64-apple-darwin
-            os_name: darwin
-
+            os: ubuntu-latest
+          # Linux x86_64 (gnu - standard glibc)
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          # Linux ARM64 (gnu - standard glibc)
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Extract Tag & Version
-        id: vars
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Assemble Distribution Bundle
-        run: |
-          set -euo pipefail
-          TAG="${{ steps.vars.outputs.tag }}"
-          TARGET="${{ matrix.target }}"
-          BUNDLE_DIR="waymux-${TAG}-${TARGET}"
-          mkdir -p "${BUNDLE_DIR}/bin" "${BUNDLE_DIR}/scripts" "${BUNDLE_DIR}/tmux" "${BUNDLE_DIR}/systemd" "${BUNDLE_DIR}/hooks"
-
-          # Read pinned engine repos & versions from waymux-manifest.json
-          ACPD_REPO="$(jq -r '.engines.acpd.repo' waymux-manifest.json)"
-          ACPD_VER="$(jq -r '.engines.acpd.version' waymux-manifest.json)"
-          WM_REPO="$(jq -r '.engines.waymaker.repo' waymux-manifest.json)"
-          WM_VER="$(jq -r '.engines.waymaker.version' waymux-manifest.json)"
-          LZG_REPO="$(jq -r '.engines.lazygitrs.repo' waymux-manifest.json)"
-          LZG_VER="$(jq -r '.engines.lazygitrs.version' waymux-manifest.json)"
-
-          # 1. Download Tier 1 Binaries
-          # acpd (Linux only)
-          if [[ "${{ matrix.os_name }}" == "linux" ]]; then
-            curl -fsSL "https://github.com/${ACPD_REPO}/releases/download/${ACPD_VER}/acpd-${ACPD_VER}-${TARGET}.tar.gz" -o acpd.tar.gz
-            tar -xzf acpd.tar.gz -C "${BUNDLE_DIR}/bin" acpd
-          fi
-
-          # waymaker (wm)
-          curl -fsSL "https://github.com/${WM_REPO}/releases/download/${WM_VER}/wm-${WM_VER}-${TARGET}.tar.gz" -o wm.tar.gz
-          tar -xzf wm.tar.gz -C "${BUNDLE_DIR}/bin" wm
-
-          # lazygitrs
-          curl -fsSL "https://github.com/${LZG_REPO}/releases/download/${LZG_VER}/lazygitrs-${LZG_VER}-${TARGET}.tar.gz" -o lazygitrs.tar.gz
-          tar -xzf lazygitrs.tar.gz -C "${BUNDLE_DIR}/bin" lazygitrs
-
-          # 2. Add Sesh drop-in compatibility symlink
-          (cd "${BUNDLE_DIR}/bin" && ln -sf wm sesh)
-
-          # 3. Copy scripts, tmux plugin, systemd unit, hooks, install script
-          cp -r scripts/* "${BUNDLE_DIR}/scripts/"
-          cp -r tmux/* "${BUNDLE_DIR}/tmux/"
-          cp -r systemd/* "${BUNDLE_DIR}/systemd/"
-          cp -r hooks/* "${BUNDLE_DIR}/hooks/"
-          cp install.sh README.md LICENSE "${BUNDLE_DIR}/"
-
-          # 4. Create archive and compute sha256 checksum
-          ARCHIVE="${BUNDLE_DIR}.tar.gz"
-          tar -czf "${ARCHIVE}" "${BUNDLE_DIR}"
-          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
-
-      - name: Upload Artifact to Release
-        uses: softprops/action-gh-release@v2
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          files: |
-            waymux-${{ steps.vars.outputs.tag }}-${{ matrix.target }}.tar.gz
-            waymux-${{ steps.vars.outputs.tag }}-${{ matrix.target }}.tar.gz.sha256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          targets: ${{ matrix.target }}
+      - name: Build and Upload waymux Binary Assets
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: waymux,acpd
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}

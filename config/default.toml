@@ -1,0 +1,50 @@
+# default.toml — reference configuration for acpd
+
+listen_addr = "127.0.0.1"
+port = 4040
+pid_file = "/tmp/acpd.pid"
+shutdown_timeout_secs = 30
+log_level = "info"
+
+# Delay in milliseconds before sending the 'idle' state.
+# This debouncing prevents status icon flickering when the AI issues tool calls in rapid succession.
+idle_debounce_ms = 0
+
+[theme]
+active_spinner = "dot"
+
+[theme.states.idle]
+icon = "󱥂"
+color = "#94e2d5"
+
+[theme.states.busy]
+icon = "󰝲"
+color = "#f9e2af"
+
+[theme.states.question]
+icon = "󱜻"
+color = "#cba6f7"
+
+[theme.states.permission]
+icon = "󱅭"
+color = "#f38ba8"
+
+[theme.states.error]
+icon = "󰨄"
+color = "#f38ba8"
+[spinners]
+minidot = { interval = 83, frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] }
+line = { interval = 100, frames = ["|", "/", "-", "\\"] }
+jump = { interval = 100, frames = ["⢄", "⢂", "⢁", "⡁", "⡈", "⡐", "⡠"] }
+pulse = { interval = 125, frames = ["█", "▓", "▒", "░"] }
+points = { interval = 143, frames = ["∙∙∙", "●∙∙", "∙●∙", "∙∙●"] }
+meter = { interval = 143, frames = ["▱▱▱", "▰▱▱", "▰▰▱", "▰▰▰", "▰▰▱", "▰▱▱", "▱▱▱"] }
+hamburger = { interval = 333, frames = ["☱", "☲", "☴", "☲"] }
+ellipsis = { interval = 333, frames = ["·", "..", "...", ".."] }
+globe = { interval = 250, frames = ["🌍", "🌎", "🌏"] }
+moon = { interval = 125, frames = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"] }
+monkey = { interval = 333, frames = ["🙈", "🙉", "🙊"] }
+arc = { interval = 150, frames = ["◜", "◠", "◝", "◞", "◡", "◟"] }
+nerd = { interval = 100, frames = [" ", " ", " ", " "] }
+nerdarc = { interval = 120, frames = ["◜", " ", "◝", "◞", "◡", "◟", " "] }
+dot = { interval = 100, frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] }

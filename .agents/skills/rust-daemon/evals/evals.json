@@ -1,0 +1,23 @@
+{
+  "skill_name": "rust-daemon",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need to build a Rust daemon called 'logwatchd' that monitors a directory for new log files and sends desktop notifications when error patterns are found. It should run as a systemd service, support config reload via SIGHUP, and shut down gracefully on SIGTERM. Use tracing for logging and load its config from a TOML file at /etc/logwatchd/config.toml.",
+      "expected_output": "A complete Rust project with main.rs, config module, signal handling, systemd unit file, TOML config template, and tracing-based logging. Should compile and follow daemon best practices.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I have an existing Rust HTTP server using axum that listens on port 3000. I need to daemonize it — add systemd integration with Type=notify and watchdog support, a health check endpoint at /health, PID file management, and graceful shutdown that drains in-flight HTTP requests before exiting. The binary is called 'api-gateway'.",
+      "expected_output": "Modified project with sd_notify integration, watchdog pinging, /health endpoint, PID file handling, graceful shutdown with connection draining, and a production-ready systemd unit file with security hardening.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Create a Rust daemon that uses systemd socket activation to accept TCP connections on port 9090. It should be a simple echo server — read lines from clients and echo them back. Generate both the .service and .socket unit files. Make sure it falls back to binding its own socket when not launched via systemd.",
+      "expected_output": "A Rust project with socket activation support (reading LISTEN_FDS), fallback socket binding, both .service and .socket systemd unit files, and basic TCP echo server logic using tokio.",
+      "files": []
+    }
+  ]
+}

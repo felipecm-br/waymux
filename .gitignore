@@ -1,7 +1,5 @@
-# waymux gitignore
+/target
+/dist
 *.tar.gz
-*.tar.gz.sha256
-*.log
-/tmp/
-dist/
+*.sha256
 .DS_Store

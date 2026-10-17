@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "waymux",
   "version": "0.2.0",
-  "description": "Terminal AI Multiplexer Stack · low-latency · sleek · robust",
+  "description": "Autonomous Terminal AI Cockpit, Orchestrator CLI & JSON-RPC Control Plane Daemon",
   "engines": {
-    "acpd": {
-      "repo": "fcmiranda/acpd",
-      "version": "v0.1.0",
-      "binary": "acpd",
+    "waymux": {
+      "repo": "felipecm-br/waymux",
+      "version": "v0.2.0",
+      "binary": "waymux",
       "targets": [
         "x86_64-unknown-linux-musl",
         "aarch64-unknown-linux-musl",
@@ -16,7 +16,7 @@
       ]
     },
     "waymaker": {
-      "repo": "fcmiranda/waymaker",
+      "repo": "felipecm-br/waymaker",
       "version": "v0.2.0",
       "binary": "wm",
       "targets": [
@@ -27,7 +27,7 @@
       ]
     },
     "lazygitrs": {
-      "repo": "fcmiranda/lazygitrs",
+      "repo": "felipecm-br/lazygitrs",
       "version": "v0.1.0-cockpit",
       "binary": "lazygitrs",
       "targets": [
