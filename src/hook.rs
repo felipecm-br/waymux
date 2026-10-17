@@ -315,7 +315,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
             .ok()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "waymux".to_string());
-        let notify_cmd = format!("{} inject \"{}\" {{prompt}}", exe_str, workspace_path);
+        let notify_cmd = format!("{} inject \"{}\" {{{{prompt}}}}", exe_str, workspace_path);
 
         if let Some((200, sdata)) = http_get_json(initial_port, "/session-api/session", 60) {
             let ws_match = sdata
