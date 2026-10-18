@@ -69,3 +69,6 @@ cargo test
 2. **Use `anyhow::Result` & Safe Error Handling:** Avoid `.unwrap()` in production code paths; handle missing files, dead PIDs, or unreachable sockets gracefully.
 3. **Flush Before Piping:** When printing Rust headers before spawning child processes that inherit stdout (e.g., `delta` or `bat` in `cockpit/diff.rs`), always call `std::io::stdout().flush()` first.
 4. **Atomic Commits:** Keep commits focused, tested, and formatted.
+5. **Storage & Worktree Hygiene:**
+   - Before finishing any task, remove temporary files or scratch worktrees created during the task, and only those. Never delete files or worktrees you did not create without asking the user.
+   - `target/` grows without bound as Rust test binaries accumulate across edits. Run `cargo clean` in completed feature worktrees and after every release (once `./scripts/update-daemon.sh` has installed the updated binaries).
