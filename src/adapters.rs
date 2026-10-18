@@ -789,14 +789,52 @@ impl SoundAdapter {
         path.to_string()
     }
 
+    /// Per-user config directories searched for sound overrides, in priority order.
+    /// `acpd` is the legacy (pre-waymux) directory, kept as a read-only fallback.
+    const SOUND_CONFIG_DIRS: [&'static str; 2] = ["waymux", "acpd"];
+
+    /// Pure helper: ordered search paths for `(mute markers, state pointer files, direct audio files)`.
+    /// Omarchy-managed files win, then `~/.config/waymux/sounds`, then legacy `~/.config/acpd/sounds`.
+    fn sound_search_paths(home: &str, event_type: &str) -> (Vec<String>, Vec<String>, Vec<String>) {
+        let mut mute_markers = vec![format!("{}/.config/omarchy/sounds/muted", home)];
+        let mut state_pointers = vec![format!(
+            "{}/.config/omarchy/sounds/ai-{}.sound",
+            home, event_type
+        )];
+        let mut direct_files = vec![
+            format!("{}/.config/omarchy/sounds/ai-{}.wav", home, event_type),
+            format!("{}/.config/omarchy/sounds/ai-{}.oga", home, event_type),
+        ];
+
+        for dir in Self::SOUND_CONFIG_DIRS {
+            mute_markers.push(format!("{}/.config/{}/sounds/muted", home, dir));
+            state_pointers.push(format!(
+                "{}/.config/{}/sounds/{}.sound",
+                home, dir, event_type
+            ));
+            direct_files.push(format!(
+                "{}/.config/{}/sounds/{}.wav",
+                home, dir, event_type
+            ));
+        }
+
+        if event_type == "response" {
+            state_pointers.push(format!("{}/.config/omarchy/sounds/ai-response.sound", home));
+            for dir in Self::SOUND_CONFIG_DIRS {
+                state_pointers.push(format!("{}/.config/{}/sounds/response.sound", home, dir));
+            }
+            direct_files.push(format!("{}/.config/omarchy/sounds/ai-response.wav", home));
+        }
+
+        (mute_markers, state_pointers, direct_files)
+    }
+
     fn resolve_sound_path(&self, event_type: &str) -> Option<String> {
         let home = std::env::var("HOME").ok()?;
+        let (mute_markers, state_pointers, direct_files) =
+            Self::sound_search_paths(&home, event_type);
 
         // Check explicit mute marker files
-        let mute_markers = [
-            format!("{}/.config/omarchy/sounds/muted", home),
-            format!("{}/.config/acpd/sounds/muted", home),
-        ];
         for marker in &mute_markers {
             if std::path::Path::new(marker).exists() {
                 return None;
@@ -804,15 +842,6 @@ impl SoundAdapter {
         }
 
         // 1. Check runtime state pointer files first (allows instant hot-switching without restart)
-        let mut state_pointers = vec![
-            format!("{}/.config/omarchy/sounds/ai-{}.sound", home, event_type),
-            format!("{}/.config/acpd/sounds/{}.sound", home, event_type),
-        ];
-        if event_type == "response" {
-            state_pointers.push(format!("{}/.config/omarchy/sounds/ai-response.sound", home));
-            state_pointers.push(format!("{}/.config/acpd/sounds/response.sound", home));
-        }
-
         for pointer in &state_pointers {
             if let Ok(content) = std::fs::read_to_string(pointer) {
                 let trimmed = content.trim();
@@ -834,15 +863,6 @@ impl SoundAdapter {
         }
 
         // 2. Check direct symlinks/files in user config
-        let mut direct_files = vec![
-            format!("{}/.config/omarchy/sounds/ai-{}.wav", home, event_type),
-            format!("{}/.config/omarchy/sounds/ai-{}.oga", home, event_type),
-            format!("{}/.config/acpd/sounds/{}.wav", home, event_type),
-        ];
-        if event_type == "response" {
-            direct_files.push(format!("{}/.config/omarchy/sounds/ai-response.wav", home));
-        }
-
         for path in &direct_files {
             if std::path::Path::new(path).is_file() {
                 return Some(path.clone());
@@ -1264,6 +1284,34 @@ mod tests {
         assert_eq!(resolved_resp, Some(resp_file.to_string_lossy().to_string()));
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_sound_search_paths_prefer_waymux_over_legacy_acpd() {
+        let (mute, pointers, direct) = SoundAdapter::sound_search_paths("/h", "question");
+
+        let idx = |v: &[String], needle: &str| v.iter().position(|p| p == needle);
+
+        // Mute markers: omarchy, waymux, then legacy acpd
+        let m_omarchy = idx(&mute, "/h/.config/omarchy/sounds/muted").unwrap();
+        let m_waymux = idx(&mute, "/h/.config/waymux/sounds/muted").unwrap();
+        let m_acpd = idx(&mute, "/h/.config/acpd/sounds/muted").unwrap();
+        assert!(m_omarchy < m_waymux && m_waymux < m_acpd);
+
+        // State pointers: waymux must outrank legacy acpd
+        let p_waymux = idx(&pointers, "/h/.config/waymux/sounds/question.sound").unwrap();
+        let p_acpd = idx(&pointers, "/h/.config/acpd/sounds/question.sound").unwrap();
+        assert!(p_waymux < p_acpd);
+
+        // Direct files: waymux must outrank legacy acpd
+        let d_waymux = idx(&direct, "/h/.config/waymux/sounds/question.wav").unwrap();
+        let d_acpd = idx(&direct, "/h/.config/acpd/sounds/question.wav").unwrap();
+        assert!(d_waymux < d_acpd);
+
+        // The `response` event additionally exposes the shared response pointer in both dirs
+        let (_, resp_ptrs, _) = SoundAdapter::sound_search_paths("/h", "response");
+        assert!(idx(&resp_ptrs, "/h/.config/waymux/sounds/response.sound").is_some());
+        assert!(idx(&resp_ptrs, "/h/.config/acpd/sounds/response.sound").is_some());
     }
 
     #[test]

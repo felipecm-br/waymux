@@ -1,8 +1,9 @@
-# default.toml — reference configuration for acpd
+# default.toml — reference configuration for waymux
+# Copy to ~/.config/waymux/config.toml (legacy ~/.config/acpd/config.toml is still read as a fallback).
 
 listen_addr = "127.0.0.1"
 port = 4040
-pid_file = "/tmp/acpd.pid"
+pid_file = "/tmp/waymux.pid"
 shutdown_timeout_secs = 30
 log_level = "info"
 

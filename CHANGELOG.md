@@ -2,6 +2,15 @@
 
 All notable changes to **Waymux** are documented in this file.
 
+## [Unreleased]
+
+### 🧹 Native `waymux` Paths (legacy `acpd` demoted to fallback)
+
+- **Sounds**: `SoundAdapter` now searches `~/.config/waymux/sounds/` before the legacy `~/.config/acpd/sounds/` (mute marker, `<event>.sound` pointers and `<event>.wav` files). Omarchy-managed files keep top priority. Existing `acpd` setups keep working unchanged.
+- **systemd unit**: `RuntimeDirectory` is now `waymux` only (`waymux init --systemd`, `systemd/waymux.service`). The legacy token mirror at `$XDG_RUNTIME_DIR/acpd/token` is still written best-effort for old clients and creates its own directory.
+- **Reference config**: `config/default.toml` documents `~/.config/waymux/config.toml` and uses `/tmp/waymux.pid`.
+- **Tests**: add `test_sound_search_paths_prefer_waymux_over_legacy_acpd`.
+
 ## [0.2.1] - 2026-10-17
 
 ### 🚀 Improvements & Ergonomics

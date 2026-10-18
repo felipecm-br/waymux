@@ -18,7 +18,7 @@ LimitNOFILE=65536
 MemoryMax=512M
 
 # Runtime directory for PID file, presets, and tokens
-RuntimeDirectory=waymux acpd
+RuntimeDirectory=waymux
 
 # Logging
 StandardOutput=journal

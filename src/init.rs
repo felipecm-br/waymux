@@ -25,7 +25,7 @@ ExecStart=%h/.local/bin/waymux daemon\n\
 ExecReload=/bin/kill -HUP $MAINPID\n\
 Restart=on-failure\n\
 RestartSec=5s\n\
-RuntimeDirectory=waymux acpd\n\n\
+RuntimeDirectory=waymux\n\n\
 [Install]\n\
 WantedBy=default.target"
             );
@@ -45,7 +45,7 @@ WantedBy=default.target"
                 "waymux init — Portable Zero-Config Bootstrapper\n\n\
 USAGE:\n    \
 waymux init --tmux       Print Tmux keybindings and status bar integration\n    \
-waymux init --systemd    Print user systemd unit file for acpd/waymux daemon\n    \
+waymux init --systemd    Print user systemd unit file for the waymux daemon\n    \
 waymux init --hooks      Print AI agent hook integration snippets"
             );
             0
