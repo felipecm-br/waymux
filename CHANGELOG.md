@@ -4,6 +4,15 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-18
+
+### 🐳 Isolated Docker Sandbox & Simulator
+
+- **Docker Sandbox (`docker/Dockerfile`)**: Multi-stage build providing `runtime` (instant <3s startup mounting pre-built binaries without Rust build bloat), `lite` (compiles `waymux` from source in Docker), and `full` (compiles `waymux` + `wm v0.3.2` + `lazygitrs v0.1.3-cockpit`).
+- **Interactive Simulator (`docker/scenario.sh`)**: Interactive CLI to inspect states (`scenario status`), cycle simulated agents through live states (`scenario cycle`), test permission/question/idle states, and seed/dispatch inline review notes via bracketed paste.
+- **Automated Smoke Tests (`docker/entrypoint.sh`)**: 8-step end-to-end integration test suite verifying health, Tmux sessions, agent state tracking, `/proc` scanner & 12-column TSV output, Cockpit preview, live diffs, review notes dispatch, and badge dismissal.
+- **Developer Workflows**: Added `just docker-demo`, `just docker-test`, and `just docker-build` recipes, alongside runner script `scripts/docker-sandbox.sh`.
+
 ## [0.2.2] - 2026-10-18
 
 ### 🧹 Native `waymux` Paths (legacy `acpd` demoted to fallback)
