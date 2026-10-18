@@ -2,6 +2,14 @@
 
 All notable changes to **Waymux** are documented in this file.
 
+## [0.2.1] - 2026-10-17
+
+### 🚀 Improvements & Ergonomics
+
+- **Streamline Cockpit Terminal Preview**: Remove redundant top context card in terminal snapshot preview (`cockpit-preview`), anchoring scrollback to bottom tail (`tmux capture-pane -ep -S -120`) and bottom-anchoring pending review notes.
+- **Eliminate Redundant Diff View (`v`)**: Remove `v` / `cockpit-diff` layout from Cockpit picker to delegate full Git inspection and interactive staging to Lazygitrs (`g`).
+- **Update Help & Footer Reference**: Update Cockpit footer and help cheat-sheet to reflect `Esc` returning from Lazygitrs and removal of `v` diff.
+
 ## [0.2.0] - 2026-10-17
 
 ### 🚀 Features

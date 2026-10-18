@@ -78,11 +78,7 @@ pub fn run_cli() -> i32 {
         c_blue, BOLD, RESET
     );
     println!(
-        "    {}{}[v]{}      Diff View         Toggle side-by-side Git Diff",
-        c_cyan, BOLD, RESET
-    );
-    println!(
-        "    {}{}[g]{}      Git Cockpit       Toggle Lazygitrs (Dual-Diff, g returns)",
+        "    {}{}[g]{}      Git Cockpit       Toggle Lazygitrs (Dual-Diff, Esc returns)",
         c_magenta, BOLD, RESET
     );
     println!(
@@ -133,14 +129,7 @@ pub fn run_cli() -> i32 {
         DIM, RESET
     );
     println!(
-        "  {}{}?{} {}HUD help{}   {}│{}   {}{}v{} {}Diff{}   {}│{}   {}{}g{} {}Git{}   {}│{}   {}{}p{} {}Patch{}",
-        c_cyan,
-        BOLD,
-        RESET,
-        DIM,
-        RESET,
-        DIM,
-        RESET,
+        "  {}{}?{} {}HUD help{}   {}│{}   {}{}g{} {}Git{}   {}│{}   {}{}p{} {}Patch{}",
         c_cyan,
         BOLD,
         RESET,

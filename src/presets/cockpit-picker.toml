@@ -68,7 +68,7 @@ prompt = " "
 show = true
 
 [footer]
-content = " {cyan,bold:Enter} {darkgray:Jump} {darkgray:│} {cyan,bold:y/n} {darkgray:Ack} {darkgray:│} {cyan,bold:r} {darkgray:Review} {darkgray:│} {cyan,bold:i} {darkgray:Input} {darkgray:│} {cyan,bold:v} {darkgray:Diff} {darkgray:│} {cyan,bold:g} {darkgray:Git} {darkgray:│} {cyan,bold:a} {darkgray:Agents} {darkgray:│} {cyan,bold:Tab} {darkgray:Worktrees} {darkgray:│} {cyan,bold:?} {darkgray:Help} {darkgray:│} {cyan,bold:Esc} {darkgray:Exit}"
+content = " {cyan,bold:Enter} {darkgray:Jump} {darkgray:│} {cyan,bold:y/n} {darkgray:Ack} {darkgray:│} {cyan,bold:r} {darkgray:Review} {darkgray:│} {cyan,bold:i} {darkgray:Input} {darkgray:│} {cyan,bold:g} {darkgray:Git} {darkgray:│} {cyan,bold:a} {darkgray:Agents} {darkgray:│} {cyan,bold:Tab} {darkgray:Worktrees} {darkgray:│} {cyan,bold:?} {darkgray:Help} {darkgray:│} {cyan,bold:Esc} {darkgray:Exit}"
 row_connection = "Full"
 match_indent = false
 separator = "light"
@@ -122,8 +122,6 @@ hints = false
 "Y"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action approve '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "n"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "N"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"v"             = "SwitchPreview(2)"
-"V"             = "SwitchPreview(2)"
 "d"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "D"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "ctrl-d"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
@@ -171,11 +169,6 @@ command = '__WAYMUX_BIN__ cockpit-help'
 side = "right"
 percentage = 60
 
-[[preview.layout]]
-command = '__WAYMUX_BIN__ cockpit-diff "{=session}" "{=idx}" "{=pid}" "{=path}" "{=state}" "{=agent}" "{=age}" "{=branch}" "{=sync}"'
-side = "right"
-percentage = 60
-
 [binds]
 Start    = [
     "ToggleColumn(title)", "ToggleColumn(name)", "ToggleColumn(session)",
@@ -198,7 +191,6 @@ Start    = [
 "ctrl-g"        = ["Print(__LAZYGIT__{=})", "Quit"]
 "ctrl-p"        = ["Print(__PATCH_MODE__{=})", "Quit"]
 "ctrl-t"        = ["Print(__CREATE_WINDOW__{=})", "Quit"]
-"ctrl-v"        = "SwitchPreview(2)"
 "ctrl-d"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "ctrl-x"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "ctrl-r"        = "Reload(__WAYMUX_BIN__ cockpit-items)"
