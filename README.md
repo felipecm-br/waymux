@@ -204,6 +204,26 @@ cargo test
 ./scripts/update-daemon.sh
 ```
 
+### 🐳 Isolated Docker Sandbox
+
+Test the complete Waymux stack (`waymux` daemon, Tmux 3.8 status badges, `wm` Cockpit HUD, `lazygitrs`, inline review notes, and simulated `claude`/`codex`/`opencode` agents) inside a clean container without touching your host Tmux server:
+
+```bash
+# Run the automated 8-step end-to-end integration test suite
+just docker-test
+
+# Launch an interactive Tmux session pre-populated with simulated AI agents & Git diffs
+just docker-demo
+
+# Inside the sandbox Tmux session:
+#   • Prefix + Space   Open Waymux Cockpit HUD
+#   • Prefix + i       Open Alert Triage Popup
+#   • Prefix + I       Jump directly to next alerting AI agent
+#   • Ctrl + G         Open Lazygitrs side-by-side diff & review notes
+#   • scenario cycle   Transition simulated agents across permission/question/idle states
+#   • scenario status  Inspect daemon health and Tmux window badges
+```
+
 See [AGENTS.md](AGENTS.md) for architecture and module conventions, [CONTRIBUTING.md](CONTRIBUTING.md) for pull request guidelines, and [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## 📜 License

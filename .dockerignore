@@ -1,0 +1,10 @@
+# Keep the Docker build context tiny: only Cargo manifests, src/, config/, tmux/ and docker/ are needed.
+target
+dist
+.git
+.github
+.agents
+assets
+*.tar.gz
+*.sha256
+.DS_Store

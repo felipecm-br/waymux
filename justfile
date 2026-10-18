@@ -31,3 +31,16 @@ dist version:
 	cd dist && sha256sum waymux-{{version}}-* > SHA256SUMS.txt
 	@echo "Artifacts generated in dist/:"
 	@ls -lh dist/
+
+# Launch interactive isolated Docker sandbox (Tmux + fake AI agents + Cockpit HUD)
+docker-demo:
+	./scripts/docker-sandbox.sh demo
+
+# Run headless 8-step integration test suite inside isolated Docker container
+docker-test:
+	./scripts/docker-sandbox.sh test
+
+# Build standalone multi-stage Docker image (waymux + wm + lazygitrs from source)
+docker-build:
+	docker build -f docker/Dockerfile --target full -t waymux-sandbox:full .
+
