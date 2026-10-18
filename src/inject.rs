@@ -54,12 +54,19 @@ fn find_target_pane(workspace_dir: &str) -> Option<String> {
     // 1. Check TMUX_ORIGIN_PANE if provided
     if let Ok(orig) = std::env::var("TMUX_ORIGIN_PANE") {
         let orig = orig.trim();
-        if !orig.is_empty() {
-            if let Some(cmd) = tmux_out(&["display-message", "-p", "-t", orig, "#{pane_current_command}"]) {
-                let cmd_trim = cmd.trim();
-                if is_agent_command(cmd_trim) || (!is_editor_command(cmd_trim) && !cmd_trim.is_empty()) {
-                    return Some(orig.to_string());
-                }
+        if !orig.is_empty()
+            && let Some(cmd) = tmux_out(&[
+                "display-message",
+                "-p",
+                "-t",
+                orig,
+                "#{pane_current_command}",
+            ])
+        {
+            let cmd_trim = cmd.trim();
+            if is_agent_command(cmd_trim) || (!is_editor_command(cmd_trim) && !cmd_trim.is_empty())
+            {
+                return Some(orig.to_string());
             }
         }
     }
@@ -69,12 +76,19 @@ fn find_target_pane(workspace_dir: &str) -> Option<String> {
     let pane_file = format!("/tmp/agy-active-pane-{}.txt", safe_path);
     if let Ok(saved) = fs::read_to_string(&pane_file) {
         let saved_pane = saved.trim();
-        if !saved_pane.is_empty() {
-            if let Some(cmd) = tmux_out(&["display-message", "-p", "-t", saved_pane, "#{pane_current_command}"]) {
-                let cmd_trim = cmd.trim();
-                if is_agent_command(cmd_trim) || (!is_editor_command(cmd_trim) && !cmd_trim.is_empty()) {
-                    return Some(saved_pane.to_string());
-                }
+        if !saved_pane.is_empty()
+            && let Some(cmd) = tmux_out(&[
+                "display-message",
+                "-p",
+                "-t",
+                saved_pane,
+                "#{pane_current_command}",
+            ])
+        {
+            let cmd_trim = cmd.trim();
+            if is_agent_command(cmd_trim) || (!is_editor_command(cmd_trim) && !cmd_trim.is_empty())
+            {
+                return Some(saved_pane.to_string());
             }
         }
     }
@@ -87,39 +101,41 @@ fn find_target_pane(workspace_dir: &str) -> Option<String> {
 
     if let Some(ref sess) = target_session {
         let sess = sess.trim();
-        if !sess.is_empty() {
-            if let Some(panes) = tmux_out(&[
+        if !sess.is_empty()
+            && let Some(panes) = tmux_out(&[
                 "list-panes",
                 "-s",
                 "-t",
                 sess,
                 "-F",
                 "#{pane_id}|#{pane_current_path}|#{pane_current_command}|#{@ai_agent_state_raw}|#{@ai_agent_title}",
-            ]) {
-                // Priority A: explicit AI agent in session
-                for line in panes.lines() {
-                    let parts: Vec<&str> = line.split('|').collect();
-                    if parts.len() >= 5 {
-                        let pid = parts[0];
-                        let cmd = parts[2];
-                        let raw = parts[3];
-                        let title = parts[4];
-                        if !raw.is_empty() || !title.is_empty() || is_agent_command(cmd) {
-                            return Some(pid.to_string());
-                        }
+            ])
+        {
+            // Priority A: explicit AI agent in session
+            for line in panes.lines() {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 5 {
+                    let pid = parts[0];
+                    let cmd = parts[2];
+                    let raw = parts[3];
+                    let title = parts[4];
+                    if !raw.is_empty() || !title.is_empty() || is_agent_command(cmd) {
+                        return Some(pid.to_string());
                     }
                 }
+            }
 
-                // Priority B: matching workspace path in session (non-editor)
-                for line in panes.lines() {
-                    let parts: Vec<&str> = line.split('|').collect();
-                    if parts.len() >= 3 {
-                        let pid = parts[0];
-                        let path = parts[1];
-                        let cmd = parts[2];
-                        if !is_editor_command(cmd) && (path.starts_with(workspace_dir) || workspace_dir.starts_with(path)) {
-                            return Some(pid.to_string());
-                        }
+            // Priority B: matching workspace path in session (non-editor)
+            for line in panes.lines() {
+                let parts: Vec<&str> = line.split('|').collect();
+                if parts.len() >= 3 {
+                    let pid = parts[0];
+                    let path = parts[1];
+                    let cmd = parts[2];
+                    if !is_editor_command(cmd)
+                        && (path.starts_with(workspace_dir) || workspace_dir.starts_with(path))
+                    {
+                        return Some(pid.to_string());
                     }
                 }
             }

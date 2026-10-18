@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "waymux",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Autonomous Terminal AI Cockpit, Orchestrator CLI & JSON-RPC Control Plane Daemon",
   "engines": {
     "waymux": {
       "repo": "felipecm-br/waymux",
-      "version": "v0.2.1",
+      "version": "v0.2.2",
       "binary": "waymux",
       "targets": [
         "x86_64-unknown-linux-musl",
@@ -17,7 +17,7 @@
     },
     "waymaker": {
       "repo": "felipecm-br/waymaker",
-      "version": "v0.2.0",
+      "version": "v0.3.2",
       "binary": "wm",
       "targets": [
         "x86_64-unknown-linux-musl",
@@ -28,7 +28,7 @@
     },
     "lazygitrs": {
       "repo": "felipecm-br/lazygitrs",
-      "version": "v0.1.2-cockpit",
+      "version": "v0.1.3-cockpit",
       "binary": "lazygitrs",
       "targets": [
         "x86_64-unknown-linux-musl",

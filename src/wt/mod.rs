@@ -224,7 +224,7 @@ awt clone <repo> [dir]                  Clone repository into .bare container la
 awt rm | remove <branch> [flags]        Delete worktree, Git branch, and kill Tmux session\n    \
 awt rebase [base]                       Rebase active worktree onto base branch with auto-stash\n    \
 awt ship [branch] [flags]               Merge into base, push to origin, and clean up worktree\n    \
-awt sweep [flags] [base]                Prune merged worktrees and dead Tmux sessions in batch\n    \
+awt sweep [-a|--all] [--clean-targets]  Prune merged worktrees, sibling repos, and Rust targets\n    \
 awt reap [flags]                        Garbage-collect stale AI agents and orphan worktree sessions\n    \
 awt help | -h | --help                  Show this help message"
     );
