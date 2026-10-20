@@ -27,6 +27,7 @@ fn is_agent_command(cmd: &str) -> bool {
             | "opencode"
             | "claude"
             | "codex"
+            | "devin"
             | "muse"
             | "gemini"
             | "aider"

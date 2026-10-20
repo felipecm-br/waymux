@@ -14,6 +14,7 @@ const AGENT_NAMES: &[&str] = &[
     "opencode",
     "claude",
     "codex",
+    "devin",
     "muse",
 ];
 
@@ -23,9 +24,17 @@ pub fn is_agent_binary_name(name: &str) -> bool {
 
 pub fn contains_agent_name(title: &str) -> bool {
     let lower = title.to_ascii_lowercase();
-    ["agy", "antigravity", "opencode", "claude", "codex", "muse"]
-        .iter()
-        .any(|a| lower.contains(a))
+    [
+        "agy",
+        "antigravity",
+        "opencode",
+        "claude",
+        "codex",
+        "devin",
+        "muse",
+    ]
+    .iter()
+    .any(|a| lower.contains(a))
 }
 
 pub fn scan_running_agents() -> (HashMap<String, String>, HashMap<String, u64>) {

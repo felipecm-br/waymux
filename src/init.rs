@@ -34,7 +34,7 @@ WantedBy=default.target"
         "--hooks" | "hooks" => {
             println!(
                 "# Waymux Zero-Latency Agent Hooks\n\
-# Antigravity (~/.gemini/antigravity-cli/hooks.json):\n\
+# Antigravity (~/.gemini/antigravity-cli/hooks.json) & Devin (~/.config/devin/config.json):\n\
 #   tmux-hook:    waymux hook tmux <Event>\n\
 #   lazygit-hook: waymux hook lazygit <Event>"
             );

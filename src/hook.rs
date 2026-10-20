@@ -43,7 +43,12 @@ pub fn get_active_tmux_pane() -> String {
         "#{pane_id} #{pane_current_command}",
     ]) {
         for line in panes.lines() {
-            if (line.contains("agy") || line.contains("node"))
+            if (line.contains("agy")
+                || line.contains("devin")
+                || line.contains("claude")
+                || line.contains("codex")
+                || line.contains("opencode")
+                || line.contains("node"))
                 && let Some(pid) = line.split_whitespace().next()
             {
                 return pid.to_string();
@@ -51,6 +56,31 @@ pub fn get_active_tmux_pane() -> String {
         }
     }
     String::new()
+}
+
+fn resolve_window_icon(pane: &str, ctx: &serde_json::Value) -> &'static str {
+    if !pane.is_empty()
+        && let Some(cmd) = tmux_out(&[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{pane_current_command}",
+        ])
+    {
+        match cmd.trim() {
+            "devin" | "claude" | "opencode" => return "󰚩",
+            "codex" => return "",
+            "muse" => return "󱚣",
+            "agy" | "agy-bin" | "antigravity" => return "",
+            _ => {}
+        }
+    }
+    if ctx.get("hook_event_name").is_some() {
+        "󰚩"
+    } else {
+        ""
+    }
 }
 
 fn set_ai_agent_title(pane: &str, title: Option<&str>) {
@@ -97,7 +127,22 @@ pub fn extract_session_title(ctx: &serde_json::Value) -> Option<String> {
     {
         return Some(t.trim().to_string());
     }
-    if let Some(tp) = ctx.get("transcriptPath").and_then(|v| v.as_str())
+    if let Some(p) = ctx.get("prompt").and_then(|v| v.as_str()) {
+        let mut raw = p.trim();
+        if let Some(rest) = raw.strip_prefix('/')
+            && let Some(idx) = rest.find(char::is_whitespace)
+        {
+            raw = rest[idx..].trim();
+        }
+        let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !collapsed.is_empty() {
+            return Some(collapsed);
+        }
+    }
+    if let Some(tp) = ctx
+        .get("transcriptPath")
+        .or_else(|| ctx.get("transcript_path"))
+        .and_then(|v| v.as_str())
         && Path::new(tp).is_file()
         && let Ok(content) = fs::read_to_string(tp)
         && let Some(first_line) = content.lines().next()
@@ -186,14 +231,23 @@ fn send_acp_state(pane_id: &str, state: &str) {
     }
 }
 
+fn print_hook_response(event_type: &str, ctx: &serde_json::Value) {
+    if event_type == "PreToolUse" && ctx.get("hook_event_name").is_none() {
+        println!("{{\"decision\":\"allow\"}}");
+    } else {
+        println!("{{}}");
+    }
+}
+
 fn run_tmux_hook(event_type: &str) -> i32 {
     let tmux_pane = get_active_tmux_pane();
     let ctx = read_stdin_json();
 
     match event_type {
-        "SessionStart" | "PreInvocation" => {
+        "SessionStart" | "PreInvocation" | "UserPromptSubmit" => {
             if !tmux_pane.is_empty() {
-                let _ = tmux_status(&["rename-window", "-t", &tmux_pane, ""]);
+                let icon = resolve_window_icon(&tmux_pane, &ctx);
+                let _ = tmux_status(&["rename-window", "-t", &tmux_pane, icon]);
             }
             if let Some(title) = extract_session_title(&ctx) {
                 set_ai_agent_title(&tmux_pane, Some(&title));
@@ -203,6 +257,12 @@ fn run_tmux_hook(event_type: &str) -> i32 {
         "PreToolUse" => {
             let state = classify_pre_tool_state(&ctx);
             send_acp_state(&tmux_pane, state);
+        }
+        "PostToolUse" => {
+            send_acp_state(&tmux_pane, "working");
+        }
+        "PermissionRequest" => {
+            send_acp_state(&tmux_pane, "permission");
         }
         "Stop" => {
             send_acp_state(&tmux_pane, "idle");
@@ -223,11 +283,7 @@ fn run_tmux_hook(event_type: &str) -> i32 {
         _ => {}
     }
 
-    if event_type == "PreToolUse" {
-        println!("{{\"decision\":\"allow\"}}");
-    } else {
-        println!("{{}}");
-    }
+    print_hook_response(event_type, &ctx);
     0
 }
 
@@ -302,11 +358,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
                 && sdata.get("sessionId").and_then(|v| v.as_str()) == Some(conv_id.as_str())
             {
                 set_lazygitrs_icon(&tmux_pane, Some("#[fg=#a6e3a1]#[fg=default]"));
-                if event_type == "PreToolUse" {
-                    println!("{{\"decision\":\"allow\"}}");
-                } else {
-                    println!("{{}}");
-                }
+                print_hook_response(event_type, &ctx);
                 return 0;
             }
         }
@@ -345,11 +397,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
         }
     }
 
-    if event_type == "PreToolUse" {
-        println!("{{\"decision\":\"allow\"}}");
-    } else {
-        println!("{{}}");
-    }
+    print_hook_response(event_type, &ctx);
     0
 }
 
@@ -384,6 +432,15 @@ mod tests {
         assert_eq!(
             extract_session_title(&ctx).as_deref(),
             Some("Implement Waymux v0.2.0")
+        );
+
+        let prompt_ctx = serde_json::json!({
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/plan   Refactor   the\n cockpit HUD  "
+        });
+        assert_eq!(
+            extract_session_title(&prompt_ctx).as_deref(),
+            Some("Refactor the cockpit HUD")
         );
     }
 }
