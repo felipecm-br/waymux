@@ -4,6 +4,12 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### 🐛 Release Pipeline & Cross-Platform Build
+
+- **GitHub Release Asset Uploads (`.github/workflows/release.yml`)**: Split `taiki-e/upload-rust-binary-action@v1` into separate steps for `waymux` and `acpd` so `archive: $bin-$tag-$target` builds and uploads both binary archives instead of failing with `when multiple binary names are specified, default archive name or '$bin' variable cannot be used in 'archive' option`.
+- **macOS Targets (`aarch64-apple-darwin`, `x86_64-apple-darwin`)**: Add Apple Silicon and Intel macOS release targets on `macos-latest` alongside the Linux `musl` and `gnu` targets (`x86_64` / `aarch64`), and remove the unused Linux-only `tracing-journald` crate from `Cargo.toml`.
+- **Rust 1.99 Clippy Compatibility (`src/adapters.rs`)**: Allow `clippy::double_must_use` on `OutputAdapter` (`#[async_trait]`) so `cargo clippy --all-targets --all-features -- -D warnings` passes cleanly on Rust 1.99+.
+
 ## [0.2.3] - 2026-10-18
 
 ### 🐳 Isolated Docker Sandbox & Simulator

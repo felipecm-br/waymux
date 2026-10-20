@@ -30,5 +30,4 @@ serde_json = "1.0.150"
 tokio = { version = "1.52.3", features = ["full"] }
 toml = "0.8"
 tracing = "0.1"
-tracing-journald = "0.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

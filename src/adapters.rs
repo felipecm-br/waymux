@@ -72,6 +72,7 @@ pub struct AgentUpdate {
 }
 
 #[async_trait]
+#[allow(clippy::double_must_use)]
 pub trait OutputAdapter: Send + Sync {
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()>;
     async fn rehydrate(&self, _update: &AgentUpdate) -> anyhow::Result<()> {
