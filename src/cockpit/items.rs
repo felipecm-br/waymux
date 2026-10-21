@@ -526,13 +526,14 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
 
         let detected_agent = sess_agent.get(pane_os_pid).cloned().unwrap_or_default();
 
-        let (mut st, ts, reason) = match acpd_map.get(pid) {
+        let (mut st, ts, reason, finished_at) = match acpd_map.get(pid) {
             Some(entry) => (
                 entry.state.clone(),
                 entry.last_timestamp,
                 entry.message.clone().unwrap_or_default(),
+                entry.finished_at,
             ),
-            None => (String::new(), 0, String::new()),
+            None => (String::new(), 0, String::new(), 0),
         };
 
         if st.is_empty() {
@@ -572,11 +573,13 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
                 .clone();
         }
 
+        // Only a completion the daemon saw counts: after a restart idle panes are rehydrated
+        // with a fresh timestamp but no finished_at.
         if st == "idle"
-            && ts > 0
+            && finished_at > 0
             && let Some(git_dir) = git_dir_of(Path::new(&ppath))
             && needs_review(
-                crate::triage::normalize_ts(ts) / 1000,
+                crate::triage::normalize_ts(finished_at) / 1000,
                 mtime_secs(&git_dir.join(REVIEW_MARKER)),
                 mtime_secs(&git_dir.join("logs").join("HEAD")),
                 !git_meta.diffstat.is_empty(),

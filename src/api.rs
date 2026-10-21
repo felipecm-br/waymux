@@ -9,6 +9,9 @@ pub struct PaneStateInfo {
     pub seq_id: u64,
     pub state: AgentState,
     pub message: Option<String>,
+    /// Epoch ms of the last working → idle transition seen live; 0 when unknown (e.g. panes
+    /// rehydrated after a restart), so a restart never looks like freshly finished work.
+    pub finished_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +115,11 @@ impl ApiState {
                 Some(s) if !s.trim().is_empty() => s.trim(),
                 _ => continue,
             };
+            // Completion time persisted on the pane by a previous daemon, if any.
+            let finished_at = parts
+                .next()
+                .and_then(|t| t.trim().parse::<u64>().ok())
+                .unwrap_or(0);
 
             if let Some(state) = AgentState::from_tmux_raw(raw_state) {
                 let seq = self
@@ -127,6 +135,7 @@ impl ApiState {
                             seq_id: seq,
                             state: state.clone(),
                             message: None,
+                            finished_at,
                         },
                     );
                 }
@@ -154,7 +163,7 @@ impl ApiState {
                 "list-panes",
                 "-a",
                 "-F",
-                "#{pane_id}\t#{@ai_agent_state_raw}",
+                "#{pane_id}\t#{@ai_agent_state_raw}\t#{@ai_agent_finished_at}",
             ])
             .output()
             .await
@@ -574,6 +583,35 @@ async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
             (None, false)
         } else {
             let prev = states.get(&update.pane_id).map(|s| s.state.clone());
+            let finished_at =
+                if update.state == AgentState::Idle && prev == Some(AgentState::Working) {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    // Persist on the pane so a restarted daemon still knows (theme switches
+                    // restart it); rehydrate_from_tmux reads it back.
+                    let pane = update.pane_id.clone();
+                    tokio::spawn(async move {
+                        let _ = tokio::process::Command::new("tmux")
+                            .args([
+                                "set-option",
+                                "-p",
+                                "-t",
+                                &pane,
+                                "@ai_agent_finished_at",
+                                &now_ms.to_string(),
+                            ])
+                            .output()
+                            .await;
+                    });
+                    now_ms
+                } else {
+                    states
+                        .get(&update.pane_id)
+                        .map(|s| s.finished_at)
+                        .unwrap_or(0)
+                };
             states.insert(
                 update.pane_id.clone(),
                 PaneStateInfo {
@@ -581,6 +619,7 @@ async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                     seq_id: seq,
                     state: update.state.clone(),
                     message: update.message.clone(),
+                    finished_at,
                 },
             );
             (prev, true)
@@ -731,6 +770,9 @@ async fn handle_rpc(
                 });
                 if let Some(ref msg) = info.message {
                     pane_obj["message"] = serde_json::json!(msg);
+                }
+                if info.finished_at > 0 {
+                    pane_obj["finished_at"] = serde_json::json!(info.finished_at);
                 }
                 map.insert(pane_id.clone(), pane_obj);
             }
@@ -1637,6 +1679,7 @@ mod tests {
                 seq_id: 1,
                 state: AgentState::Working,
                 message: None,
+                finished_at: 0,
             },
         );
 
@@ -1714,6 +1757,51 @@ mod tests {
             AgentState::Permission
         );
         assert_eq!(pane_states.get("%31").unwrap().state, AgentState::Error);
+        // A restart must not look like freshly finished work.
+        assert_eq!(pane_states.get("%21").unwrap().finished_at, 0);
+        drop(pane_states);
+
+        // ...but a completion time persisted on the pane survives it.
+        state
+            .rehydrate_from_raw_lines("%40\tidle\t1700000000000\n", 12345)
+            .await;
+        assert_eq!(
+            state.pane_states.lock().await["%40"].finished_at,
+            1_700_000_000_000
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finished_at_set_only_by_live_working_to_idle() {
+        let updates = Arc::new(StdMutex::new(Vec::new()));
+        let state = ApiState::new(
+            vec![Box::new(TestAdapter {
+                updates: updates.clone(),
+            })],
+            0,
+        );
+        let update = |st: AgentState| IncomingUpdate {
+            pane_id: "%999998".into(),
+            state: st,
+            message: None,
+            timestamp: None,
+        };
+
+        dispatch_update(&state, update(AgentState::AwaitingInput)).await;
+        dispatch_update(&state, update(AgentState::Idle)).await;
+        assert_eq!(state.pane_states.lock().await["%999998"].finished_at, 0);
+
+        dispatch_update(&state, update(AgentState::Working)).await;
+        dispatch_update(&state, update(AgentState::Idle)).await;
+        let finished = state.pane_states.lock().await["%999998"].finished_at;
+        assert!(finished > 0);
+
+        // Later updates keep the completion time until the next finish.
+        dispatch_update(&state, update(AgentState::Permission)).await;
+        assert_eq!(
+            state.pane_states.lock().await["%999998"].finished_at,
+            finished
+        );
     }
 
     #[test]

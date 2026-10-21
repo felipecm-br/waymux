@@ -123,6 +123,8 @@ pub struct AgentPaneEntry {
     pub last_timestamp: u64,
     /// Why the agent is in this state, e.g. the tool behind a permission prompt.
     pub message: Option<String>,
+    /// Epoch ms of the last working → idle transition the daemon saw; 0 when unknown.
+    pub finished_at: u64,
 }
 
 pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
@@ -156,6 +158,10 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                 .get("message")
                 .and_then(|m| m.as_str())
                 .map(str::to_string);
+            let finished_at = info
+                .get("finished_at")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
             if !state.is_empty() {
                 map.insert(
                     pane_id.clone(),
@@ -163,6 +169,7 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                         state,
                         last_timestamp: ts,
                         message,
+                        finished_at,
                     },
                 );
             }
