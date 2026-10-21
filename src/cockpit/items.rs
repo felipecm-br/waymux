@@ -476,9 +476,13 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
 
         let detected_agent = sess_agent.get(pane_os_pid).cloned().unwrap_or_default();
 
-        let (mut st, ts) = match acpd_map.get(pid) {
-            Some(entry) => (entry.state.clone(), entry.last_timestamp),
-            None => (String::new(), 0),
+        let (mut st, ts, reason) = match acpd_map.get(pid) {
+            Some(entry) => (
+                entry.state.clone(),
+                entry.last_timestamp,
+                entry.message.clone().unwrap_or_default(),
+            ),
+            None => (String::new(), 0, String::new()),
         };
 
         if st.is_empty() {
@@ -528,7 +532,12 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             || !ai_title.is_empty()
             || (!st.is_empty() && st != "normal");
 
-        let raw_label = if !ai_title.is_empty() {
+        // Waiting rows say why the agent waits (e.g. the tool behind a permission prompt)
+        // instead of the task title.
+        let raw_label = if crate::triage::service_class(&st).is_some() && !reason.trim().is_empty()
+        {
+            reason.as_str()
+        } else if !ai_title.is_empty() {
             ai_title
         } else if !detected_agent.is_empty() {
             &detected_agent

@@ -4,6 +4,11 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### 󰈈 Cockpit Says Why An Agent Waits
+
+- **Wait reasons (`src/hook.rs`, `src/rpc_client.rs`, `src/cockpit/items.rs`)**: the hook always sent `message: null`, so the Cockpit could show that an agent waited but not why. `PreToolUse` now sends a one-line tool summary (`Bash: cargo test -p auth`, `Edit: main.rs`, `AskUserQuestion: <question>`; bounded to 120 chars) and remembers it per pane in `$XDG_RUNTIME_DIR/waymux` (`0700`, since commands can hold secrets), so the permission `Notification` that follows carries it; without a preceding tool it falls back to the notification text. `agentState/list` already returned `message`; the client now reads it, and waiting rows show the reason in the title column instead of the task title.
+- **`WAYMUX_PORT`**: client subcommands honor it (default `4040`) so end-to-end tests can drive a sandboxed second daemon.
+
 ### 🔔 Completion Chimes Respect Focus & Breakpoints
 
 - **Focus-aware, breakpoint-deferred completion chimes (`src/adapters.rs`)**: every alert used to play immediately, including the "done" chime for the pane you were looking at, and done chimes were most of the sound (92 of 95 in one week of logs). Now the completion chime is skipped when a focused client shows that pane, otherwise it waits for a 2 s typing pause (`#{client_activity}`, capped at 15 s), and agents finishing while it waits share one chime. Permission, question, stalled and error alerts still play immediately.

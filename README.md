@@ -177,7 +177,7 @@ flowchart TD
 
 ## 🔌 JSON-RPC 2.0 Control Plane (`127.0.0.1:4040`)
 
-`waymux daemon` runs out-of-the-box with built-in defaults (`127.0.0.1:4040`, 300ms idle debounce) and optionally loads `~/.config/waymux/config.toml`.
+`waymux daemon` runs out-of-the-box with built-in defaults (`127.0.0.1:4040`, 300ms idle debounce) and optionally loads `~/.config/waymux/config.toml`. Client subcommands (`hook`, `cockpit-items`, `triage`, `status`, ...) talk to port `4040` unless `WAYMUX_PORT` is set, e.g. to drive a second, sandboxed daemon in tests.
 
 Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_DIR/waymux/token` (`0600` permissions):
 
