@@ -123,10 +123,8 @@ hints = false
 "n"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "N"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "d"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"D"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "ctrl-d"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "x"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"X"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "J"             = "PreviewDown(5)"
 "K"             = "PreviewUp(5)"
 "+"             = "ExpandPreview(5)"
@@ -192,7 +190,6 @@ Start    = [
 "ctrl-p"        = ["Print(__PATCH_MODE__{=})", "Quit"]
 "ctrl-t"        = ["Print(__CREATE_WINDOW__{=})", "Quit"]
 "ctrl-d"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"ctrl-x"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "ctrl-r"        = "Reload(__WAYMUX_BIN__ cockpit-items)"
 "?"             = "SwitchPreview(1)"
 "shift-?"       = "SwitchPreview(1)"

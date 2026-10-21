@@ -104,7 +104,7 @@ pub fn run_cli() -> i32 {
         c_cyan, BOLD, RESET
     );
     println!(
-        "    {}{}[d / C-d]{} Kill / Delete     Kill window or delete session",
+        "    {}{}[d / x]{}  Kill / Delete     Kill window or session (agent at work: press twice)",
         c_red, BOLD, RESET
     );
     println!(

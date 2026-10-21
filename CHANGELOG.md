@@ -7,6 +7,7 @@ All notable changes to **Waymux** are documented in this file.
 ### 🛡️ Cockpit Safety & Triage Signals
 
 - **Ship asks first (`src/cockpit/mod.rs`)**: `S` in the Cockpit merges, pushes to origin and deletes the branch, which cannot be undone. It now passes `--confirm` to `awt-merge.sh`, matching `S` in the awt popup. `split_merge_args` (`src/wt/mod.rs`) is extracted and tested so `--confirm` keeps reaching the script.
+- **Guarded kills (`src/cockpit/actions.rs`)**: `waymux window-delete` checks every pane of the target window (or session) against the daemon and `@ai_agent_state_raw`, using the same rule as `close-window.sh` (anything but idle/done counts as in-flight). Idle targets still close on one press (`Prefix+u` restores them); a target with an agent at work arms on the first press and closes on a second press within 2 s. The redundant `D`, `X` and filter-mode `ctrl-x` aliases are removed from the embedded preset; `d`, `x` and `ctrl-d` remain.
 
 ### 🐛 Release Pipeline & Cross-Platform Build
 
