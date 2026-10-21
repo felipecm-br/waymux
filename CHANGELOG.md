@@ -4,6 +4,10 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### 🔔 Completion Chimes Respect Focus & Breakpoints
+
+- **Focus-aware, breakpoint-deferred completion chimes (`src/adapters.rs`)**: every alert used to play immediately, including the "done" chime for the pane you were looking at, and done chimes were most of the sound (92 of 95 in one week of logs). Now the completion chime is skipped when a focused client shows that pane, otherwise it waits for a 2 s typing pause (`#{client_activity}`, capped at 15 s), and agents finishing while it waits share one chime. Permission, question, stalled and error alerts still play immediately.
+
 ### 🛡️ Cockpit Safety & Triage Signals
 
 - **Ship asks first (`src/cockpit/mod.rs`)**: `S` in the Cockpit merges, pushes to origin and deletes the branch, which cannot be undone. It now passes `--confirm` to `awt-merge.sh`, matching `S` in the awt popup. `split_merge_args` (`src/wt/mod.rs`) is extracted and tested so `--confirm` keeps reaching the script.

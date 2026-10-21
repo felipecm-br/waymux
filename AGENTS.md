@@ -18,7 +18,7 @@
 - `src/bin/waymux.rs` & `src/main.rs`: Thin binary entrypoints invoking `acpd::entry()`.
 - `src/api.rs`: Axum HTTP/JSON-RPC 2.0 handlers (`/rpc`, `/api/status`, `/health`, `/ready`), sequence-tracked 300ms idle debounce, and pane rehydration.
 - `src/daemon.rs`: Background task supervisor, 30s stale pane reaper, and 5s proactive stall detector (20s zero-output + zero-CPU delta heuristic).
-- `src/adapters.rs`: Output sinks for Tmux window/pane options, multi-pane urgency aggregation, Waybar status JSON, desktop notifications, and event-isolated sound playback.
+- `src/adapters.rs`: Output sinks for Tmux window/pane options, multi-pane urgency aggregation, Waybar status JSON, desktop notifications, and event-isolated sound playback (completion chimes skipped for the pane in view and deferred to a typing pause; blocking alerts immediate).
 - `src/auth.rs`: Session token generator (`0600` permissions at `$XDG_RUNTIME_DIR/waymux/token` mirrored to `$XDG_RUNTIME_DIR/acpd/token`).
 - `src/rpc_client.rs`: Zero-dependency synchronous TCP HTTP client for CLI subcommands (`status`, `list`, `dismiss`, `health`, `agentState/list`, `/api/status`).
 - `src/tmux_cmd.rs`: Synchronous Tmux command execution and atomic bracketed-paste buffer injection (`load-buffer` + `paste-buffer -p`).
@@ -60,7 +60,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **55 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `signals`, `status_palette`, `theme`, `triage`, and `wt`, with **0 Clippy warnings**.
+> Current baseline: **57 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `signals`, `status_palette`, `theme`, `triage`, and `wt`, with **0 Clippy warnings**.
 
 ---
 
