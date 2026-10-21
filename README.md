@@ -70,7 +70,7 @@ All CLI commands bypass the async runtime for instant (`<1.5ms`) execution:
 | `waymux agent-action <act> <st> <pid> [pane]` | Execute guarded agent action (`approve`, `deny`, `prompt`) |
 | `waymux review-notes <count\|list\|send> ...` | Count, list, or atomically send `.git/info/lines.json` review notes to an agent |
 | `waymux triage --popup` | Cycle notifying AI agent panes inside an isolated `_popups` overlay |
-| `waymux triage --jump` | Jump focus directly to the next alerting AI agent with origin-return memory |
+| `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first) with origin-return memory |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Inject multi-line prompt into active workspace agent pane via bracketed paste |
 | `waymux wt <subcommand>` | Git worktree orchestrator (`new`, `go`, `ls`, `rm`, `ship`, `reap`, `sweep`, `pick`) |

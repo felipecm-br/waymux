@@ -99,6 +99,9 @@ fn compute_start_idx(
             n += 1;
         }
     } else {
+        if let Some(n) = first_waiting_row(items_str) {
+            return n;
+        }
         let mut n = 0usize;
         for line in items_str.lines() {
             if line.starts_with('#') || line.is_empty() {
@@ -114,6 +117,15 @@ fn compute_start_idx(
         }
     }
     0
+}
+
+/// Index of the first row whose agent waits on the human (column 6 is the raw state).
+/// Rows arrive sorted by service class and wait time, so this is the next agent to serve.
+fn first_waiting_row(items_str: &str) -> Option<usize> {
+    items_str
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .position(|l| crate::triage::service_class(l.split('\t').nth(6).unwrap_or("")).is_some())
 }
 
 /// `S` ships (merge → push → delete branch), which cannot be undone: ask first,
@@ -482,6 +494,36 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(idx: &str, sess: &str, state: &str) -> String {
+        format!("t\t{idx}\tname\t{sess}\t%1\t/tmp\t{state}\t-\t-\t-\t-\t-")
+    }
+
+    #[test]
+    fn test_start_idx_prefers_first_waiting_agent() {
+        let items = [
+            "#  api".to_string(),
+            row("2", "api", "permission"),
+            "#  dotfiles".to_string(),
+            row("0", "dotfiles", "busy"),
+            row("1", "dotfiles", "idle"),
+        ]
+        .join("\n");
+        // Nothing saved: the cursor starts on the agent waiting for you, not your window.
+        assert_eq!(compute_start_idx(&items, "", "", "dotfiles", "1"), 0);
+        // A saved selection (returning from lazygitrs) still wins.
+        assert_eq!(
+            compute_start_idx(&items, "dotfiles", "1", "dotfiles", "1"),
+            2
+        );
+    }
+
+    #[test]
+    fn test_start_idx_falls_back_to_origin_window() {
+        let items = [row("0", "s", "busy"), row("1", "s", "idle")].join("\n");
+        assert_eq!(compute_start_idx(&items, "", "", "s", "1"), 1);
+        assert_eq!(first_waiting_row(&items), None);
+    }
 
     #[test]
     fn test_ship_asks_for_confirmation() {

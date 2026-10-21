@@ -32,7 +32,7 @@
   - `notes.rs`: `waymux review-notes` (`serde_json` parser/mutator for `<git-dir>/info/lines.json`).
   - `actions.rs`: `waymux agent-action`, `waymux window-create`, `waymux window-delete`.
 - `src/presets/`: Embedded Waymaker preset (`cockpit-picker.toml`) materialized dynamically to `$XDG_RUNTIME_DIR/waymux/cockpit-picker.toml`.
-- `src/triage.rs`: `waymux triage --popup` and `waymux triage --jump` ring-buffer alert navigation.
+- `src/triage.rs`: `waymux triage --popup` and `waymux triage --jump` alert navigation over a stateless queue (`service_class`: permission → question → error/stalled, oldest first), shared with the Cockpit sort.
 - `src/hook.rs`: `waymux hook {tmux|lazygit}` native sub-10ms AI agent lifecycle hooks.
 - `src/inject.rs`: `waymux inject` bracketed-paste prompt injector with staleness guard.
 - `src/wt/mod.rs`: `waymux wt` (and `argv[0] == "awt"`) native Git worktree orchestrator.

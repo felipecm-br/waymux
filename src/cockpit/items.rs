@@ -346,6 +346,38 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     format!("{}…", prefix)
 }
 
+/// Row priority and glyph. Urgent rows use `triage::service_class` + 1 so the Cockpit lists
+/// waiting agents in the same order `Prefix+I` visits them.
+fn state_prio_icon(st: &str, agent_like: bool) -> (u8, &'static str) {
+    let ico = match st {
+        "permission" => "󱅭",
+        "question" | "awaiting_input" => "󱜻",
+        "stalled" | "hanging" => "󱥁",
+        "error" => "󰨄",
+        "busy" | "working" => "@SPIN@",
+        "idle" => "󱥂",
+        _ if agent_like => "󰑮",
+        _ => "·",
+    };
+    let prio = match (crate::triage::service_class(st), st) {
+        (Some(class), _) => class + 1,
+        (None, "busy" | "working") => 4,
+        (None, "idle") => 5,
+        (None, _) if agent_like => 5,
+        _ => 6,
+    };
+    (prio, ico)
+}
+
+/// Waiting rows sort oldest-first within their class; everything else keeps window order.
+fn wait_order_key(prio: u8, ts: u64) -> u64 {
+    if prio <= 3 {
+        crate::triage::normalize_ts(ts)
+    } else {
+        0
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RawPaneRow {
     prio: u8,
@@ -460,24 +492,10 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             }
         }
 
-        let (prio, ico) = match st.as_str() {
-            "permission" => (1, "󱅭"),
-            "question" | "awaiting_input" => (2, "󱜻"),
-            "stalled" | "hanging" => (2, "󱥁"),
-            "error" => (3, "󰨄"),
-            "busy" | "working" => (4, "@SPIN@"),
-            "idle" => (5, "󱥂"),
-            _ => {
-                if !detected_agent.is_empty()
-                    || is_agent_binary_name(pcmd)
-                    || contains_agent_name(ptitle)
-                {
-                    (5, "󰑮")
-                } else {
-                    (6, "·")
-                }
-            }
-        };
+        let (prio, ico) = state_prio_icon(
+            &st,
+            !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
+        );
 
         let diff_s = if ts > 0 {
             if ts < 10_000_000_000 {
@@ -555,7 +573,12 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         });
     }
 
-    raw_rows.sort_by(|a, b| a.prio.cmp(&b.prio).then_with(|| a.idx_num.cmp(&b.idx_num)));
+    raw_rows.sort_by(|a, b| {
+        a.prio
+            .cmp(&b.prio)
+            .then_with(|| wait_order_key(a.prio, a.ts).cmp(&wait_order_key(b.prio, b.ts)))
+            .then_with(|| a.idx_num.cmp(&b.idx_num))
+    });
 
     let mut sess_prio: HashMap<String, u8> = HashMap::new();
     let mut sess_ts: HashMap<String, u64> = HashMap::new();
@@ -571,7 +594,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let cur_p = sess_prio.get(&row.sess).copied().unwrap_or(99);
         if row.prio < cur_p {
             sess_prio.insert(row.sess.clone(), row.prio);
-            sess_ts.insert(row.sess.clone(), row.ts);
+            sess_ts.insert(row.sess.clone(), crate::triage::normalize_ts(row.ts));
         }
 
         let win_key = format!("{}:{}", row.sess, row.idx);
@@ -865,5 +888,25 @@ mod tests {
     fn test_truncate_chars() {
         assert_eq!(truncate_chars("hello", 10), "hello");
         assert_eq!(truncate_chars("hello world", 6), "hello…");
+    }
+
+    #[test]
+    fn test_cockpit_priority_matches_triage_order() {
+        let prio = |st| state_prio_icon(st, true).0;
+        assert!(prio("permission") < prio("question"));
+        assert_eq!(prio("question"), prio("awaiting_input"));
+        assert!(prio("question") < prio("stalled"));
+        assert_eq!(prio("stalled"), prio("error"));
+        assert!(prio("error") < prio("busy"));
+        assert!(prio("busy") < prio("idle"));
+        assert_eq!(state_prio_icon("normal", false), (6, "·"));
+        assert_eq!(state_prio_icon("normal", true), (5, "󰑮"));
+    }
+
+    #[test]
+    fn test_wait_order_key_only_reorders_waiting_rows() {
+        assert!(wait_order_key(1, 1_000) < wait_order_key(1, 2_000));
+        assert_eq!(wait_order_key(1, 0), u64::MAX);
+        assert_eq!(wait_order_key(4, 1_000), wait_order_key(4, 2_000));
     }
 }
