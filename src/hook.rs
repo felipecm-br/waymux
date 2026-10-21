@@ -58,7 +58,27 @@ pub fn get_active_tmux_pane() -> String {
     String::new()
 }
 
-fn resolve_window_icon(pane: &str, ctx: &serde_json::Value) -> &'static str {
+fn resolve_window_icon(pane: &str, ctx: &serde_json::Value, agent_hint: Option<&str>) -> &'static str {
+    if let Some(agent) = agent_hint {
+        match agent.to_ascii_lowercase().as_str() {
+            "claude" => return "",
+            "codex" => return "",
+            "muse" => return "󱚣",
+            "agy" | "agy-bin" | "antigravity" => return "",
+            "devin" | "opencode" => return "󰚩",
+            _ => {}
+        }
+    }
+    if let Some(agent) = ctx.get("agent").and_then(|v| v.as_str()) {
+        match agent.to_ascii_lowercase().as_str() {
+            "claude" => return "",
+            "codex" => return "",
+            "muse" => return "󱚣",
+            "agy" | "agy-bin" | "antigravity" => return "",
+            "devin" | "opencode" => return "󰚩",
+            _ => {}
+        }
+    }
     if !pane.is_empty()
         && let Some(cmd) = tmux_out(&[
             "display-message",
@@ -69,7 +89,8 @@ fn resolve_window_icon(pane: &str, ctx: &serde_json::Value) -> &'static str {
         ])
     {
         match cmd.trim() {
-            "devin" | "claude" | "opencode" => return "󰚩",
+            "claude" => return "",
+            "devin" | "opencode" => return "󰚩",
             "codex" => return "",
             "muse" => return "󱚣",
             "agy" | "agy-bin" | "antigravity" => return "",
@@ -239,14 +260,14 @@ fn print_hook_response(event_type: &str, ctx: &serde_json::Value) {
     }
 }
 
-fn run_tmux_hook(event_type: &str) -> i32 {
+fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
     let tmux_pane = get_active_tmux_pane();
     let ctx = read_stdin_json();
 
     match event_type {
         "SessionStart" | "PreInvocation" | "UserPromptSubmit" => {
             if !tmux_pane.is_empty() {
-                let icon = resolve_window_icon(&tmux_pane, &ctx);
+                let icon = resolve_window_icon(&tmux_pane, &ctx, agent_hint);
                 let _ = tmux_status(&["rename-window", "-t", &tmux_pane, icon]);
             }
             if let Some(title) = extract_session_title(&ctx) {
@@ -261,7 +282,7 @@ fn run_tmux_hook(event_type: &str) -> i32 {
         "PostToolUse" => {
             send_acp_state(&tmux_pane, "working");
         }
-        "PermissionRequest" => {
+        "PermissionRequest" | "Notification" => {
             send_acp_state(&tmux_pane, "permission");
         }
         "Stop" => {
@@ -404,15 +425,26 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
 pub fn run_cli(args: &[String]) -> i32 {
     let kind = args.first().map(|s| s.as_str()).unwrap_or("tmux");
     let event = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    let agent = args.get(2).map(|s| s.as_str());
     match kind {
         "lazygit" => run_lazygit_hook(event),
-        _ => run_tmux_hook(event),
+        _ => run_tmux_hook(event, agent),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_resolve_window_icon() {
+        let ctx = serde_json::json!({});
+        assert_eq!(resolve_window_icon("", &ctx, Some("claude")), "");
+        assert_eq!(resolve_window_icon("", &ctx, Some("codex")), "");
+        assert_eq!(resolve_window_icon("", &ctx, Some("agy")), "");
+        assert_eq!(resolve_window_icon("", &ctx, Some("devin")), "󰚩");
+        assert_eq!(resolve_window_icon("", &ctx, Some("opencode")), "󰚩");
+    }
 
     #[test]
     fn test_classify_pre_tool_state() {
