@@ -1,4 +1,5 @@
-use crate::config::{AgentStateTheme, SoundConfig, Spinner, ThemeConfig};
+use crate::config::{SoundConfig, Spinner, ThemeConfig};
+use crate::status_palette::{self, Mode};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -100,8 +101,24 @@ fn urgency_score(state: &AgentState) -> u8 {
     }
 }
 
+/// Icon from `[theme.states.<key>]` (else `fallback_icon`) and the semantic state color.
+fn state_icon_color(
+    theme: Option<&ThemeConfig>,
+    key: &str,
+    fallback_icon: &str,
+    mode: Mode,
+) -> (String, String) {
+    let icon = theme
+        .and_then(|t| t.states.get(key))
+        .map(|s| s.icon.clone())
+        .filter(|i| !i.is_empty())
+        .unwrap_or_else(|| fallback_icon.to_string());
+    (icon, status_palette::state_color(theme, key, mode))
+}
+
 pub struct WaybarAdapter {
     theme: Option<ThemeConfig>,
+    mode: Mode,
     pane_updates: Arc<Mutex<HashMap<String, AgentUpdate>>>,
 }
 
@@ -109,6 +126,7 @@ impl WaybarAdapter {
     pub fn new(theme: Option<ThemeConfig>) -> Self {
         Self {
             theme,
+            mode: status_palette::detect_mode(),
             pane_updates: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -142,19 +160,9 @@ impl OutputAdapter for WaybarAdapter {
                 AgentState::Closed => ("idle", "Agent Closed"),
             };
 
-            let (icon, color) = if let Some(theme) = &self.theme {
-                if let Some(state_theme) = theme.states.get(raw_state) {
-                    (state_theme.icon.clone(), state_theme.color.clone())
-                } else if raw_state == "stalled" {
-                    ("󱥁".to_string(), "#fab387".to_string())
-                } else {
-                    ("".to_string(), "#ffffff".to_string())
-                }
-            } else if raw_state == "stalled" {
-                ("󱥁".to_string(), "#fab387".to_string())
-            } else {
-                ("".to_string(), "#ffffff".to_string())
-            };
+            let fallback_icon = if raw_state == "stalled" { "󱥁" } else { "" };
+            let (icon, color) =
+                state_icon_color(self.theme.as_ref(), raw_state, fallback_icon, self.mode);
 
             let json_payload = serde_json::json!({
                 "text": icon,
@@ -376,6 +384,7 @@ pub struct TmuxAdapter {
     spinner_frames: Vec<String>,
     spinner_interval: u64,
     theme: Option<ThemeConfig>,
+    mode: Mode,
 }
 
 impl TmuxAdapter {
@@ -392,6 +401,7 @@ impl TmuxAdapter {
             spinner_frames: frames,
             spinner_interval: interval,
             theme,
+            mode: status_palette::detect_mode(),
         }
     }
 
@@ -467,56 +477,18 @@ impl TmuxAdapter {
             }
             Some(state) => {
                 self.stop_spinner(window_id).await;
-                let default_theme = AgentStateTheme {
-                    icon: "?".to_string(),
-                    color: "white".to_string(),
+                let (raw, fallback_icon) = match state {
+                    AgentState::Idle => ("idle", "?"),
+                    AgentState::AwaitingInput => ("question", "?"),
+                    AgentState::Permission => ("permission", "?"),
+                    AgentState::Stalled => ("stalled", "󱥁"),
+                    AgentState::Error => ("error", "?"),
+                    _ => ("", ""),
                 };
-                let (icon, color, raw) = match state {
-                    AgentState::Idle => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("idle"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "idle")
-                    }
-                    AgentState::AwaitingInput => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("question"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "question")
-                    }
-                    AgentState::Permission => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("permission"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "permission")
-                    }
-                    AgentState::Stalled => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("stalled"))
-                            .cloned()
-                            .unwrap_or(AgentStateTheme {
-                                icon: "󱥁".to_string(),
-                                color: "#fab387".to_string(),
-                            });
-                        (t.icon, t.color, "stalled")
-                    }
-                    AgentState::Error => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("error"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "error")
-                    }
-                    _ => ("".to_string(), "".to_string(), ""),
+                let (icon, color) = if raw.is_empty() {
+                    (String::new(), String::new())
+                } else {
+                    state_icon_color(self.theme.as_ref(), raw, fallback_icon, self.mode)
                 };
                 set_tmux_window_state(window_id, &icon, raw, &color).await;
             }
@@ -541,12 +513,7 @@ impl TmuxAdapter {
         let target_clone = target_id.clone();
         let frames = self.spinner_frames.clone();
         let interval = self.spinner_interval;
-        let (icon, color) = self
-            .theme
-            .as_ref()
-            .and_then(|t| t.states.get("busy"))
-            .map(|s| (s.icon.clone(), s.color.clone()))
-            .unwrap_or_else(|| ("󰑮".to_string(), "#f9e2af".to_string()));
+        let (icon, color) = state_icon_color(self.theme.as_ref(), "busy", "󰑮", self.mode);
 
         let task = tokio::spawn(async move {
             if frames.is_empty() {
@@ -1010,8 +977,34 @@ impl OutputAdapter for SoundAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ThemeConfig;
+    use crate::config::{AgentStateTheme, ThemeConfig};
     use std::collections::HashMap;
+
+    #[test]
+    fn test_state_icon_color_falls_back_to_semantic_palette() {
+        let mut states = HashMap::new();
+        states.insert(
+            "permission".to_string(),
+            AgentStateTheme {
+                icon: "󱅭".to_string(),
+                color: String::new(),
+            },
+        );
+        let theme = ThemeConfig {
+            active_spinner: "dot".to_string(),
+            states,
+        };
+        // Icon from config, color from the built-in palette when the config leaves it empty.
+        assert_eq!(
+            state_icon_color(Some(&theme), "permission", "?", Mode::Dark),
+            ("󱅭".to_string(), "#ff9e57".to_string())
+        );
+        // Missing state: fallback icon, semantic color.
+        assert_eq!(
+            state_icon_color(Some(&theme), "stalled", "󱥁", Mode::Light),
+            ("󱥁".to_string(), "#a21caf".to_string())
+        );
+    }
 
     #[tokio::test]
     async fn test_tmux_adapter_updates() {

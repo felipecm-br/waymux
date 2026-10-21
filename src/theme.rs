@@ -1,3 +1,5 @@
+use crate::config::ThemeConfig;
+use crate::status_palette::{self, Mode};
 use std::fs;
 use std::path::PathBuf;
 
@@ -31,6 +33,15 @@ pub struct ThemePalette {
     pub c_diff_del: String,
     pub c_diff_dirty: String,
     pub c_pr: String,
+
+    /// Agent-state glyph colors (`status_palette`), shared with the status bar. The `c_*`
+    /// fields above stay theme-derived chrome.
+    pub s_permission: String,
+    pub s_question: String,
+    pub s_stalled: String,
+    pub s_error: String,
+    pub s_busy: String,
+    pub s_idle: String,
 }
 
 impl Default for ThemePalette {
@@ -93,7 +104,26 @@ impl ThemePalette {
             c_diff_del,
             c_diff_dirty,
             c_pr,
+            s_permission: String::new(),
+            s_question: String::new(),
+            s_stalled: String::new(),
+            s_error: String::new(),
+            s_busy: String::new(),
+            s_idle: String::new(),
         }
+        .with_state_colors(None, Mode::Dark)
+    }
+
+    /// Resolves the agent-state colors from config overrides or the built-in palette.
+    pub fn with_state_colors(mut self, theme: Option<&ThemeConfig>, mode: Mode) -> Self {
+        let color = |state| hex_to_ansi_fg(&status_palette::state_color(theme, state, mode));
+        self.s_permission = color("permission");
+        self.s_question = color("question");
+        self.s_stalled = color("stalled");
+        self.s_error = color("error");
+        self.s_busy = color("busy");
+        self.s_idle = color("idle");
+        self
     }
 
     pub fn load() -> Self {
@@ -105,10 +135,12 @@ impl ThemePalette {
         let mut blue = "#7fbbb3".to_string();
         let mut fg = "#d3c6aa".to_string();
         let mut muted = "#475258".to_string();
+        let mut mode = Mode::Dark;
 
         if let Ok(home) = std::env::var("HOME") {
             let path = PathBuf::from(home).join(".local/state/omarchy/current/theme/colors.toml");
             if let Ok(content) = fs::read_to_string(path) {
+                mode = status_palette::mode_from_colors_toml(&content);
                 for line in content.lines() {
                     let trimmed = line.trim();
                     if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -137,6 +169,7 @@ impl ThemePalette {
         }
 
         Self::from_hex_values(&orange, &yellow, &red, &magenta, &cyan, &blue, &fg, &muted)
+            .with_state_colors(crate::config::load_default_theme().as_ref(), mode)
     }
 }
 

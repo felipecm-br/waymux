@@ -1,0 +1,271 @@
+//! Semantic agent-state colors shared by the status bar, Waybar and the Cockpit.
+//!
+//! Urgency has to stay distinguishable on every theme, so state colors are fixed per light/dark
+//! mode instead of borrowed from the theme's ANSI slots: monochrome themes such as `lumon` map
+//! red, yellow, orange and magenta to near-identical blues. An explicit `color` under
+//! `[theme.states.<state>]` still wins.
+//!
+//! Dark palette: worst-case pairwise CIEDE2000 10.8 across normal, deuteranope and protanope
+//! vision (Machado 2009 simulation), ≥ 4.5:1 on every built-in dark Omarchy background.
+//! Light palette: worst-case CIEDE2000 18.5 for normal vision and ≥ 4.5:1 on the built-in light
+//! backgrounds; question and permission converge under red-green deficiency, where the glyph
+//! shape carries the difference.
+
+use crate::config::ThemeConfig;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    Dark,
+    Light,
+}
+
+/// Collapses state aliases onto the six semantic states.
+pub fn canonical_state(state: &str) -> &str {
+    match state {
+        "awaiting_input" => "question",
+        "working" => "busy",
+        "hanging" => "stalled",
+        other => other,
+    }
+}
+
+pub fn builtin_color(state: &str, mode: Mode) -> &'static str {
+    match (mode, canonical_state(state)) {
+        (Mode::Dark, "permission") => "#ff9e57",
+        (Mode::Dark, "question") => "#f9e2af",
+        (Mode::Dark, "stalled") => "#f5c2e7",
+        (Mode::Dark, "error") => "#ff6b7a",
+        (Mode::Dark, "busy") => "#89b4fa",
+        (Mode::Dark, _) => "#8aa4b8",
+        (Mode::Light, "permission") => "#c2410c",
+        (Mode::Light, "question") => "#7c6a00",
+        (Mode::Light, "stalled") => "#a21caf",
+        (Mode::Light, "error") => "#be123c",
+        (Mode::Light, "busy") => "#2563eb",
+        (Mode::Light, _) => "#4f6b5f",
+    }
+}
+
+/// The configured `[theme.states.<state>].color` when set, else the built-in semantic color.
+pub fn state_color(theme: Option<&ThemeConfig>, state: &str, mode: Mode) -> String {
+    let canonical = canonical_state(state);
+    theme
+        .and_then(|t| t.states.get(state).or_else(|| t.states.get(canonical)))
+        .map(|s| s.color.trim())
+        .filter(|c| !c.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| builtin_color(canonical, mode).to_string())
+}
+
+/// Unquoted value of a `key = value` line (inline `#` comments after a quoted value ignored).
+fn toml_value(raw: &str) -> &str {
+    let raw = raw.trim();
+    match raw.chars().next() {
+        Some(q @ ('"' | '\'')) => raw[1..].split(q).next().unwrap_or(""),
+        _ => raw.split_whitespace().next().unwrap_or(""),
+    }
+}
+
+/// `mode = "light" | "dark"` from an Omarchy `colors.toml`, else the background luminance.
+pub fn mode_from_colors_toml(content: &str) -> Mode {
+    let mut background = None;
+    for line in content.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = toml_value(value);
+        match key.trim() {
+            "mode" if value.eq_ignore_ascii_case("light") => return Mode::Light,
+            "mode" if value.eq_ignore_ascii_case("dark") => return Mode::Dark,
+            "background" => background = relative_luminance(value),
+            _ => {}
+        }
+    }
+    match background {
+        // Above ~0.179 black text out-contrasts white text: the background is light.
+        Some(l) if l > 0.179 => Mode::Light,
+        _ => Mode::Dark,
+    }
+}
+
+/// Mode of the active Omarchy theme; dark when unknown. The theme-set hook restarts the
+/// daemon, so reading this once at startup follows theme switches.
+pub fn detect_mode() -> Mode {
+    std::env::var("HOME")
+        .ok()
+        .and_then(|home| {
+            std::fs::read_to_string(format!(
+                "{}/.local/state/omarchy/current/theme/colors.toml",
+                home
+            ))
+            .ok()
+        })
+        .map(|content| mode_from_colors_toml(&content))
+        .unwrap_or(Mode::Dark)
+}
+
+/// WCAG 2.x relative luminance of `#rrggbb`.
+pub fn relative_luminance(hex: &str) -> Option<f64> {
+    let h = hex.trim().strip_prefix('#').unwrap_or(hex.trim());
+    if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let channel = |i: usize| -> f64 {
+        let c = f64::from(u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0)) / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    Some(0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4))
+}
+
+/// WCAG 2.x contrast ratio between two `#rrggbb` colors.
+pub fn contrast_ratio(a: &str, b: &str) -> Option<f64> {
+    let (la, lb) = (relative_luminance(a)?, relative_luminance(b)?);
+    let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+    Some((hi + 0.05) / (lo + 0.05))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::AgentStateTheme;
+    use std::collections::HashMap;
+
+    const STATES: [&str; 6] = ["idle", "busy", "question", "permission", "stalled", "error"];
+    // Backgrounds of the built-in Omarchy themes, by mode.
+    const DARK_BACKGROUNDS: [&str; 17] = [
+        "#1e1e2e", "#060B1E", "#2d353b", "#282828", "#0B0C16", "#1f1f28", "#0c0b0c", "#16242d",
+        "#121212", "#222222", "#2e3440", "#111c18", "#05182e", "#2c2525", "#101315", "#1a1b26",
+        "#000000",
+    ];
+    const LIGHT_BACKGROUNDS: [&str; 5] = ["#eff1f5", "#FFFCF0", "#fafafa", "#faf4ed", "#ffffff"];
+    /// Regression bar for the built-in palettes (actual minimums: 28 dark, 33 light).
+    const MIN_STATE_DELTA_E76: f64 = 20.0;
+
+    fn to_lab(hex: &str) -> (f64, f64, f64) {
+        let h = hex.trim_start_matches('#');
+        let lin = |i: usize| {
+            let c = f64::from(u8::from_str_radix(&h[i..i + 2], 16).unwrap()) / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (r, g, b) = (lin(0), lin(2), lin(4));
+        let x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047;
+        let y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b;
+        let z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883;
+        let f = |t: f64| {
+            if t > 216.0 / 24389.0 {
+                t.cbrt()
+            } else {
+                (24389.0 / 27.0 * t + 16.0) / 116.0
+            }
+        };
+        let (fx, fy, fz) = (f(x), f(y), f(z));
+        (116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz))
+    }
+
+    fn delta_e76(a: &str, b: &str) -> f64 {
+        let (l1, a1, b1) = to_lab(a);
+        let (l2, a2, b2) = to_lab(b);
+        ((l1 - l2).powi(2) + (a1 - a2).powi(2) + (b1 - b2).powi(2)).sqrt()
+    }
+
+    #[test]
+    fn test_builtin_palettes_meet_text_contrast_on_theme_backgrounds() {
+        for (mode, backgrounds) in [
+            (Mode::Dark, &DARK_BACKGROUNDS[..]),
+            (Mode::Light, &LIGHT_BACKGROUNDS[..]),
+        ] {
+            for state in STATES {
+                for bg in backgrounds {
+                    let ratio = contrast_ratio(builtin_color(state, mode), bg).unwrap();
+                    assert!(ratio >= 4.5, "{mode:?} {state} on {bg}: {ratio:.2}:1");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_builtin_states_are_distinct() {
+        for mode in [Mode::Dark, Mode::Light] {
+            for (i, a) in STATES.iter().enumerate() {
+                for b in &STATES[i + 1..] {
+                    let d = delta_e76(builtin_color(a, mode), builtin_color(b, mode));
+                    assert!(d >= MIN_STATE_DELTA_E76, "{mode:?} {a} vs {b}: ΔE76 {d:.1}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_lumon_theme_slots_fail_the_bar() {
+        // The theme slots the status bar used under lumon: working vs permission.
+        assert!(delta_e76("#9dcae5", "#8bc9eb") < MIN_STATE_DELTA_E76);
+    }
+
+    #[test]
+    fn test_state_color_prefers_explicit_config() {
+        let mut states = HashMap::new();
+        states.insert(
+            "permission".to_string(),
+            AgentStateTheme {
+                icon: "󱅭".to_string(),
+                color: "#123456".to_string(),
+            },
+        );
+        states.insert(
+            "question".to_string(),
+            AgentStateTheme {
+                icon: "󱜻".to_string(),
+                color: String::new(),
+            },
+        );
+        let theme = ThemeConfig {
+            active_spinner: "dot".to_string(),
+            states,
+        };
+        assert_eq!(
+            state_color(Some(&theme), "permission", Mode::Dark),
+            "#123456"
+        );
+        // Empty color falls back; aliases resolve to their semantic state.
+        assert_eq!(state_color(Some(&theme), "question", Mode::Dark), "#f9e2af");
+        assert_eq!(
+            state_color(Some(&theme), "awaiting_input", Mode::Light),
+            "#7c6a00"
+        );
+        assert_eq!(state_color(None, "working", Mode::Dark), "#89b4fa");
+    }
+
+    #[test]
+    fn test_mode_from_colors_toml() {
+        assert_eq!(mode_from_colors_toml("mode = \"light\"\n"), Mode::Light);
+        assert_eq!(
+            mode_from_colors_toml("mode = 'dark' # inline\nbackground = \"#ffffff\""),
+            Mode::Dark
+        );
+        // No mode key: decide by background luminance.
+        assert_eq!(
+            mode_from_colors_toml("background = \"#dfdfdf\""),
+            Mode::Light
+        );
+        assert_eq!(
+            mode_from_colors_toml("background = \"#16242d\""),
+            Mode::Dark
+        );
+        assert_eq!(mode_from_colors_toml("garbage"), Mode::Dark);
+    }
+
+    #[test]
+    fn test_contrast_ratio_reference_values() {
+        assert!((contrast_ratio("#000000", "#ffffff").unwrap() - 21.0).abs() < 1e-9);
+        assert!((contrast_ratio("#304860", "#16242d").unwrap() - 1.68).abs() < 0.01);
+        assert!(contrast_ratio("nope", "#ffffff").is_none());
+    }
+}

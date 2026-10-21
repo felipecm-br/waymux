@@ -23,6 +23,7 @@
 - `src/rpc_client.rs`: Zero-dependency synchronous TCP HTTP client for CLI subcommands (`status`, `list`, `dismiss`, `health`, `agentState/list`, `/api/status`).
 - `src/tmux_cmd.rs`: Synchronous Tmux command execution and atomic bracketed-paste buffer injection (`load-buffer` + `paste-buffer -p`).
 - `src/theme.rs`: Dynamic Omarchy `colors.toml` parser, TrueColor ANSI escape generator, and ANSI stripper.
+- `src/status_palette.rs`: Semantic agent-state colors (built-in light/dark palettes, `[theme.states.*].color` overrides) shared by the status bar, Waybar and the Cockpit.
 - `src/cockpit/`: Native Cockpit HUD engine:
   - `mod.rs`: `waymux cockpit` popup launcher, `@SEGMENT_BG`/`@FG`/`@ACCENT_COLOR` Waymaker color resolver, and `__ACTION__` dispatch loop.
   - `items.rs`: `waymux cockpit-items` (~14ms native `/proc/<pid>/stat` & `/proc/<pid>/comm` scanner, memoized Git/PR status, 12-column TSV emitter).
@@ -59,7 +60,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **30 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `signals`, `theme`, and `wt`, with **0 Clippy warnings**.
+> Current baseline: **55 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `signals`, `status_palette`, `theme`, `triage`, and `wt`, with **0 Clippy warnings**.
 
 ---
 

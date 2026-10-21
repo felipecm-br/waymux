@@ -603,12 +603,12 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         }
 
         let c_ico = match row.st.as_str() {
-            "permission" => &theme.c_perm,
-            "question" | "awaiting_input" => &theme.c_question,
-            "stalled" | "hanging" => &theme.c_perm,
-            "error" => &theme.c_error,
-            "busy" | "working" => &theme.c_busy,
-            "idle" => &theme.c_idle,
+            "permission" => &theme.s_permission,
+            "question" | "awaiting_input" => &theme.s_question,
+            "stalled" | "hanging" => &theme.s_stalled,
+            "error" => &theme.s_error,
+            "busy" | "working" => &theme.s_busy,
+            "idle" => &theme.s_idle,
             _ => &theme.c_normal,
         };
 

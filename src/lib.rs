@@ -12,6 +12,7 @@ pub mod pid;
 pub mod presets;
 pub mod rpc_client;
 pub mod signals;
+pub mod status_palette;
 pub mod theme;
 pub mod tmux_cmd;
 pub mod triage;
@@ -144,21 +145,9 @@ pub fn entry() -> anyhow::Result<()> {
                 crate::config::Config::load(&path)?
             }
             None => {
-                let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-                    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-                    format!("{}/.config", home)
-                });
-                let candidates = [
-                    format!("{}/waymux/config.toml", xdg_config),
-                    format!("{}/acpd/config.toml", xdg_config),
-                    "/etc/waymux/config.toml".to_string(),
-                    "/etc/acpd/config.toml".to_string(),
-                    "config/default.toml".to_string(),
-                ];
-
-                if let Some(found) = candidates.iter().find(|p| Path::new(p).is_file()) {
+                if let Some(found) = crate::config::Config::default_path() {
                     tracing::info!("Loading config from {}", found);
-                    crate::config::Config::load(found)?
+                    crate::config::Config::load(&found)?
                 } else {
                     tracing::info!("No external config file found, using built-in defaults");
                     crate::config::Config::default()
