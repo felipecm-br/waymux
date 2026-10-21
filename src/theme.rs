@@ -42,6 +42,7 @@ pub struct ThemePalette {
     pub s_error: String,
     pub s_busy: String,
     pub s_idle: String,
+    pub s_review: String,
 }
 
 impl Default for ThemePalette {
@@ -110,6 +111,7 @@ impl ThemePalette {
             s_error: String::new(),
             s_busy: String::new(),
             s_idle: String::new(),
+            s_review: String::new(),
         }
         .with_state_colors(None, Mode::Dark)
     }
@@ -123,6 +125,7 @@ impl ThemePalette {
         self.s_error = color("error");
         self.s_busy = color("busy");
         self.s_idle = color("idle");
+        self.s_review = color("review");
         self
     }
 

@@ -347,13 +347,15 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 }
 
 /// Row priority and glyph. Urgent rows use `triage::service_class` + 1 so the Cockpit lists
-/// waiting agents in the same order `Prefix+I` visits them.
+/// waiting agents in the same order `Prefix+I` visits them. Finished work nobody has opened yet
+/// (`review`) comes next: it does not block the agent, but it is the next thing that needs you.
 fn state_prio_icon(st: &str, agent_like: bool) -> (u8, &'static str) {
     let ico = match st {
         "permission" => "󱅭",
         "question" | "awaiting_input" => "󱜻",
         "stalled" | "hanging" => "󱥁",
         "error" => "󰨄",
+        "review" => "󰈈",
         "busy" | "working" => "@SPIN@",
         "idle" => "󱥂",
         _ if agent_like => "󰑮",
@@ -361,21 +363,69 @@ fn state_prio_icon(st: &str, agent_like: bool) -> (u8, &'static str) {
     };
     let prio = match (crate::triage::service_class(st), st) {
         (Some(class), _) => class + 1,
-        (None, "busy" | "working") => 4,
-        (None, "idle") => 5,
-        (None, _) if agent_like => 5,
-        _ => 6,
+        (None, "review") => REVIEW_PRIO,
+        (None, "busy" | "working") => 5,
+        (None, "idle") => 6,
+        (None, _) if agent_like => 6,
+        _ => 7,
     };
     (prio, ico)
 }
 
-/// Waiting rows sort oldest-first within their class; everything else keeps window order.
+/// Rows at or above this priority need the human: waiting agents (1–3) and unreviewed work.
+const REVIEW_PRIO: u8 = 4;
+
+/// Rows that need you sort oldest-first within their class; everything else keeps window order.
 fn wait_order_key(prio: u8, ts: u64) -> u64 {
-    if prio <= 3 {
+    if prio <= REVIEW_PRIO {
         crate::triage::normalize_ts(ts)
     } else {
         0
     }
+}
+
+/// Marker in a worktree's git dir; its mtime is when the worktree was last opened for review.
+const REVIEW_MARKER: &str = "waymux-reviewed";
+
+/// Git dir of a worktree without forking git: `.git` is a directory, or a `gitdir: <path>` file.
+pub fn git_dir_of(worktree: &Path) -> Option<std::path::PathBuf> {
+    let dot_git = worktree.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let content = fs::read_to_string(&dot_git).ok()?;
+    let target = content
+        .lines()
+        .find_map(|l| l.strip_prefix("gitdir:"))?
+        .trim();
+    let target = Path::new(target);
+    Some(if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        worktree.join(target)
+    })
+}
+
+/// Records that the worktree was just opened for review (lazygitrs from the Cockpit or Ctrl+G).
+pub fn mark_reviewed(worktree: &Path) {
+    if let Some(dir) = git_dir_of(worktree) {
+        let _ = fs::write(dir.join(REVIEW_MARKER), b"");
+    }
+}
+
+fn mtime_secs(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// "Done, not reviewed": the agent finished after the last review and left something to look
+/// at, either uncommitted changes or a HEAD that moved since the review.
+fn needs_review(finished_at: u64, reviewed_at: u64, head_moved_at: u64, dirty: bool) -> bool {
+    finished_at > reviewed_at && (dirty || head_moved_at > reviewed_at)
 }
 
 #[derive(Debug, Clone)]
@@ -496,11 +546,6 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             }
         }
 
-        let (prio, ico) = state_prio_icon(
-            &st,
-            !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
-        );
-
         let diff_s = if ts > 0 {
             if ts < 10_000_000_000 {
                 now_s.saturating_sub(ts)
@@ -526,6 +571,24 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
                 .or_insert_with(|| resolve_git_metadata(&ppath, now_s))
                 .clone();
         }
+
+        if st == "idle"
+            && ts > 0
+            && let Some(git_dir) = git_dir_of(Path::new(&ppath))
+            && needs_review(
+                crate::triage::normalize_ts(ts) / 1000,
+                mtime_secs(&git_dir.join(REVIEW_MARKER)),
+                mtime_secs(&git_dir.join("logs").join("HEAD")),
+                !git_meta.diffstat.is_empty(),
+            )
+        {
+            st = "review".to_string();
+        }
+
+        let (prio, ico) = state_prio_icon(
+            &st,
+            !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
+        );
 
         let is_agent = !detected_agent.is_empty()
             || is_agent_binary_name(pcmd)
@@ -618,6 +681,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             "error" => &theme.s_error,
             "busy" | "working" => &theme.s_busy,
             "idle" => &theme.s_idle,
+            "review" => &theme.s_review,
             _ => &theme.c_normal,
         };
 
@@ -734,7 +798,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let age_col = if !row.age_str.is_empty() {
             let pad_a = 6usize.saturating_sub(char_len(&row.age_str));
             let age_spaces = " ".repeat(pad_a);
-            if row.prio <= 3 {
+            if row.prio <= REVIEW_PRIO {
                 format!(" {}{}{}{}{}", age_spaces, c_ico, BOLD, row.age_str, RESET)
             } else {
                 format!(" {}{}{}{}", age_spaces, theme.c_muted, row.age_str, RESET)
@@ -906,16 +970,52 @@ mod tests {
         assert_eq!(prio("question"), prio("awaiting_input"));
         assert!(prio("question") < prio("stalled"));
         assert_eq!(prio("stalled"), prio("error"));
-        assert!(prio("error") < prio("busy"));
+        assert!(prio("error") < prio("review"));
+        assert!(prio("review") < prio("busy"));
         assert!(prio("busy") < prio("idle"));
-        assert_eq!(state_prio_icon("normal", false), (6, "·"));
-        assert_eq!(state_prio_icon("normal", true), (5, "󰑮"));
+        assert_eq!(state_prio_icon("review", true), (REVIEW_PRIO, "󰈈"));
+        assert_eq!(state_prio_icon("normal", false), (7, "·"));
+        assert_eq!(state_prio_icon("normal", true), (6, "󰑮"));
     }
 
     #[test]
-    fn test_wait_order_key_only_reorders_waiting_rows() {
+    fn test_wait_order_key_only_reorders_rows_that_need_you() {
         assert!(wait_order_key(1, 1_000) < wait_order_key(1, 2_000));
+        assert!(wait_order_key(REVIEW_PRIO, 1_000) < wait_order_key(REVIEW_PRIO, 2_000));
         assert_eq!(wait_order_key(1, 0), u64::MAX);
-        assert_eq!(wait_order_key(4, 1_000), wait_order_key(4, 2_000));
+        assert_eq!(wait_order_key(5, 1_000), wait_order_key(5, 2_000));
+    }
+
+    #[test]
+    fn test_needs_review() {
+        // Finished after the last review with uncommitted changes, or with new commits.
+        assert!(needs_review(200, 100, 0, true));
+        assert!(needs_review(200, 100, 150, false));
+        // Reviewed since it finished, or nothing to look at.
+        assert!(!needs_review(100, 200, 300, true));
+        assert!(!needs_review(200, 100, 50, false));
+        // Never reviewed: any finished work with changes counts.
+        assert!(needs_review(200, 0, 0, true));
+    }
+
+    #[test]
+    fn test_git_dir_of_main_checkout_and_linked_worktree() {
+        let base = std::env::temp_dir().join(format!("waymux-gitdir-{}", std::process::id()));
+        let main = base.join("main");
+        let linked = base.join("feat");
+        fs::create_dir_all(main.join(".git")).unwrap();
+        fs::create_dir_all(&linked).unwrap();
+        fs::write(linked.join(".git"), "gitdir: ../main/.git/worktrees/feat\n").unwrap();
+
+        assert_eq!(git_dir_of(&main), Some(main.join(".git")));
+        assert_eq!(
+            git_dir_of(&linked),
+            Some(linked.join("../main/.git/worktrees/feat"))
+        );
+        assert_eq!(git_dir_of(&base), None);
+
+        mark_reviewed(&main);
+        assert!(mtime_secs(&main.join(".git").join(REVIEW_MARKER)) > 0);
+        let _ = fs::remove_dir_all(&base);
     }
 }

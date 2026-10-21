@@ -119,13 +119,19 @@ fn compute_start_idx(
     0
 }
 
-/// Index of the first row whose agent waits on the human (column 6 is the raw state).
-/// Rows arrive sorted by service class and wait time, so this is the next agent to serve.
+/// Index of the first row that needs the human (column 6 is the raw state): an agent waiting
+/// on you, else finished work nobody has reviewed. Rows arrive sorted by service class and
+/// wait time, so this is the next thing to serve.
 fn first_waiting_row(items_str: &str) -> Option<usize> {
-    items_str
+    let states: Vec<&str> = items_str
         .lines()
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .position(|l| crate::triage::service_class(l.split('\t').nth(6).unwrap_or("")).is_some())
+        .map(|l| l.split('\t').nth(6).unwrap_or(""))
+        .collect();
+    states
+        .iter()
+        .position(|st| crate::triage::service_class(st).is_some())
+        .or_else(|| states.iter().position(|st| *st == "review"))
 }
 
 /// `S` ships (merge → push → delete branch), which cannot be undone: ask first,
@@ -427,6 +433,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 
             saved_sess = target_sess;
             saved_idx = target_idx;
+            items::mark_reviewed(Path::new(&target_path));
 
             let lzg_bin = find_lazygitrs_bin();
             let mut lzg_args = vec!["-d", "-c", "popup"];
@@ -523,6 +530,20 @@ mod tests {
         let items = [row("0", "s", "busy"), row("1", "s", "idle")].join("\n");
         assert_eq!(compute_start_idx(&items, "", "", "s", "1"), 1);
         assert_eq!(first_waiting_row(&items), None);
+    }
+
+    #[test]
+    fn test_start_idx_prefers_waiting_then_unreviewed() {
+        let review_only = [row("0", "s", "busy"), row("1", "s", "review")].join("\n");
+        assert_eq!(compute_start_idx(&review_only, "", "", "s", "0"), 1);
+
+        let both = [
+            row("0", "s", "review"),
+            row("1", "s", "busy"),
+            row("2", "s", "question"),
+        ]
+        .join("\n");
+        assert_eq!(first_waiting_row(&both), Some(2));
     }
 
     #[test]

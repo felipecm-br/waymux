@@ -9,7 +9,9 @@
 //! vision (Machado 2009 simulation), ≥ 4.5:1 on every built-in dark Omarchy background.
 //! Light palette: worst-case CIEDE2000 18.5 for normal vision and ≥ 4.5:1 on the built-in light
 //! backgrounds; question and permission converge under red-green deficiency, where the glyph
-//! shape carries the difference.
+//! shape carries the difference. The Cockpit-only `review` green (done, not reviewed) is at
+//! least 14 CIEDE2000 from every other state for normal vision; under red-green deficiency it
+//! nears the yellows and blues, so its glyph (`󰈈`) carries the difference there too.
 
 use crate::config::ThemeConfig;
 
@@ -36,12 +38,14 @@ pub fn builtin_color(state: &str, mode: Mode) -> &'static str {
         (Mode::Dark, "stalled") => "#f5c2e7",
         (Mode::Dark, "error") => "#ff6b7a",
         (Mode::Dark, "busy") => "#89b4fa",
+        (Mode::Dark, "review") => "#7ee0b5",
         (Mode::Dark, _) => "#8aa4b8",
         (Mode::Light, "permission") => "#c2410c",
         (Mode::Light, "question") => "#7c6a00",
         (Mode::Light, "stalled") => "#a21caf",
         (Mode::Light, "error") => "#be123c",
         (Mode::Light, "busy") => "#2563eb",
+        (Mode::Light, "review") => "#166534",
         (Mode::Light, _) => "#4f6b5f",
     }
 }
@@ -134,7 +138,15 @@ mod tests {
     use crate::config::AgentStateTheme;
     use std::collections::HashMap;
 
-    const STATES: [&str; 6] = ["idle", "busy", "question", "permission", "stalled", "error"];
+    const STATES: [&str; 7] = [
+        "idle",
+        "busy",
+        "question",
+        "permission",
+        "stalled",
+        "error",
+        "review",
+    ];
     // Backgrounds of the built-in Omarchy themes, by mode.
     const DARK_BACKGROUNDS: [&str; 17] = [
         "#1e1e2e", "#060B1E", "#2d353b", "#282828", "#0B0C16", "#1f1f28", "#0c0b0c", "#16242d",

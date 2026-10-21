@@ -78,7 +78,7 @@ pub fn run_cli() -> i32 {
         c_blue, BOLD, RESET
     );
     println!(
-        "    {}{}[g]{}      Git Cockpit       Toggle Lazygitrs (Dual-Diff, Esc returns)",
+        "    {}{}[g]{}      Git Cockpit       Toggle Lazygitrs (Dual-Diff, Esc returns; clears 󰈈 review)",
         c_magenta, BOLD, RESET
     );
     println!(
