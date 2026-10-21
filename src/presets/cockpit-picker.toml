@@ -46,9 +46,6 @@ multi = false
 row_connection = "Full"
 column_spacing = 0
 
-[results.style]
-modifier = "DIM"
-
 [results.current_style]
 modifier = "BOLD"
 
@@ -68,13 +65,13 @@ prompt = " "
 show = true
 
 [footer]
-content = " {cyan,bold:Enter} {darkgray:Jump} {darkgray:│} {cyan,bold:y/n} {darkgray:Ack} {darkgray:│} {cyan,bold:r} {darkgray:Review} {darkgray:│} {cyan,bold:i} {darkgray:Input} {darkgray:│} {cyan,bold:g} {darkgray:Git} {darkgray:│} {cyan,bold:a} {darkgray:Agents} {darkgray:│} {cyan,bold:Tab} {darkgray:Worktrees} {darkgray:│} {cyan,bold:?} {darkgray:Help} {darkgray:│} {cyan,bold:Esc} {darkgray:Exit}"
+content = " {cyan,bold:Enter} {__MUTED_TEXT__:Jump} {__MUTED_LINE__:│} {cyan,bold:y/n} {__MUTED_TEXT__:Ack} {__MUTED_LINE__:│} {cyan,bold:r} {__MUTED_TEXT__:Review} {__MUTED_LINE__:│} {cyan,bold:i} {__MUTED_TEXT__:Input} {__MUTED_LINE__:│} {cyan,bold:g} {__MUTED_TEXT__:Git} {__MUTED_LINE__:│} {cyan,bold:a} {__MUTED_TEXT__:Agents} {__MUTED_LINE__:│} {cyan,bold:Tab} {__MUTED_TEXT__:Worktrees} {__MUTED_LINE__:│} {cyan,bold:?} {__MUTED_TEXT__:Help} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:Exit}"
 row_connection = "Full"
 match_indent = false
 separator = "light"
 
 [footer.separator_style]
-fg = "Darkgray"
+fg = "__MUTED_LINE__"
 
 [ui.nav]
 active = true
@@ -153,7 +150,7 @@ tail = true
 
 [preview.border]
 sides = "LEFT"
-color = "Darkgray"
+color = "__MUTED_LINE__"
 
 [[preview.layout]]
 command = '__WAYMUX_BIN__ cockpit-preview "{=session}" "{=idx}" "{=pid}" "{=path}" "{=state}" "{=agent}" "{=age}" "{=branch}" "{=sync}"'

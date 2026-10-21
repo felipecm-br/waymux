@@ -132,6 +132,40 @@ pub fn contrast_ratio(a: &str, b: &str) -> Option<f64> {
     Some((hi + 0.05) / (lo + 0.05))
 }
 
+/// WCAG minimum for text (1.4.3) and for UI lines such as borders and separators (1.4.11).
+pub const MIN_TEXT_CONTRAST: f64 = 4.5;
+pub const MIN_LINE_CONTRAST: f64 = 3.0;
+
+/// `color` unchanged when it reaches `min_ratio` against `background`, otherwise the smallest
+/// step of a blend toward `toward` (usually the theme foreground) that does. Keeps the theme's
+/// hue where possible; e.g. lumon's `muted` (1.68:1) becomes a legible slate.
+pub fn ensure_contrast(color: &str, background: &str, toward: &str, min_ratio: f64) -> String {
+    let parse = |hex: &str| -> Option<[f64; 3]> {
+        let h = hex.trim().strip_prefix('#').unwrap_or(hex.trim());
+        if h.len() != 6 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        let ch = |i: usize| f64::from(u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(0));
+        Some([ch(0), ch(2), ch(4)])
+    };
+    let (Some(from), Some(to)) = (parse(color), parse(toward)) else {
+        return color.to_string();
+    };
+    for step in 0..=20 {
+        let t = f64::from(step) / 20.0;
+        let mixed = format!(
+            "#{:02x}{:02x}{:02x}",
+            (from[0] + (to[0] - from[0]) * t).round() as u8,
+            (from[1] + (to[1] - from[1]) * t).round() as u8,
+            (from[2] + (to[2] - from[2]) * t).round() as u8
+        );
+        if contrast_ratio(&mixed, background).is_some_and(|r| r >= min_ratio) {
+            return mixed;
+        }
+    }
+    toward.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +306,27 @@ mod tests {
             Mode::Dark
         );
         assert_eq!(mode_from_colors_toml("garbage"), Mode::Dark);
+    }
+
+    #[test]
+    fn test_ensure_contrast_lifts_only_what_falls_short() {
+        // lumon: muted #304860 on #16242d is 1.68:1.
+        let lifted = ensure_contrast("#304860", "#16242d", "#d6e2ee", MIN_TEXT_CONTRAST);
+        assert!(contrast_ratio(&lifted, "#16242d").unwrap() >= MIN_TEXT_CONTRAST);
+        assert!(
+            contrast_ratio(&lifted, "#16242d").unwrap() < 7.0,
+            "stays subdued: {lifted}"
+        );
+        // Already legible colors are left alone.
+        assert_eq!(
+            ensure_contrast("#8aa4b8", "#16242d", "#d6e2ee", MIN_TEXT_CONTRAST),
+            "#8aa4b8"
+        );
+        // Unparseable input passes through.
+        assert_eq!(
+            ensure_contrast("Darkgray", "#000000", "#ffffff", 3.0),
+            "Darkgray"
+        );
     }
 
     #[test]

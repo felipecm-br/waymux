@@ -60,7 +60,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **57 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `signals`, `status_palette`, `theme`, `triage`, and `wt`, with **0 Clippy warnings**.
+> Current baseline: **64 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `presets`, `signals`, `status_palette`, `theme`, `triage`, and `wt`, with **0 Clippy warnings**.
 
 ---
 
