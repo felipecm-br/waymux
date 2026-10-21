@@ -58,7 +58,11 @@ pub fn get_active_tmux_pane() -> String {
     String::new()
 }
 
-fn resolve_window_icon(pane: &str, ctx: &serde_json::Value, agent_hint: Option<&str>) -> &'static str {
+fn resolve_window_icon(
+    pane: &str,
+    ctx: &serde_json::Value,
+    agent_hint: Option<&str>,
+) -> &'static str {
     if let Some(agent) = agent_hint {
         match agent.to_ascii_lowercase().as_str() {
             "claude" => return "",
