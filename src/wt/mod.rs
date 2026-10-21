@@ -230,6 +230,51 @@ awt help | -h | --help                  Show this help message"
     );
 }
 
+/// Splits `merge|ship` arguments into the target branch and the flags forwarded to
+/// awt-merge.sh. Unknown flags (e.g. `--confirm`) are forwarded untouched.
+fn split_merge_args(args: &[String], is_ship: bool) -> (String, Vec<String>) {
+    let mut flags = Vec::new();
+    let mut target = String::new();
+    let mut idx = 1usize;
+    while idx < args.len() {
+        let a = &args[idx];
+        if matches!(
+            a.as_str(),
+            "--squash"
+                | "--no-squash"
+                | "--no-commit"
+                | "--no-remove"
+                | "--no-tmux"
+                | "--no-connect"
+                | "--no-rebase"
+                | "--rebase"
+                | "--push"
+                | "--ship"
+                | "--no-hooks"
+                | "--skip-pre-merge"
+                | "-H"
+        ) || a.starts_with("--into=")
+        {
+            flags.push(a.clone());
+        } else if a == "--into" {
+            idx += 1;
+            if let Some(val) = args.get(idx) {
+                flags.push("--into".to_string());
+                flags.push(val.clone());
+            }
+        } else if target.is_empty() {
+            target = a.clone();
+        } else {
+            flags.push(a.clone());
+        }
+        idx += 1;
+    }
+    if is_ship {
+        flags.push("--push".to_string());
+    }
+    (target, flags)
+}
+
 pub fn run_cli(args: &[String]) -> i32 {
     let first = args.first().map(|s| s.as_str()).unwrap_or("");
     match first {
@@ -320,46 +365,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             return 0;
         }
         "merge" | "ship" => {
-            let is_ship = first == "ship";
-            let mut flags = Vec::new();
-            let mut target = String::new();
-            let mut idx = 1usize;
-            while idx < args.len() {
-                let a = &args[idx];
-                if matches!(
-                    a.as_str(),
-                    "--squash"
-                        | "--no-squash"
-                        | "--no-commit"
-                        | "--no-remove"
-                        | "--no-tmux"
-                        | "--no-connect"
-                        | "--no-rebase"
-                        | "--rebase"
-                        | "--push"
-                        | "--ship"
-                        | "--no-hooks"
-                        | "--skip-pre-merge"
-                        | "-H"
-                ) || a.starts_with("--into=")
-                {
-                    flags.push(a.clone());
-                } else if a == "--into" {
-                    idx += 1;
-                    if let Some(val) = args.get(idx) {
-                        flags.push("--into".to_string());
-                        flags.push(val.clone());
-                    }
-                } else if target.is_empty() {
-                    target = a.clone();
-                } else {
-                    flags.push(a.clone());
-                }
-                idx += 1;
-            }
-            if is_ship {
-                flags.push("--push".to_string());
-            }
+            let (target, flags) = split_merge_args(args, first == "ship");
             let repo_root = get_repo_root();
             let cur_folder = Path::new(&repo_root)
                 .file_name()
@@ -710,5 +716,24 @@ mod tests {
         let body = slug.strip_prefix("feat/").unwrap();
         assert!(body.len() <= 45);
         assert!(!body.ends_with('-'));
+    }
+
+    #[test]
+    fn test_split_merge_args_forwards_confirm_and_push() {
+        let args: Vec<String> = ["ship", "feat/x", "--confirm"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (target, flags) = split_merge_args(&args, true);
+        assert_eq!(target, "feat/x");
+        assert_eq!(flags, vec!["--confirm", "--push"]);
+
+        let args: Vec<String> = ["merge", "--into", "main", "feat/y", "--squash"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (target, flags) = split_merge_args(&args, false);
+        assert_eq!(target, "feat/y");
+        assert_eq!(flags, vec!["--into", "main", "--squash"]);
     }
 }

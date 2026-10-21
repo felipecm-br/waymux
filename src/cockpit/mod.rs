@@ -116,6 +116,12 @@ fn compute_start_idx(
     0
 }
 
+/// `S` ships (merge → push → delete branch), which cannot be undone: ask first,
+/// exactly like `S` in the awt popup.
+fn ship_cli_args(branch: String) -> Vec<String> {
+    vec!["ship".to_string(), branch, "--confirm".to_string()]
+}
+
 fn find_wm_bin() -> String {
     if let Ok(home) = std::env::var("HOME") {
         let wm = format!("{}/.local/bin/wm", home);
@@ -305,7 +311,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
                 return 0;
             }
             let _ = std::env::set_current_dir(&target_path);
-            return crate::wt::run_cli(&["ship".to_string(), branch]);
+            return crate::wt::run_cli(&ship_cli_args(branch));
         } else if let Some(raw_item) = chosen.strip_prefix("__SWEEP_WORKTREES__") {
             let target_path = resolve_target_path(raw_item, &orig_sess);
             let _ = std::env::set_current_dir(&target_path);
@@ -470,5 +476,18 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             }
             return 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ship_asks_for_confirmation() {
+        assert_eq!(
+            ship_cli_args("feat/x".to_string()),
+            vec!["ship", "feat/x", "--confirm"]
+        );
     }
 }

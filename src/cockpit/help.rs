@@ -30,7 +30,7 @@ pub fn run_cli() -> i32 {
         c_yellow, BOLD, RESET
     );
     println!(
-        "    {}{}[S]{}      Ship Worktree     Merge, push & clean worktree",
+        "    {}{}[S]{}      Ship Worktree     Merge, push & clean worktree (asks first)",
         c_cyan, BOLD, RESET
     );
     println!(
