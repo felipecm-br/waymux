@@ -1440,6 +1440,15 @@ async fn handle_status(
     }
 }
 
+/// Compares without an early exit, so response time does not reveal how much of a
+/// guessed token matched.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 pub async fn auth_middleware(
     State(token): State<Arc<String>>,
     req: axum::extract::Request,
@@ -1450,7 +1459,7 @@ pub async fn auth_middleware(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .is_some_and(|b| b.trim() == token.as_str());
+        .is_some_and(|b| constant_time_eq(b.trim().as_bytes(), token.as_bytes()));
 
     if authenticated {
         Ok(next.run(req).await)
@@ -1709,24 +1718,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_middleware_header_check() {
+    async fn test_auth_middleware_rejects_missing_and_wrong_tokens() {
+        use tower::ServiceExt;
+
         let token = Arc::new("secret-token-123".to_string());
+        let state = ApiState::new(Vec::new(), 0);
+        let body = r#"{"jsonrpc":"2.0","method":"agentState/list","id":1}"#;
+        let call = |auth: Option<&'static str>| {
+            let router = api_router(state.clone(), token.clone());
+            async move {
+                let mut req = axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json");
+                if let Some(value) = auth {
+                    req = req.header("Authorization", value);
+                }
+                let req = req.body(axum::body::Body::from(body)).unwrap();
+                router.oneshot(req).await.unwrap().status()
+            }
+        };
 
-        let req = axum::http::Request::builder()
-            .uri("/api/status")
-            .header("Authorization", "Bearer secret-token-123")
-            .body(axum::body::Body::empty())
-            .unwrap();
+        assert_eq!(call(None).await, axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            call(Some("Bearer secret-token-12")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(Some("secret-token-123")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(Some("Bearer secret-token-123")).await,
+            axum::http::StatusCode::OK
+        );
+    }
 
-        let auth_str = req
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert_eq!(auth_str, "Bearer secret-token-123");
-        let bearer = auth_str.strip_prefix("Bearer ").unwrap();
-        assert_eq!(bearer.trim(), token.as_str());
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"abcd"));
+        assert!(constant_time_eq(b"", b""));
     }
 
     #[tokio::test]

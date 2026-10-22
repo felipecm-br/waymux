@@ -3,7 +3,8 @@
 
 listen_addr = "127.0.0.1"
 port = 4040
-pid_file = "/tmp/waymux.pid"
+# Default: $XDG_RUNTIME_DIR/waymux/waymux.pid
+# pid_file = "/run/user/1000/waymux/waymux.pid"
 shutdown_timeout_secs = 30
 log_level = "info"
 

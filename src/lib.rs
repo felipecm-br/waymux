@@ -329,12 +329,18 @@ pub fn entry() -> anyhow::Result<()> {
             }
         };
 
-        let _pid_file = if let Some(ref path) = config.pid_file {
-            tracing::info!("Creating PID file at {}", path);
-            Some(crate::pid::PidFile::create(path)?)
-        } else {
-            None
+        // Default to the per-user runtime dir (systemd's RuntimeDirectory=waymux) so a second
+        // daemon is refused even without a config file.
+        let pid_path = match config.pid_file.clone() {
+            Some(path) => path,
+            None => {
+                let dir = crate::presets::runtime_dir();
+                std::fs::create_dir_all(&dir)?;
+                dir.join("waymux.pid").to_string_lossy().to_string()
+            }
         };
+        tracing::info!("Creating PID file at {}", pid_path);
+        let _pid_file = crate::pid::PidFile::create(&pid_path)?;
 
         crate::daemon::run(config).await?;
         Ok(())
