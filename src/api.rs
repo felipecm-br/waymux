@@ -522,7 +522,9 @@ pub struct StatusResponse {
 }
 
 fn log_flow_event(event: &str, target: &str, extra: &str) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/fecavmi".to_string());
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
     let script = format!("{}/.config/tmux/flow-log.sh", home);
     let event = event.to_string();
     let target = target.to_string();

@@ -54,6 +54,8 @@ HELP
 done
 
 declare -a repo_roots=()
+# Long-lived personal branches whose target/ is never cleaned (space-separated).
+keep_branches="${AWT_SWEEP_KEEP_BRANCHES:-$(id -un)}"
 
 # Adds a repository directory (or its main/master worktree) to repo_roots; returns 1 if none.
 add_repo_root() {
@@ -173,7 +175,7 @@ for repo_root in "${repo_roots[@]}"; do
           candidate_paths+=("$cur_path")
           candidate_branches+=("$cur_branch")
           candidate_reasons+=("$reason")
-        elif [[ $clean_targets -eq 1 && "$cur_branch" != "fecavmi" && -d "$cur_path/target" && -f "$cur_path/Cargo.toml" ]]; then
+        elif [[ $clean_targets -eq 1 && " $keep_branches " != *" $cur_branch "* && -d "$cur_path/target" && -f "$cur_path/Cargo.toml" ]]; then
           t_sz=$(du -sh "$cur_path/target" 2>/dev/null | awk 'NR==1 {print $1}' || true)
           [[ -z "$t_sz" ]] && t_sz="?"
           target_dirs_to_clean+=("$cur_path/target")
