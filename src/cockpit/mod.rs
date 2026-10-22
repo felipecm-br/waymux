@@ -6,6 +6,7 @@ pub mod notes;
 pub mod preview;
 
 use crate::presets::materialize_cockpit_toml;
+use crate::sys::shell_quote;
 use crate::theme::ThemePalette;
 use crate::tmux_cmd::{
     tmux_display_msg, tmux_get_global_opt, tmux_out, tmux_set_global_opt, tmux_status,
@@ -177,7 +178,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 
     if is_fullscreen {
         if !is_stdout_tty() {
-            let cmd = format!("'{}' cockpit --fullscreen", exe_str);
+            let cmd = format!("{} cockpit --fullscreen", shell_quote(&exe_str));
             let _ = tmux_status(&["split-window", "-Z", &cmd]);
             return 0;
         }
@@ -192,8 +193,10 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             .or_else(|| (!popup_text_opt.is_empty()).then_some(popup_text_opt))
             .unwrap_or_else(|| "default".into());
         let popup_cmd = format!(
-            "TMUX_POPUP=1 TMUX_ORIGIN_SESSION='{}' TMUX_ORIGIN_WINDOW='{}' '{}' cockpit",
-            orig_sess, orig_win, exe_str
+            "TMUX_POPUP=1 TMUX_ORIGIN_SESSION={} TMUX_ORIGIN_WINDOW={} {} cockpit",
+            shell_quote(&orig_sess),
+            shell_quote(&orig_win),
+            shell_quote(&exe_str)
         );
         let _ = tmux_status(&[
             "display-popup",
@@ -345,12 +348,13 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             saved_sess = cols.get(3).copied().unwrap_or("").to_string();
             saved_idx = cols.get(1).copied().unwrap_or("").to_string();
 
-            let script = format!(
-                "cd '{}' 2>/dev/null && gh pr view --web 2>/dev/null || tmux display-message 'No pull request found for current branch'",
-                target_path
-            );
             let _ = Command::new("sh")
-                .args(["-c", &script])
+                .args([
+                    "-c",
+                    "cd \"$1\" 2>/dev/null && gh pr view --web 2>/dev/null || tmux display-message 'No pull request found for current branch'",
+                    "sh",
+                    &target_path,
+                ])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -363,12 +367,13 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             saved_sess = cols.get(3).copied().unwrap_or("").to_string();
             saved_idx = cols.get(1).copied().unwrap_or("").to_string();
 
-            let script = format!(
-                "cd '{}' 2>/dev/null && gh pr checks --web 2>/dev/null || tmux display-message 'No PR checks found for current branch'",
-                target_path
-            );
             let _ = Command::new("sh")
-                .args(["-c", &script])
+                .args([
+                    "-c",
+                    "cd \"$1\" 2>/dev/null && gh pr checks --web 2>/dev/null || tmux display-message 'No PR checks found for current branch'",
+                    "sh",
+                    &target_path,
+                ])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())

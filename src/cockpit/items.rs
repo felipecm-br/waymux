@@ -7,6 +7,25 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Refreshes a branch's PR cache in the background: `$1` is the worktree, `$2` the cache
+/// file. Paths travel as arguments, never spliced into the script, so quotes in a path are inert.
+const PR_CACHE_REFRESH_SCRIPT: &str = r#"cd "$1" 2>/dev/null || exit 0
+if gh pr view --json number,title,state,statusCheckRollup > "$2.tmp" 2>/dev/null && [ -s "$2.tmp" ]; then
+  mv "$2.tmp" "$2"
+else
+  c_sha=$(git rev-parse HEAD 2>/dev/null || echo '')
+  c_state=none
+  if [ -n "$c_sha" ]; then
+    c_state=$(gh api "repos/:owner/:repo/commits/$c_sha/status" --jq .state 2>/dev/null | tail -n 1)
+  fi
+  if [ -n "$c_state" ] && [ "$c_state" != none ]; then
+    printf '{"commit_state":"%s"}\n' "$c_state" > "$2"
+  else
+    echo '{}' > "$2"
+  fi
+  rm -f "$2.tmp"
+fi"#;
+
 const AGENT_NAMES: &[&str] = &[
     "agy",
     "agy-bin",
@@ -123,7 +142,11 @@ fn parse_pr_cache_json(path: &Path) -> (String, String) {
         Ok(c) if !c.trim().is_empty() => c,
         _ => return (String::new(), String::new()),
     };
-    let val: serde_json::Value = match serde_json::from_str(&content) {
+    // Wrappers around `gh` (e.g. mise shims) can print a line before the JSON.
+    let json = content
+        .find('{')
+        .map_or(content.as_str(), |i| &content[i..]);
+    let val: serde_json::Value = match serde_json::from_str(json) {
         Ok(v) => v,
         Err(_) => return (String::new(), String::new()),
     };
@@ -270,7 +293,13 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     let br = &meta.branch;
     if !br.is_empty() && !matches!(br.as_str(), "main" | "master" | "HEAD" | "detached") {
         let hash_key = format!("{}_{}", ppath.replace('/', "_"), br.replace('/', "_"));
-        let cache_file = format!("/tmp/gh-pr-cache-{}.json", hash_key);
+        // Per-user runtime dir, not /tmp: other users cannot pre-create or symlink the file.
+        let cache_dir = crate::presets::runtime_dir().join("pr-cache");
+        let _ = fs::create_dir_all(&cache_dir);
+        let cache_file = cache_dir
+            .join(format!("{}.json", hash_key))
+            .to_string_lossy()
+            .to_string();
         let cache_path = Path::new(&cache_file);
 
         let cache_age = fs::metadata(cache_path)
@@ -285,38 +314,8 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
                 .create(true)
                 .append(true)
                 .open(cache_path);
-            let ppath_owned = ppath.to_string();
-            let cache_owned = cache_file.clone();
-            let bg_script = format!(
-                "cd '{}' 2>/dev/null || exit 0; \
-                 if gh pr view --json number,title,state,statusCheckRollup > '{}.tmp' 2>/dev/null && [ -s '{}.tmp' ]; then \
-                   mv '{}.tmp' '{}'; \
-                 else \
-                   c_sha=$(git rev-parse HEAD 2>/dev/null || echo ''); \
-                   if [ -n \"$c_sha\" ]; then \
-                     c_state=$(gh api \"repos/:owner/:repo/commits/$c_sha/status\" --jq .state 2>/dev/null || echo 'none'); \
-                     if [ -n \"$c_state\" ] && [ \"$c_state\" != 'none' ]; then \
-                       echo \"{{\\\"commit_state\\\":\\\"$c_state\\\"}}\" > '{}'; \
-                     else \
-                       echo '{{}}' > '{}'; \
-                     fi; \
-                   else \
-                     echo '{{}}' > '{}'; \
-                   fi; \
-                   rm -f '{}.tmp'; \
-                 fi",
-                ppath_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned
-            );
             let _ = Command::new("sh")
-                .args(["-c", &bg_script])
+                .args(["-c", PR_CACHE_REFRESH_SCRIPT, "sh", ppath, &cache_file])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -950,6 +949,21 @@ pub fn run_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pr_cache_tolerates_wrapper_noise_before_json() {
+        let path =
+            std::env::temp_dir().join(format!("waymux-pr-cache-{}.json", std::process::id()));
+        fs::write(
+            &path,
+            "mise ~/.config/mise/config.toml tools: gh@2.103.0\n\
+             {\"number\":42,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\",\"status\":\"COMPLETED\"}]}",
+        )
+        .unwrap();
+        let parsed = parse_pr_cache_json(&path);
+        let _ = fs::remove_file(&path);
+        assert_eq!(parsed, ("42".to_string(), "success".to_string()));
+    }
 
     #[test]
     fn test_format_age() {

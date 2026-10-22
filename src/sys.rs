@@ -14,6 +14,11 @@ fn is_executable(path: &Path) -> bool {
         .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
+/// Quote `s` as one POSIX shell word: `it's` becomes `'it'\''s'`.
+pub fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
 /// Audio players in preference order: PipeWire, PulseAudio, ALSA, macOS.
 const SOUND_PLAYERS: [&str; 4] = ["pw-play", "paplay", "aplay", "afplay"];
 
@@ -29,6 +34,17 @@ pub fn default_sound_player() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shell_quote_survives_sh_round_trip() {
+        for word in ["plain", "with space", "it's", "a'b'c", "$(rm -rf ~)", ""] {
+            let out = std::process::Command::new("sh")
+                .args(["-c", &format!("printf %s {}", shell_quote(word))])
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8_lossy(&out.stdout), word);
+        }
+    }
 
     #[test]
     fn test_find_in_path_finds_sh_and_rejects_missing() {

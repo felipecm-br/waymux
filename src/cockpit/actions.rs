@@ -1,3 +1,4 @@
+use crate::sys::shell_quote;
 use crate::tmux_cmd::{
     tmux_display_msg, tmux_display_msg_timed, tmux_get_global_opt, tmux_out, tmux_set_global_opt,
     tmux_status, tmux_unset_global_opt,
@@ -324,33 +325,37 @@ pub fn run_window_delete() -> i32 {
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     .unwrap_or_default();
 
-                if !branch.is_empty() && branch != "main" && branch != "master" {
-                    let home = std::env::var("HOME").unwrap_or_default();
-                    let awt_del = format!("{}/.config/waymaker/scripts/awt-delete.sh", home);
-                    if Path::new(&awt_del).is_file() {
-                        if std::env::var("TMUX").is_ok() {
-                            let cmd_str = format!(
-                                "'{}' '{}' '{}' '{}' --confirm",
-                                awt_del, sess_name, wt_path, branch
-                            );
-                            let _ = tmux_status(&[
-                                "display-popup",
-                                "-b",
-                                "rounded",
-                                "-w",
-                                "60",
-                                "-h",
-                                "12",
-                                "-E",
-                                &cmd_str,
-                            ]);
-                        } else {
-                            let _ = Command::new(&awt_del)
-                                .args([sess_name, &wt_path, &branch, "--confirm"])
-                                .status();
-                        }
-                        return 0;
+                if !branch.is_empty()
+                    && branch != "main"
+                    && branch != "master"
+                    && let Some(awt_del) = crate::wt::find_waymaker_script("awt-delete.sh")
+                {
+                    let awt_del = awt_del.to_string_lossy().to_string();
+                    if std::env::var("TMUX").is_ok() {
+                        let cmd_str = format!(
+                            "{} {} {} {} --confirm",
+                            shell_quote(&awt_del),
+                            shell_quote(sess_name),
+                            shell_quote(&wt_path),
+                            shell_quote(&branch)
+                        );
+                        let _ = tmux_status(&[
+                            "display-popup",
+                            "-b",
+                            "rounded",
+                            "-w",
+                            "60",
+                            "-h",
+                            "12",
+                            "-E",
+                            &cmd_str,
+                        ]);
+                    } else {
+                        let _ = Command::new(&awt_del)
+                            .args([sess_name, &wt_path, &branch, "--confirm"])
+                            .status();
                     }
+                    return 0;
                 }
             }
         }
