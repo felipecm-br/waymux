@@ -115,7 +115,7 @@ fn check_tmux() -> Check {
             Level::Fail,
             "tmux",
             "not found",
-            "install tmux 3.3 or newer from your package manager",
+            "install tmux 3.2 or newer from your package manager",
         ),
     }
 }

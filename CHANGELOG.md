@@ -4,6 +4,31 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### 🩺 Works Beyond One Machine
+
+- **`waymux doctor` (`src/doctor.rs`)**: checks the daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, `notify-send`, a sound player, the worktree helpers, Claude Code hooks and the theme file, and prints a fix for each gap. Exits 1 only when the daemon, tmux or git is missing.
+- **Typos no longer start the daemon (`src/lib.rs`)**: `waymux stauts` or `waymux status --help` fell through to daemon mode. Only the bare binary, `daemon` or a leading `--config` start it; unknown commands exit 2. One `COMMANDS` table drives `--help` (plumbing listed separately) and `<command> --help`. Print-only commands restore the default SIGPIPE, so `waymux --help | head` no longer panics.
+- **Bundled worktree helpers (`scripts/awt/`, `install.sh`, `src/wt/mod.rs`)**: `waymux wt` delegated to `awt-*.sh` scripts that existed only in the author's dotfiles and exited 0 silently without them. The ten helpers now ship with Waymux and install to `~/.local/share/waymux/scripts`; `~/.config/waymaker/scripts` still wins. A missing helper exits 127 and lists the searched paths. `awt sweep --all` scans `$AWT_SWEEP_ROOTS` and spares `$AWT_SWEEP_KEEP_BRANCHES` instead of hard-coded personal values.
+- **Installer (`install.sh`)**: checksums fail closed (missing or mismatched `.sha256` stops the install unless `WAYMUX_SKIP_CHECKSUM=1`) and use `sha256sum` or `shasum`, so macOS installs verify instead of failing. `--with-stack` builds `wm` and `lazygitrs`; it used to be ignored.
+- **`waymux init` (`src/init.rs`)**: `--hooks` prints a complete Claude Code hooks block (it printed four comment lines); `--tmux` loads the plugin instead of binding `prefix+c` over tmux's new-window; `--systemd` embeds the shipped unit. Unknown options exit 2.
+- **Portable defaults**: theme colors resolve from `$WAYMUX_COLORS`, `~/.config/waymux/colors.toml`, then Omarchy; sound uses the first of `pw-play`, `paplay`, `aplay`, `afplay` (macOS `Glass.aiff` joins the fallbacks); the PID file defaults to `$XDG_RUNTIME_DIR/waymux/waymux.pid`; the flow log no longer falls back to the author's home.
+- **macOS stall alerts (`src/api.rs`)**: without `/proc`, CPU always read 0 and quiet agents were flagged stalled. Stall detection is off where `/proc` is missing.
+
+### 🛡️ Hardening
+
+- **Shell quoting (`src/cockpit/`, `src/sys.rs`)**: the PR cache refresh and "open PR / checks" spliced worktree paths into `sh -c` strings inside single quotes; paths now travel as positional arguments, and tmux command strings quote each word with a tested `shell_quote`. The PR cache moved from `/tmp` to `$XDG_RUNTIME_DIR/waymux/pr-cache` and tolerates wrapper output before the JSON (a mise shim around `gh` blanked every PR badge).
+- **Auth (`src/api.rs`)**: the middleware test never called the middleware; it now sends requests through `api_router` (401 without or with a wrong token, 200 with the right one). Token comparison is constant-time.
+
+### ⚡ Performance & Build
+
+- **Parallel git status (`src/cockpit/items.rs`)**: `cockpit-items` resolves git metadata for all pane paths on scoped threads; 10 panes went from 31–60 ms to 17–18 ms with identical output.
+- **Release profile (`Cargo.toml`)**: thin LTO, one codegen unit and stripped symbols take the binary from 5.5 MB to 3.3 MB; tokio uses 9 named features instead of `full`.
+
+### 🧪 Tests & CI
+
+- **`tests/cli.rs`**: 8 end-to-end tests run the real binary against a sandboxed daemon (own port, `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR`): unknown commands, `--help`, a missing daemon, hook → list → dismiss, the PID guard, 401 without the token, `init --hooks` JSON and `doctor`.
+- **CI (`.github/workflows/ci.yml`)**: a second job runs the 8-step Docker sandbox suite on every push.
+
 ### 󰈈 Cockpit Says Why An Agent Waits
 
 - **Wait reasons (`src/hook.rs`, `src/rpc_client.rs`, `src/cockpit/items.rs`)**: the hook always sent `message: null`, so the Cockpit could show that an agent waited but not why. `PreToolUse` now sends a one-line tool summary (`Bash: cargo test -p auth`, `Edit: main.rs`, `AskUserQuestion: <question>`; bounded to 120 chars) and remembers it per pane in `$XDG_RUNTIME_DIR/waymux` (`0700`, since commands can hold secrets), so the permission `Notification` that follows carries it; without a preceding tool it falls back to the notification text. `agentState/list` already returned `message`; the client now reads it, and waiting rows show the reason in the title column instead of the task title.

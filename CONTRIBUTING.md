@@ -14,8 +14,11 @@ cd waymux
 # Build both waymux and acpd binaries
 cargo build
 
-# Run the test suite (30+ unit tests)
+# Run the unit and integration tests
 cargo test
+
+# Check your local setup (daemon, tmux, companion tools, hooks)
+cargo run -- doctor
 ```
 
 See [AGENTS.md](AGENTS.md) for the complete module map and architectural invariants, and [README.md](README.md) for CLI and RPC usage.
@@ -39,5 +42,7 @@ cargo test --all-targets
 ## Code Style & Performance Rules
 
 - **Keep CLI subcommands synchronous:** Do not require the Tokio runtime for CLI commands routed in `src/lib.rs`.
-- **No hardcoded user paths:** Always resolve runtime and config paths via `$XDG_RUNTIME_DIR`, `$XDG_CONFIG_HOME`, and `$HOME`.
+- **No hardcoded user paths:** Always resolve runtime and config paths via `$XDG_RUNTIME_DIR`, `$XDG_CONFIG_HOME`, and `$HOME`, and keep a working fallback when an optional file (Omarchy theme, sounds, dotfile scripts) is absent.
+- **No values spliced into shell strings:** Pass paths to `sh -c` as positional arguments (`"$1"`), or quote each word with `sys::shell_quote`.
+- **End-to-end checks:** Behavior that crosses the CLI and the daemon belongs in `tests/cli.rs`; tmux-level flows belong in the Docker sandbox (`just docker-test`).
 - **English-only documentation:** All code comments, commit messages, scripts, and markdown files must be written in English.
