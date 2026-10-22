@@ -46,6 +46,18 @@
 
 ---
 
+## Agent Skills
+
+Skills live in `.agents/skills/` and are symlinked into `.claude/skills/` for Claude Code:
+
+- `waymux`: using, setting up and troubleshooting Waymux (CLI, RPC methods, states, hooks, `doctor`).
+- `waymux-dev`: the development loop, where each kind of test goes, recipes for new commands/RPC methods/hooks, performance budgets, and the release steps.
+- `rust-daemon`: general Rust + systemd daemon patterns.
+
+Update the matching skill in the same commit as a change to commands, RPC methods, states or the release flow.
+
+---
+
 ## Development & Verification Commands
 
 ### Build & Install Locally

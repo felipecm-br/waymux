@@ -98,7 +98,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first) with origin-return memory |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Inject multi-line prompt into active workspace agent pane via bracketed paste |
-| `waymux wt <subcommand>` | Git worktree orchestrator (`new`, `go`, `ls`, `rm`, `ship`, `reap`, `sweep`, `pick`) |
+| `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
 | `waymux init <--tmux\|--systemd\|--hooks>` | Print the tmux plugin line, the systemd unit, or a Claude Code hooks block |
 | `waymux doctor` | Check the setup and print a fix for each gap |
 
