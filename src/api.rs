@@ -181,6 +181,11 @@ impl ApiState {
     }
 
     pub async fn check_pane_stalls(&self) {
+        // The heuristic needs per-process CPU from /proc. Without it (macOS) every quiet
+        // agent would read as zero CPU and be flagged stalled, so detection stays off.
+        if !std::path::Path::new("/proc/self/stat").exists() {
+            return;
+        }
         let target_panes: Vec<(String, AgentState)> = {
             let states = self.pane_states.lock().await;
             states
