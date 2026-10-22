@@ -452,6 +452,41 @@ struct RawPaneRow {
     pr_ci: String,
 }
 
+/// The directory git metadata is read from for a pane path: the path itself, or its
+/// `main/` worktree when the pane sits in a `.bare` container. None when not a directory.
+fn repo_path_for(ppath: &str) -> Option<String> {
+    let p = Path::new(ppath);
+    if ppath.is_empty() || !p.is_dir() {
+        return None;
+    }
+    if !p.join(".git").exists() && p.join(".bare").is_dir() && p.join("main").is_dir() {
+        return Some(format!("{}/main", ppath));
+    }
+    Some(ppath.to_string())
+}
+
+/// Git status for every distinct pane path, one thread each: the `git status` and
+/// `git diff` calls dominated the scan when run back to back.
+fn prefetch_git_metadata(list_out: &str, now_s: u64) -> HashMap<String, GitMetadata> {
+    let paths: HashSet<String> = list_out
+        .lines()
+        .filter_map(|line| line.split('\x1f').nth(5))
+        .filter_map(repo_path_for)
+        .collect();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                scope.spawn(move || {
+                    let meta = resolve_git_metadata(&path, now_s);
+                    (path, meta)
+                })
+            })
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    })
+}
+
 pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> String {
     let theme = ThemePalette::load();
     let mut cur_session = orig_sess.to_string();
@@ -498,7 +533,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
     let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
     let list_out = tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default();
 
-    let mut git_cache: HashMap<String, GitMetadata> = HashMap::new();
+    let git_cache = prefetch_git_metadata(&list_out, now_s);
     let mut raw_rows: Vec<RawPaneRow> = Vec::new();
 
     for line in list_out.lines() {
@@ -558,18 +593,9 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let age_str = format_age(diff_s);
 
         let mut git_meta = GitMetadata::default();
-        if !ppath.is_empty() && Path::new(&ppath).is_dir() {
-            let p_obj = Path::new(&ppath);
-            if !p_obj.join(".git").exists()
-                && p_obj.join(".bare").is_dir()
-                && p_obj.join("main").is_dir()
-            {
-                ppath = format!("{}/main", ppath);
-            }
-            git_meta = git_cache
-                .entry(ppath.clone())
-                .or_insert_with(|| resolve_git_metadata(&ppath, now_s))
-                .clone();
+        if let Some(repo_path) = repo_path_for(&ppath) {
+            ppath = repo_path;
+            git_meta = git_cache.get(&ppath).cloned().unwrap_or_default();
         }
 
         // Only a completion the daemon saw counts: after a restart idle panes are rehydrated
