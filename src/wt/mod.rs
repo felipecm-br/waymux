@@ -110,22 +110,41 @@ pub fn slugify_prompt(prompt: &str) -> String {
     format!("{}/{}", prefix, slug)
 }
 
-fn find_waymaker_script(script_name: &str) -> Option<PathBuf> {
+/// Directories searched for `awt-*.sh` helpers, in priority order: the user's own
+/// Waymaker scripts, the legacy matchmaker location, then the copies `install.sh`
+/// ships to `$WAYMUX_SHARE_DIR/scripts` (default `~/.local/share/waymux/scripts`).
+pub(crate) fn waymaker_script_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
-        let p1 = PathBuf::from(&home)
-            .join(".config/waymaker/scripts")
-            .join(script_name);
-        if p1.is_file() {
-            return Some(p1);
-        }
-        let p2 = PathBuf::from(&home)
-            .join(".config/matchmaker/scripts")
-            .join(script_name);
-        if p2.is_file() {
-            return Some(p2);
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".config/waymaker/scripts"));
+        dirs.push(home.join(".config/matchmaker/scripts"));
+        match std::env::var("WAYMUX_SHARE_DIR") {
+            Ok(share) if !share.is_empty() => dirs.push(PathBuf::from(share).join("scripts")),
+            _ => dirs.push(home.join(".local/share/waymux/scripts")),
         }
     }
-    None
+    dirs
+}
+
+/// Report a helper script that none of [`waymaker_script_dirs`] holds; 127 like a shell.
+fn missing_script(script_name: &str) -> i32 {
+    let searched: Vec<String> = waymaker_script_dirs()
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect();
+    eprintln!(
+        "awt: {script_name} not found in {}.\nReinstall with install.sh to restore the bundled scripts, or run `waymux doctor`.",
+        searched.join(", ")
+    );
+    127
+}
+
+pub(crate) fn find_waymaker_script(script_name: &str) -> Option<PathBuf> {
+    waymaker_script_dirs()
+        .into_iter()
+        .map(|dir| dir.join(script_name))
+        .find(|p| p.is_file())
 }
 
 fn find_wm_bin() -> String {
@@ -344,7 +363,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 cmd.args(&flags);
                 return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
             }
-            return 0;
+            return missing_script("awt-delete.sh");
         }
         "rebase" => {
             let base = args.get(1).map(|s| s.as_str()).unwrap_or("");
@@ -362,7 +381,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 cmd.args(&args[1..]);
                 return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
             }
-            return 0;
+            return missing_script("awt-rebase.sh");
         }
         "merge" | "ship" => {
             let (target, flags) = split_merge_args(args, first == "ship");
@@ -378,7 +397,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 cmd.args(&flags);
                 return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
             }
-            return 0;
+            return missing_script("awt-merge.sh");
         }
         "pr" => {
             if let Some(script) = find_waymaker_script("awt-pr.sh") {
@@ -389,8 +408,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                     .and_then(|s| s.code())
                     .unwrap_or(0);
             }
-            eprintln!("awt: awt-pr.sh not found.");
-            return 1;
+            return missing_script("awt-pr.sh");
         }
         "sweep" => {
             if let Some(script) = find_waymaker_script("awt-sweep.sh") {
@@ -401,8 +419,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                     .and_then(|s| s.code())
                     .unwrap_or(0);
             }
-            eprintln!("awt: awt-sweep.sh not found.");
-            return 1;
+            return missing_script("awt-sweep.sh");
         }
         "reap" => {
             if let Some(script) = find_waymaker_script("awt-reap.sh") {
@@ -413,8 +430,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                     .and_then(|s| s.code())
                     .unwrap_or(0);
             }
-            eprintln!("awt: awt-reap.sh not found.");
-            return 1;
+            return missing_script("awt-reap.sh");
         }
         _ => {}
     }
@@ -533,7 +549,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             cmd.args(&extra_flags);
             return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
         }
-        return 0;
+        return missing_script("awt-new.sh");
     }
 
     if branch.is_empty() {

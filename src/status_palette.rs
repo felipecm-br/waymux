@@ -92,18 +92,28 @@ pub fn mode_from_colors_toml(content: &str) -> Mode {
     }
 }
 
-/// Mode of the active Omarchy theme; dark when unknown. The theme-set hook restarts the
+/// Theme `colors.toml` in priority order: `$WAYMUX_COLORS`, `~/.config/waymux/colors.toml`,
+/// then the active Omarchy theme. None when no file exists (built-in colors apply).
+pub fn theme_colors_path() -> Option<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(explicit) = std::env::var("WAYMUX_COLORS")
+        && !explicit.is_empty()
+    {
+        candidates.push(std::path::PathBuf::from(explicit));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let home = std::path::PathBuf::from(home);
+        candidates.push(home.join(".config/waymux/colors.toml"));
+        candidates.push(home.join(".local/state/omarchy/current/theme/colors.toml"));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Mode of the active theme; dark when unknown. The Omarchy theme-set hook restarts the
 /// daemon, so reading this once at startup follows theme switches.
 pub fn detect_mode() -> Mode {
-    std::env::var("HOME")
-        .ok()
-        .and_then(|home| {
-            std::fs::read_to_string(format!(
-                "{}/.local/state/omarchy/current/theme/colors.toml",
-                home
-            ))
-            .ok()
-        })
+    theme_colors_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
         .map(|content| mode_from_colors_toml(&content))
         .unwrap_or(Mode::Dark)
 }
