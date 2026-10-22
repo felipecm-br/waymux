@@ -1,7 +1,6 @@
 use crate::config::ThemeConfig;
 use crate::status_palette::{self, Mode};
 use std::fs;
-use std::path::PathBuf;
 
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
@@ -145,33 +144,32 @@ impl ThemePalette {
         let mut background = String::new();
         let mut mode = Mode::Dark;
 
-        if let Ok(home) = std::env::var("HOME") {
-            let path = PathBuf::from(home).join(".local/state/omarchy/current/theme/colors.toml");
-            if let Ok(content) = fs::read_to_string(path) {
-                mode = status_palette::mode_from_colors_toml(&content);
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
+        if let Some(path) = status_palette::theme_colors_path()
+            && let Ok(content) = fs::read_to_string(path)
+        {
+            mode = status_palette::mode_from_colors_toml(&content);
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let key = k.trim();
+                    let val = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+                    if val.is_empty() {
                         continue;
                     }
-                    if let Some((k, v)) = trimmed.split_once('=') {
-                        let key = k.trim();
-                        let val = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-                        if val.is_empty() {
-                            continue;
-                        }
-                        match key {
-                            "orange" => orange = val.to_string(),
-                            "yellow" => yellow = val.to_string(),
-                            "red" => red = val.to_string(),
-                            "magenta" => magenta = val.to_string(),
-                            "cyan" => cyan = val.to_string(),
-                            "blue" => blue = val.to_string(),
-                            "foreground" => fg = val.to_string(),
-                            "muted" => muted = val.to_string(),
-                            "background" => background = val.to_string(),
-                            _ => {}
-                        }
+                    match key {
+                        "orange" => orange = val.to_string(),
+                        "yellow" => yellow = val.to_string(),
+                        "red" => red = val.to_string(),
+                        "magenta" => magenta = val.to_string(),
+                        "cyan" => cyan = val.to_string(),
+                        "blue" => blue = val.to_string(),
+                        "foreground" => fg = val.to_string(),
+                        "muted" => muted = val.to_string(),
+                        "background" => background = val.to_string(),
+                        _ => {}
                     }
                 }
             }

@@ -964,6 +964,7 @@ impl SoundAdapter {
             "/usr/share/sounds/freedesktop/stereo/complete.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/message.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/bell.oga".to_string(),
+            "/System/Library/Sounds/Glass.aiff".to_string(),
         ];
 
         for fb in &fallbacks {
@@ -995,7 +996,7 @@ impl SoundAdapter {
             .config
             .as_ref()
             .and_then(|c| c.player.clone())
-            .unwrap_or_else(|| "pw-play".to_string());
+            .unwrap_or_else(crate::sys::default_sound_player);
         Some((player, sound_path))
     }
 

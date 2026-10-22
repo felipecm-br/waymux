@@ -360,16 +360,8 @@ pub fn run_jump() -> i32 {
             _ => "04-subtle-bell.wav",
         };
         let sound_file = format!("{}/.local/share/sounds/ai/{}", home, sound_rel);
-        if Path::new(&sound_file).is_file()
-            && Command::new("pw-play")
-                .arg(&sound_file)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .is_err()
-        {
-            let _ = Command::new("paplay")
+        if Path::new(&sound_file).is_file() {
+            let _ = Command::new(crate::sys::default_sound_player())
                 .arg(&sound_file)
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
