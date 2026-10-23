@@ -497,11 +497,7 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
                 },
             )
             .await;
-            clear_bell().await;
-            let _ = crate::tmux_cmd::async_command()
-                .args(["refresh-client", "-S"])
-                .output()
-                .await;
+            clear_bell(true);
             Ok(serde_json::json!({ "status": "dismissed", "pane_id": pane_id }))
         }
         Some(AgentState::Working) => Ok(serde_json::json!({
@@ -510,17 +506,27 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
             "reason": "agent_working",
         })),
         _ => {
-            clear_bell().await;
+            clear_bell(false);
             Ok(serde_json::json!({ "status": "noop", "pane_id": pane_id }))
         }
     }
 }
 
-async fn clear_bell() {
-    let _ = crate::tmux_cmd::async_command()
-        .args(["set", "-g", "@ai_agent_bell", ""])
-        .output()
-        .await;
+/// Clears the global bell in the background: `dismiss` runs on every pane focus, and the
+/// reply should not wait for one or two more tmux processes.
+fn clear_bell(refresh: bool) {
+    tokio::spawn(async move {
+        let _ = crate::tmux_cmd::async_command()
+            .args(["set", "-g", "@ai_agent_bell", ""])
+            .output()
+            .await;
+        if refresh {
+            let _ = crate::tmux_cmd::async_command()
+                .args(["refresh-client", "-S"])
+                .output()
+                .await;
+        }
+    });
 }
 
 async fn wait(state: &ApiState, params: WaitParams) -> RpcResult {
