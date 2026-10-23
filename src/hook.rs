@@ -65,14 +65,8 @@ fn resolve_window_icon<'a>(
     ctx: &serde_json::Value,
     agent_hint: Option<&str>,
 ) -> &'a str {
-    let ctx_agent = ctx.get("agent").and_then(|v| v.as_str());
-    if let Some(glyph) = [agent_hint, ctx_agent]
-        .into_iter()
-        .flatten()
-        .find_map(|name| reg.program(name))
-    {
-        return glyph;
-    }
+    // The agent running in the pane beats the hint: Devin imports ~/.claude/settings.json, so
+    // Claude's hooks (hinted "claude") also fire inside Devin windows.
     if !pane.is_empty()
         && let Some(cmd) = tmux_out(&[
             "display-message",
@@ -83,6 +77,14 @@ fn resolve_window_icon<'a>(
         ])
         && crate::cockpit::items::is_agent_binary_name(cmd.trim())
         && let Some(glyph) = reg.program(cmd.trim())
+    {
+        return glyph;
+    }
+    let ctx_agent = ctx.get("agent").and_then(|v| v.as_str());
+    if let Some(glyph) = [agent_hint, ctx_agent]
+        .into_iter()
+        .flatten()
+        .find_map(|name| reg.program(name))
     {
         return glyph;
     }
