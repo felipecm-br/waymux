@@ -42,5 +42,9 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build Release Binary
         run: cargo build --release --bin waymux
+      - name: Check Hot-Path Budgets
+        # Shared runners are noisy; 4x catches a real regression (e.g. Tokio starting
+        # before the command router) without flaking.
+        run: BENCH_SLACK=4 ./scripts/bench.sh --check target/release/waymux
       - name: Run Docker End-to-End Suite
         run: WAYMUX_BIN="$PWD/target/release/waymux" ./scripts/docker-sandbox.sh test

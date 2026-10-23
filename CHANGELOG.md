@@ -31,6 +31,9 @@ All notable changes to **Waymux** are documented in this file.
 
 - **`tests/cli.rs`**: 8 end-to-end tests run the real binary against a sandboxed daemon (own port, `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR`): unknown commands, `--help`, a missing daemon, hook → list → dismiss, the PID guard, 401 without the token, `init --hooks` JSON and `doctor`.
 - **CI (`.github/workflows/ci.yml`)**: a second job runs the 8-step Docker sandbox suite on every push.
+- **Dependency audit (`deny.toml`)**: a CI job runs `cargo deny check` (RustSec advisories, licenses, sources, duplicate crates) on every push and weekly. Its first run flagged two unsound releases in the lockfile, `tokio` 1.52.3 (RUSTSEC-2026-0386) and `anyhow` 1.0.102 (RUSTSEC-2026-0190); both are updated (1.54.1, 1.0.104) and the minimums in `Cargo.toml` raised.
+- **Hot-path budgets (`scripts/bench.sh`)**: times `--version`, `health`, `list`, `status`, `dismiss` and `hook tmux Stop` against a sandboxed daemon, optionally next to a baseline binary; `--check` fails over budget. CI runs it with 4x slack.
+- **Faster `dismiss` (`src/api/rpc.rs`)**: the daemon cleared `@ai_agent_bell` and refreshed clients before replying, so focus changes took 2.1–2.7 ms; the cleanup now runs after the reply (0.84–0.91 ms).
 
 ### 󰸌 Gradient Cockpit Frame
 
