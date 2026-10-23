@@ -40,7 +40,7 @@ Never run tests that call tmux, play sounds or write `$XDG_RUNTIME_DIR/waymux` a
 4. If it only prints, the SIGPIPE reset already applies. If it writes to a socket on a hot path, add it to the exclusion list in `restore_default_sigpipe`.
 5. Add a `tests/cli.rs` case for its exit codes, and document it in the README command table.
 
-**New RPC method:** add the arm in `handle_rpc` (`src/api.rs`) with a `Deserialize` params struct, a unit test through `handle_rpc`, and a row in the README and in the `waymux` skill.
+**New RPC method:** add the arm in `call()` (`src/api/rpc.rs`) with a `Deserialize` params struct parsed by `strict()` (params required) or `lenient()` (omitted params mean defaults; the struct needs `Default`). Return `Ok(value)` or `Err(RpcError::new(code, msg))`; the envelope, id and notification handling are done for you. Build tmux with `crate::tmux_cmd::async_command()` and finish with `run(cmd, "...")` or `stdout(cmd)` + `rows(...)`. Add a unit test through `respond()` and a row in the README and in the `waymux` skill.
 
 **New hook event or agent:** extend `run_tmux_hook` / `resolve_window_icon` in `src/hook.rs`, add the event to `CLAUDE_HOOKS` in `src/init.rs` if Claude Code emits it, and cover the stdin JSON shape with a unit test.
 
@@ -56,7 +56,18 @@ Never run tests that call tmux, play sounds or write `$XDG_RUNTIME_DIR/waymux` a
 | `hook tmux <Event>` | < 10 ms | Same, against a sandboxed daemon |
 | `cockpit-items` | ~17 ms with 10 panes | Same, in a live tmux session |
 
-There is no `hyperfine` or `strace` on the author's machine; a 30-iteration `date +%s%N` loop in bash works. Compare against the previous binary (copy it aside first), run both twice, and report both numbers, because the machine is noisy right after a build.
+`scripts/bench.sh` measures the first two rows: 30 runs each against a sandboxed daemon (own `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR`, port). Copy the previous binary aside first and pass it as the baseline; run twice and report both, because the machine is noisy right after a build:
+
+```bash
+cp ~/.local/bin/waymux /tmp/waymux-old    # `cp`, not an alias: the script refuses a missing binary
+cargo build --release && ./scripts/bench.sh target/release/waymux /tmp/waymux-old
+```
+
+The daemon is always the first binary's, so a daemon-side change shows in both columns; compare against an earlier run of the old build instead. `--check` exits 1 over budget (`BENCH_SLACK=4` in CI). `cockpit-items` needs a live tmux session; time it with a 30-iteration `date +%s%N` loop.
+
+## Dependencies
+
+`cargo deny check` (config in `deny.toml`) runs in CI on every push and weekly. When it flags an advisory, `cargo update -p <crate>` within semver, raise the minimum in `Cargo.toml`, and note the RUSTSEC id in the commit. Add a license to `allow` only if it is permissive.
 
 ## Release
 
