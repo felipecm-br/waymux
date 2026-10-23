@@ -349,6 +349,12 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     meta
 }
 
+/// A value safe for one TSV column. tmux passes a tab in a pane's directory name through
+/// unchanged, which would shift every later column of the Cockpit row.
+fn tsv_field(s: &str) -> String {
+    s.replace(['\t', '\r', '\n'], " ")
+}
+
 fn char_len(s: &str) -> usize {
     s.chars().count()
 }
@@ -703,18 +709,18 @@ fn build_rows(
         raw_rows.push(RawPaneRow {
             prio,
             ts,
-            sess: sess.to_string(),
-            idx: idx.to_string(),
+            sess: tsv_field(sess),
+            idx: tsv_field(idx),
             idx_num,
-            wname: wname.to_string(),
-            pid: pid.to_string(),
-            ppath,
+            wname: tsv_field(wname),
+            pid: tsv_field(pid),
+            ppath: tsv_field(&ppath),
             ico: ico.to_string(),
             agent_label: short_label,
             age_str,
-            branch: git_meta.branch,
+            branch: tsv_field(&git_meta.branch),
             is_cur,
-            st,
+            st: tsv_field(&st),
             is_agent,
             has_u: git_meta.has_u,
             u_ahead: git_meta.ahead,
@@ -1280,5 +1286,22 @@ mod tests {
 
         let none = render_items(Vec::new(), &theme, true, "dev");
         assert!(none.starts_with("· (no active AI agents)\t0\t-\tdev\t"));
+    }
+
+    #[test]
+    fn test_tab_in_pane_path_keeps_the_columns() {
+        // tmux reports a directory name with a tab as is.
+        let line = ["dev", "1", "w", "%1", "0", "/tmp/a\tb", "zsh", "", "", ""].join("\x1f");
+        let sources = PaneSources {
+            agent_states: &HashMap::new(),
+            sess_agent: &HashMap::new(),
+            sess_etimes: &HashMap::new(),
+            git: &HashMap::new(),
+        };
+        let rows = build_rows(&line, &sources, &Registry::builtin(), 0, ("", ""));
+        let out = render_items(rows, &ThemePalette::default(), false, "");
+        let row = out.lines().nth(1).unwrap();
+        assert_eq!(row.split('\t').count(), 12);
+        assert_eq!(row.split('\t').nth(5), Some("/tmp/a b"));
     }
 }
