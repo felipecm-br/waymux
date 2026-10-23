@@ -18,6 +18,9 @@ All notable changes to **Waymux** are documented in this file.
 
 - **Shell quoting (`src/cockpit/`, `src/sys.rs`)**: the PR cache refresh and "open PR / checks" spliced worktree paths into `sh -c` strings inside single quotes; paths now travel as positional arguments, and tmux command strings quote each word with a tested `shell_quote`. The PR cache moved from `/tmp` to `$XDG_RUNTIME_DIR/waymux/pr-cache` and tolerates wrapper output before the JSON (a mise shim around `gh` blanked every PR badge).
 - **Auth (`src/api.rs`)**: the middleware test never called the middleware; it now sends requests through `api_router` (401 without or with a wrong token, 200 with the right one). Token comparison is constant-time.
+- **JSON-RPC 2.0 conformance (`src/api/rpc.rs`)**: `/rpc` required a numeric `id` and rejected anything else with axum's HTTP 400/415/422 and a plain-text body. It now accepts string ids, runs notifications (no `id`) with an HTTP 204 and no body, serves batches, and answers malformed JSON with `-32700` and invalid request objects (missing `method`, `jsonrpc` other than `"2.0"`, empty batch) with `-32600`. Existing clients are unaffected.
+- **Token directory (`src/auth.rs`, `src/rpc_client.rs`)**: the client also looked for `/run/user/1001/...`, the author's uid. When the token falls back to `/tmp/waymux-<uid>`, the daemon now refuses a directory owned by another user instead of writing the token into it.
+- **Unit tests stay off your tmux (`src/tmux_cmd.rs`)**: `cargo test` used to set options on pane `%1` of the running tmux server and clear the global `@ai_agent_bell`. Every tmux spawn goes through `tmux_cmd::command()` / `async_command()`, which use a private socket under test.
 
 ### ⚡ Performance & Build
 

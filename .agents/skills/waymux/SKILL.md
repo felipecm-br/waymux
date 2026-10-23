@@ -55,6 +55,8 @@ The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission
 
 Authenticate with the Bearer token in `$XDG_RUNTIME_DIR/waymux/token` (`0600`). Requests without it get 401. Clients honor `WAYMUX_PORT`.
 
+The endpoint follows JSON-RPC 2.0: `id` may be a number or a string, a request without `id` is a notification (runs, HTTP 204, no body), an array is a batch, and malformed JSON or a request without `"jsonrpc":"2.0"` and `method` gets error `-32700` / `-32600` in the body instead of an HTTP error.
+
 ```bash
 TOKEN=$(cat "$XDG_RUNTIME_DIR/waymux/token")
 rpc() { curl -s -X POST "http://127.0.0.1:${WAYMUX_PORT:-4040}/rpc" \

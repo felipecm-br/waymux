@@ -2,18 +2,25 @@
 
 use super::state::{ApiState, IncomingUpdate, dispatch_update};
 use crate::adapters::AgentState;
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    body::Bytes,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 #[derive(Debug, Deserialize)]
 pub struct RpcRequest {
-    #[allow(dead_code)]
     pub jsonrpc: String,
     pub method: String,
     #[serde(default)]
     pub params: Value,
-    pub id: u64,
+    /// A number, a string or null. A request without one is a notification and gets no reply.
+    #[serde(default)]
+    pub id: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,12 +148,12 @@ pub enum RpcResponse {
     Success {
         jsonrpc: String,
         result: Value,
-        id: u64,
+        id: Value,
     },
     Error {
         jsonrpc: String,
         error: RpcError,
-        id: u64,
+        id: Value,
     },
 }
 
@@ -156,6 +163,8 @@ pub struct RpcError {
     pub message: String,
 }
 
+const PARSE_ERROR: i32 = -32700;
+const INVALID_REQUEST: i32 = -32600;
 const INVALID_PARAMS: i32 = -32602;
 const METHOD_NOT_FOUND: i32 = -32601;
 const SERVER_ERROR: i32 = -32000;
@@ -176,7 +185,7 @@ impl RpcError {
 }
 
 impl RpcResponse {
-    fn from_result(id: u64, result: RpcResult) -> Self {
+    fn from_result(id: Value, result: RpcResult) -> Self {
         match result {
             Ok(result) => RpcResponse::Success {
                 jsonrpc: "2.0".into(),
@@ -192,13 +201,65 @@ impl RpcResponse {
     }
 }
 
-pub(super) async fn handle_rpc(
-    State(state): State<ApiState>,
-    Json(payload): Json<RpcRequest>,
-) -> Json<RpcResponse> {
-    tracing::info!("Received RPC: method={} id={}", payload.method, payload.id);
-    let result = call(&state, &payload.method, payload.params).await;
-    Json(RpcResponse::from_result(payload.id, result))
+/// Serves `/rpc`: one request or a batch, per JSON-RPC 2.0. Malformed JSON and invalid
+/// request objects get the spec's error objects instead of an HTTP rejection, and
+/// notifications (no `id`) are run without a reply.
+pub(super) async fn handle_rpc(State(state): State<ApiState>, body: Bytes) -> Response {
+    let reply = |value: Value| Json(value).into_response();
+    let message: Value = match serde_json::from_slice(&body) {
+        Ok(message) => message,
+        Err(e) => {
+            let error = RpcError::new(PARSE_ERROR, format!("Parse error: {}", e));
+            return reply(json!(RpcResponse::from_result(Value::Null, Err(error))));
+        }
+    };
+
+    match message {
+        Value::Array(batch) if batch.is_empty() => {
+            let error = RpcError::new(INVALID_REQUEST, "Invalid Request: empty batch");
+            reply(json!(RpcResponse::from_result(Value::Null, Err(error))))
+        }
+        Value::Array(batch) => {
+            let mut responses = Vec::new();
+            for message in batch {
+                responses.extend(handle_message(&state, message).await);
+            }
+            if responses.is_empty() {
+                StatusCode::NO_CONTENT.into_response()
+            } else {
+                reply(json!(responses))
+            }
+        }
+        message => match handle_message(&state, message).await {
+            Some(response) => reply(json!(response)),
+            None => StatusCode::NO_CONTENT.into_response(),
+        },
+    }
+}
+
+/// Handles one request object; `None` for a notification.
+async fn handle_message(state: &ApiState, message: Value) -> Option<RpcResponse> {
+    let is_notification = message.is_object() && message.get("id").is_none();
+    let id = message.get("id").cloned().unwrap_or(Value::Null);
+    let request = match serde_json::from_value::<RpcRequest>(message) {
+        Ok(request) if request.jsonrpc == "2.0" => request,
+        Ok(_) => {
+            let error = RpcError::new(INVALID_REQUEST, "Invalid Request: jsonrpc must be \"2.0\"");
+            return Some(RpcResponse::from_result(id, Err(error)));
+        }
+        Err(e) => {
+            let error = RpcError::new(INVALID_REQUEST, format!("Invalid Request: {}", e));
+            return Some(RpcResponse::from_result(id, Err(error)));
+        }
+    };
+    let response = respond(state, request).await;
+    (!is_notification).then_some(response)
+}
+
+async fn respond(state: &ApiState, request: RpcRequest) -> RpcResponse {
+    tracing::info!("Received RPC: method={} id={}", request.method, request.id);
+    let result = call(state, &request.method, request.params).await;
+    RpcResponse::from_result(request.id, result)
 }
 
 /// Runs one method. Methods whose params struct has defaults accept omitted params.
@@ -678,10 +739,9 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             method: "agentState/dismiss".to_string(),
             params: serde_json::json!({ "pane_id": "%1" }),
-            id: 1,
+            id: json!(1),
         };
-        let res = handle_rpc(State(state.clone()), Json(dismiss_req)).await;
-        match res.0 {
+        match respond(&state, dismiss_req).await {
             RpcResponse::Success { result, .. } => {
                 assert_eq!(result.get("status").unwrap(), "dismissed");
             }
@@ -699,10 +759,9 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             method: "agentState/wait".to_string(),
             params: serde_json::json!({ "pane_id": "%1", "target_state": "idle", "timeout_secs": 1 }),
-            id: 2,
+            id: json!(2),
         };
-        let wait_res = handle_rpc(State(state.clone()), Json(wait_req)).await;
-        match wait_res.0 {
+        match respond(&state, wait_req).await {
             RpcResponse::Success { result, .. } => {
                 assert_eq!(result.get("status").unwrap(), "reached");
                 assert_eq!(result.get("state").unwrap(), "idle");
@@ -726,10 +785,9 @@ mod tests {
             jsonrpc: "2.0".to_string(),
             method: "agentState/dismiss".to_string(),
             params: serde_json::json!({ "pane_id": "%1" }),
-            id: 3,
+            id: json!(3),
         };
-        let dis_work_res = handle_rpc(State(state.clone()), Json(dismiss_working_req)).await;
-        match dis_work_res.0 {
+        match respond(&state, dismiss_working_req).await {
             RpcResponse::Success { result, .. } => {
                 assert_eq!(result.get("status").unwrap(), "ignored");
             }
@@ -742,15 +800,15 @@ mod tests {
             jsonrpc: "2.0".into(),
             method: method.into(),
             params,
-            id: 7,
+            id: json!(7),
         };
-        handle_rpc(State(state.clone()), Json(req)).await.0
+        respond(state, req).await
     }
 
     fn error_code(res: RpcResponse) -> i32 {
         match res {
             RpcResponse::Error { error, id, .. } => {
-                assert_eq!(id, 7);
+                assert_eq!(id, json!(7));
                 error.code
             }
             RpcResponse::Success { result, .. } => panic!("expected an error, got {result}"),

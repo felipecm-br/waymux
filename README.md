@@ -194,6 +194,8 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
   - `tmux.split_pane`, `tmux.select_pane`, `tmux.kill_pane`, `tmux.list_panes`, `tmux.capture_pane`, `tmux.send_keys`, `tmux.select_layout`
   - `tmux.new_session`, `tmux.kill_session`, `tmux.list_sessions`
   - `tmux.display_message`, `tmux.ring_bell`
+
+  Requests follow JSON-RPC 2.0: numeric or string `id`, notifications (no `id`, HTTP 204), batches, and spec error codes (`-32700` parse error, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32000` tmux failure).
 - **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
 - **`GET /health` & `GET /ready`**: Liveness and readiness probes.
 

@@ -164,4 +164,60 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"abcd"));
         assert!(constant_time_eq(b"", b""));
     }
+
+    async fn post_rpc(body: &'static str) -> (axum::http::StatusCode, serde_json::Value) {
+        use tower::ServiceExt;
+        let router = api_router(ApiState::new(Vec::new(), 0), Arc::new("t".into()));
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/rpc")
+            .header("Authorization", "Bearer t")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn test_rpc_follows_json_rpc_2_0() {
+        use axum::http::StatusCode;
+        use serde_json::json;
+
+        // String ids are echoed back as strings.
+        let (status, res) =
+            post_rpc(r#"{"jsonrpc":"2.0","method":"agentState/list","id":"abc"}"#).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(res, json!({ "jsonrpc": "2.0", "result": {}, "id": "abc" }));
+
+        let (_, res) = post_rpc("{not json").await;
+        assert_eq!(res["error"]["code"], -32700);
+        assert_eq!(res["id"], serde_json::Value::Null);
+
+        let (_, res) = post_rpc(r#"{"jsonrpc":"1.0","method":"agentState/list","id":4}"#).await;
+        assert_eq!(res["error"]["code"], -32600);
+        assert_eq!(res["id"], 4);
+        let (_, res) = post_rpc(r#"{"jsonrpc":"2.0","id":5}"#).await;
+        assert_eq!(res["error"]["code"], -32600);
+        let (_, res) = post_rpc("[]").await;
+        assert_eq!(res["error"]["code"], -32600);
+
+        // A notification gets no reply, alone or inside a batch.
+        let (status, _) = post_rpc(r#"{"jsonrpc":"2.0","method":"agentState/list"}"#).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let (_, res) = post_rpc(
+            r#"[{"jsonrpc":"2.0","method":"agentState/list","id":1},
+                {"jsonrpc":"2.0","method":"agentState/list"},
+                {"jsonrpc":"2.0","method":"nope","id":2}]"#,
+        )
+        .await;
+        let batch = res.as_array().unwrap();
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch[0]["id"], 1);
+        assert_eq!(batch[1]["error"]["code"], -32601);
+    }
 }
