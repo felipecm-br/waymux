@@ -30,7 +30,7 @@ const DEFAULT_STATES: &[(&str, &str)] = &[
     ("permission", "󱅭"),
     ("stalled", "󱥁"),
     ("error", "󰨄"),
-    ("review", "󰈈"),
+    ("review", "󰷋"),
 ];
 
 /// Aliases share their canonical state's glyph, so one override in the config covers both.
@@ -253,7 +253,7 @@ mod tests {
         let tmux = render(&reg, "tmux").unwrap();
         assert!(tmux.starts_with("icons:\n"));
         assert!(tmux.contains("  devin: \"\"\n"));
-        assert!(render(&reg, "tsv").unwrap().contains("state\treview\t󰈈\n"));
+        assert!(render(&reg, "tsv").unwrap().contains("state\treview\t󰷋\n"));
         assert!(render(&reg, "xml").is_none());
     }
 

@@ -1088,7 +1088,7 @@ mod tests {
         assert!(prio("error") < prio("review"));
         assert!(prio("review") < prio("busy"));
         assert!(prio("busy") < prio("idle"));
-        assert_eq!(state_prio_icon(&reg, "review", true), (REVIEW_PRIO, "󰈈"));
+        assert_eq!(state_prio_icon(&reg, "review", true), (REVIEW_PRIO, "󰷋"));
         assert_eq!(state_prio_icon(&reg, "normal", false), (7, "·"));
         assert_eq!(state_prio_icon(&reg, "normal", true), (6, "󰑮"));
     }

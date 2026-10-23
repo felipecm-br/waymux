@@ -11,7 +11,7 @@
 //! backgrounds; question and permission converge under red-green deficiency, where the glyph
 //! shape carries the difference. The Cockpit-only `review` green (done, not reviewed) is at
 //! least 14 CIEDE2000 from every other state for normal vision; under red-green deficiency it
-//! nears the yellows and blues, so its glyph (`󰈈`) carries the difference there too.
+//! nears the yellows and blues, so its glyph (`󰷋`) carries the difference there too.
 
 use crate::config::ThemeConfig;
 
