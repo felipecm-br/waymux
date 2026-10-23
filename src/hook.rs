@@ -69,7 +69,8 @@ fn resolve_window_icon(
             "codex" => return "",
             "muse" => return "󱚣",
             "agy" | "agy-bin" | "antigravity" => return "",
-            "devin" | "opencode" => return "󰚩",
+            "devin" => return "",
+            "opencode" => return "󰚩",
             _ => {}
         }
     }
@@ -79,7 +80,8 @@ fn resolve_window_icon(
             "codex" => return "",
             "muse" => return "󱚣",
             "agy" | "agy-bin" | "antigravity" => return "",
-            "devin" | "opencode" => return "󰚩",
+            "devin" => return "",
+            "opencode" => return "󰚩",
             _ => {}
         }
     }
@@ -94,7 +96,8 @@ fn resolve_window_icon(
     {
         match cmd.trim() {
             "claude" => return "",
-            "devin" | "opencode" => return "󰚩",
+            "devin" => return "",
+            "opencode" => return "󰚩",
             "codex" => return "",
             "muse" => return "󱚣",
             "agy" | "agy-bin" | "antigravity" => return "",
@@ -589,7 +592,7 @@ mod tests {
         assert_eq!(resolve_window_icon("", &ctx, Some("claude")), "");
         assert_eq!(resolve_window_icon("", &ctx, Some("codex")), "");
         assert_eq!(resolve_window_icon("", &ctx, Some("agy")), "");
-        assert_eq!(resolve_window_icon("", &ctx, Some("devin")), "󰚩");
+        assert_eq!(resolve_window_icon("", &ctx, Some("devin")), "");
         assert_eq!(resolve_window_icon("", &ctx, Some("opencode")), "󰚩");
     }
 
