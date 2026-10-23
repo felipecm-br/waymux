@@ -423,6 +423,17 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
     0
 }
 
+/// The command lazygitrs runs to hand review notes to this agent. lazygitrs fills in
+/// `{{prompt}}` and runs it through a shell, so the binary and workspace are quoted words, never
+/// spliced: a directory named `$(...)` or `a"b` must stay a path.
+fn notify_command(exe: &str, workspace: &str) -> String {
+    format!(
+        "{} inject {} {{{{prompt}}}}",
+        crate::sys::shell_quote(exe),
+        crate::sys::shell_quote(workspace)
+    )
+}
+
 fn run_lazygit_hook(event_type: &str) -> i32 {
     let tmux_pane = get_active_tmux_pane();
     let ctx = read_stdin_json();
@@ -448,31 +459,35 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
         })
         .unwrap_or_default();
 
-    if !tmux_pane.is_empty() && !workspace_path.is_empty() {
-        let safe_path = sanitize_workspace_key(&workspace_path);
-        let _ = fs::write(
-            format!("/tmp/agy-active-pane-{}.txt", safe_path),
-            &tmux_pane,
-        );
+    if !tmux_pane.is_empty()
+        && !workspace_path.is_empty()
+        && let Some(path) = crate::presets::active_pane_file(&workspace_path)
+    {
+        let _ = fs::write(path, &tmux_pane);
     }
 
+    // Which lazygitrs port this conversation registered with, so a repeat hook can skip it.
+    let sentinel = crate::presets::private_runtime_dir().map(|dir| {
+        dir.join(format!(
+            "lazygitrs-registered-{}-{}",
+            sanitize_workspace_key(&workspace_path),
+            sanitize_workspace_key(&conv_id)
+        ))
+    });
+
     if matches!(event_type, "SessionEnd" | "Exit") {
-        let safe_path = sanitize_workspace_key(&workspace_path);
-        let safe_conv = sanitize_workspace_key(&conv_id);
-        let _ = fs::remove_file(format!(
-            "/tmp/agy-registered-{}-{}.sentinel",
-            safe_path, safe_conv
-        ));
+        if let Some(sentinel) = &sentinel {
+            let _ = fs::remove_file(sentinel);
+        }
         set_lazygitrs_icon(&tmux_pane, None);
         println!("{{}}");
         return 0;
     }
 
-    if !conv_id.is_empty() && !workspace_path.is_empty() {
-        let safe_path = sanitize_workspace_key(&workspace_path);
-        let safe_conv = sanitize_workspace_key(&conv_id);
-        let sentinel = format!("/tmp/agy-registered-{}-{}.sentinel", safe_path, safe_conv);
-
+    if !conv_id.is_empty()
+        && !workspace_path.is_empty()
+        && let Some(sentinel) = sentinel
+    {
         let mut initial_port = 47657u16;
         let port_file = Path::new(&workspace_path).join(".lazygitrs.port");
         if let Ok(ps) = fs::read_to_string(&port_file)
@@ -503,7 +518,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
             .ok()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| "waymux".to_string());
-        let notify_cmd = format!("{} inject \"{}\" {{{{prompt}}}}", exe_str, workspace_path);
+        let notify_cmd = notify_command(&exe_str, &workspace_path);
 
         if let Some((200, sdata)) = http_get_json(initial_port, "/session-api/session", 60) {
             let ws_match = sdata
@@ -705,6 +720,23 @@ mod tests {
                     prop_assert!(!title.contains('\n'));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_notify_command_keeps_hostile_paths_as_one_word() {
+        use crate::sys::shell_quote;
+        for workspace in ["/src/a b", "/src/$(touch pwned)", "/src/a\"b", "/src/it's"] {
+            let prompt = "fix `this`; $HOME";
+            // lazygitrs fills {{prompt}} with a single-quoted word and runs the result with sh.
+            let cmd = notify_command("f", workspace).replace("{{prompt}}", &shell_quote(prompt));
+            let script = format!("f() {{ printf '%s\\n' \"$@\"; }}; {cmd}");
+            let out = Command::new("sh").arg("-c").arg(&script).output().unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                format!("inject\n{workspace}\n{prompt}\n"),
+                "{cmd}"
+            );
         }
     }
 }

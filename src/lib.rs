@@ -351,8 +351,12 @@ pub fn entry() -> anyhow::Result<()> {
         let pid_path = match config.pid_file.clone() {
             Some(path) => path,
             None => {
-                let dir = crate::presets::runtime_dir();
-                std::fs::create_dir_all(&dir)?;
+                let dir = crate::presets::private_runtime_dir().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{} is not a directory owned by you; set pid_file in the config",
+                        crate::presets::runtime_dir().display()
+                    )
+                })?;
                 dir.join("waymux.pid").to_string_lossy().to_string()
             }
         };

@@ -4,7 +4,15 @@
 # Supports multi-line markdown prompts via bracketed paste (tmux paste-buffer -p).
 set -euo pipefail
 
-LOG_FILE="${WAYMUX_LOG_DIR:-/tmp}/waymux-injector.log"
+# Same private per-user dir as waymux (presets::runtime_dir); the log holds prompt text.
+RUNTIME_DIR="${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/waymux}"
+RUNTIME_DIR="${RUNTIME_DIR:-/tmp/waymux-$(id -u)}"
+mkdir -p -m 700 "$RUNTIME_DIR" 2>/dev/null || true
+if [[ ! -O "$RUNTIME_DIR" ]]; then
+    RUNTIME_DIR=""  # someone else's: trust nothing in it
+fi
+LOG_FILE="${WAYMUX_LOG_DIR:-${RUNTIME_DIR:-/dev/null}}"
+[[ "$LOG_FILE" == /dev/null ]] || LOG_FILE="$LOG_FILE/waymux-injector.log"
 echo "[$(date -Iseconds)] Injector invoked: $0 $*" >> "$LOG_FILE" 2>/dev/null || true
 
 WORKSPACE_DIR="${1:-}"
@@ -17,13 +25,16 @@ fi
 
 SAFE_PATH=$(echo -n "$WORKSPACE_DIR" | sed 's/[^a-zA-Z0-9]/_/g')
 
-# Search for active pane trackers in priority order
+# Search for active pane trackers in priority order. The waymux hooks write the first one;
+# the /tmp names come from older hooks and count only if you own them (-O), since anyone
+# can create a file there and choose which pane receives the prompt.
 PANE=""
 for candidate in \
+    "${RUNTIME_DIR:-/nonexistent}/active-pane-${SAFE_PATH}" \
     "/tmp/waymux-active-pane-${SAFE_PATH}.txt" \
     "/tmp/agy-active-pane-${SAFE_PATH}.txt" \
     "/tmp/agent-active-pane-${SAFE_PATH}.txt"; do
-    if [[ -f "$candidate" ]]; then
+    if [[ -f "$candidate" && -O "$candidate" ]]; then
         PANE="$(cat "$candidate" 2>/dev/null || true)"
         if [[ -n "$PANE" ]]; then
             break
@@ -46,6 +57,15 @@ if ! tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -q "^${PANE}$"; then
     echo "Warning: Target pane $PANE no longer exists" >> "$LOG_FILE" 2>/dev/null || true
     exit 1
 fi
+
+# The prompt is submitted with Enter: a shell would run it as commands.
+PANE_CMD="$(tmux display-message -p -t "$PANE" '#{pane_current_command}' 2>/dev/null || true)"
+case "$PANE_CMD" in
+    sh | bash | zsh | fish | dash | ksh | tcsh | csh | nu | elvish | xonsh)
+        echo "Warning: Target pane $PANE runs $PANE_CMD, not an agent" >> "$LOG_FILE" 2>/dev/null || true
+        exit 1
+        ;;
+esac
 
 # Primary path: atomic bracketed paste preserving multi-line markdown lists and code fences
 if printf '%s' "$PROMPT" | tmux load-buffer - 2>/dev/null; then

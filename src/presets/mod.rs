@@ -12,6 +12,35 @@ pub fn runtime_dir() -> PathBuf {
     }
 }
 
+/// [`runtime_dir`], created `0700` when missing. `None` when it is not a directory owned by the
+/// current user: the `/tmp/waymux-<uid>` fallback can be created by anyone first, and files
+/// placed there (which pane gets a prompt, the PID file, caches) must not be theirs to choose.
+pub fn private_runtime_dir() -> Option<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    let dir = runtime_dir();
+    let _ = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir);
+    let meta = std::fs::symlink_metadata(&dir).ok()?;
+    if !meta.is_dir() || meta.uid() != nix::unistd::getuid().as_raw() {
+        return None;
+    }
+    if meta.permissions().mode() & 0o077 != 0 {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).ok()?;
+    }
+    Some(dir)
+}
+
+/// File recording the tmux pane of the agent working in `workspace`, written by the hooks and
+/// read by `waymux inject`.
+pub fn active_pane_file(workspace: &str) -> Option<PathBuf> {
+    Some(private_runtime_dir()?.join(format!(
+        "active-pane-{}",
+        crate::inject::sanitize_workspace_key(workspace)
+    )))
+}
+
 /// Fills the preset template: the waymux binary path, and the metadata text and line colors
 /// (theme `muted` lifted to WCAG contrast; ANSI darkgray is 1.68:1 under lumon).
 pub fn render_cockpit_toml(waymux_bin: &str, muted_text: &str, muted_line: &str) -> String {

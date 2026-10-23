@@ -313,7 +313,10 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     if !br.is_empty() && !matches!(br.as_str(), "main" | "master" | "HEAD" | "detached") {
         let hash_key = format!("{}_{}", ppath.replace('/', "_"), br.replace('/', "_"));
         // Per-user runtime dir, not /tmp: other users cannot pre-create or symlink the file.
-        let cache_dir = crate::presets::runtime_dir().join("pr-cache");
+        let Some(cache_dir) = crate::presets::private_runtime_dir().map(|d| d.join("pr-cache"))
+        else {
+            return meta;
+        };
         let _ = fs::create_dir_all(&cache_dir);
         let cache_file = cache_dir
             .join(format!("{}.json", hash_key))
