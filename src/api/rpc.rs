@@ -156,745 +156,455 @@ pub struct RpcError {
     pub message: String,
 }
 
+const INVALID_PARAMS: i32 = -32602;
+const METHOD_NOT_FOUND: i32 = -32601;
+const SERVER_ERROR: i32 = -32000;
+
+type RpcResult = Result<Value, RpcError>;
+
+impl RpcError {
+    fn new(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+
+    fn invalid_params(e: serde_json::Error) -> Self {
+        Self::new(INVALID_PARAMS, format!("Invalid params: {}", e))
+    }
+}
+
+impl RpcResponse {
+    fn from_result(id: u64, result: RpcResult) -> Self {
+        match result {
+            Ok(result) => RpcResponse::Success {
+                jsonrpc: "2.0".into(),
+                result,
+                id,
+            },
+            Err(error) => RpcResponse::Error {
+                jsonrpc: "2.0".into(),
+                error,
+                id,
+            },
+        }
+    }
+}
+
 pub(super) async fn handle_rpc(
-    State(adapters): State<ApiState>,
+    State(state): State<ApiState>,
     Json(payload): Json<RpcRequest>,
 ) -> Json<RpcResponse> {
     tracing::info!("Received RPC: method={} id={}", payload.method, payload.id);
+    let result = call(&state, &payload.method, payload.params).await;
+    Json(RpcResponse::from_result(payload.id, result))
+}
 
-    match payload.method.as_str() {
-        "agentState/update" => match serde_json::from_value::<StateUpdateParams>(payload.params) {
-            Ok(params) => match params.state.parse::<AgentState>() {
-                Ok(state) => {
-                    let update = IncomingUpdate {
-                        pane_id: params.pane_id,
-                        state,
-                        message: None,
-                        timestamp: params.timestamp,
-                    };
-                    dispatch_update(&adapters, update).await;
-                    Json(RpcResponse::Success {
-                        jsonrpc: "2.0".into(),
-                        result: serde_json::json!("ok"),
-                        id: payload.id,
-                    })
-                }
-                Err(err_msg) => Json(RpcResponse::Error {
-                    jsonrpc: "2.0".into(),
-                    error: RpcError {
-                        code: -32602,
-                        message: err_msg,
-                    },
-                    id: payload.id,
-                }),
-            },
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "agentState/list" => {
-            let states = adapters.pane_states.lock().await;
-            let mut map = serde_json::Map::new();
-            for (pane_id, info) in states.iter() {
-                let mut pane_obj = serde_json::json!({
-                    "state": info.state.as_str(),
-                    "last_timestamp": info.last_timestamp,
-                });
-                if let Some(ref msg) = info.message {
-                    pane_obj["message"] = serde_json::json!(msg);
-                }
-                if info.finished_at > 0 {
-                    pane_obj["finished_at"] = serde_json::json!(info.finished_at);
-                }
-                map.insert(pane_id.clone(), pane_obj);
-            }
-            Json(RpcResponse::Success {
-                jsonrpc: "2.0".into(),
-                result: serde_json::Value::Object(map),
-                id: payload.id,
-            })
-        }
-        "agentState/dismiss" | "agent_state/dismiss" => {
-            match parse_rpc_params::<DismissParams>(payload.params) {
-                Ok(params) => {
-                    let pane_id = params.pane_id.or(params.target).unwrap_or_default();
-                    if pane_id.is_empty() {
-                        return Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32602,
-                                message: "Missing pane_id parameter".into(),
-                            },
-                            id: payload.id,
-                        });
-                    }
-
-                    let current_state = {
-                        let states = adapters.pane_states.lock().await;
-                        states.get(&pane_id).map(|s| s.state.clone())
-                    };
-
-                    match current_state {
-                        Some(AgentState::AwaitingInput)
-                        | Some(AgentState::Permission)
-                        | Some(AgentState::Stalled)
-                        | Some(AgentState::Error) => {
-                            tracing::info!("Dismissing attention state for pane {}", pane_id);
-                            dispatch_update(
-                                &adapters,
-                                IncomingUpdate {
-                                    pane_id: pane_id.clone(),
-                                    state: AgentState::Idle,
-                                    message: Some("dismissed by user focus".into()),
-                                    timestamp: None,
-                                },
-                            )
-                            .await;
-
-                            let _ = crate::tmux_cmd::async_command()
-                                .args(["set", "-g", "@ai_agent_bell", ""])
-                                .output()
-                                .await;
-                            let _ = crate::tmux_cmd::async_command()
-                                .args(["refresh-client", "-S"])
-                                .output()
-                                .await;
-
-                            Json(RpcResponse::Success {
-                                jsonrpc: "2.0".into(),
-                                result: serde_json::json!({
-                                    "status": "dismissed",
-                                    "pane_id": pane_id,
-                                }),
-                                id: payload.id,
-                            })
-                        }
-                        Some(AgentState::Working) => Json(RpcResponse::Success {
-                            jsonrpc: "2.0".into(),
-                            result: serde_json::json!({
-                                "status": "ignored",
-                                "pane_id": pane_id,
-                                "reason": "agent_working",
-                            }),
-                            id: payload.id,
-                        }),
-                        _ => {
-                            let _ = crate::tmux_cmd::async_command()
-                                .args(["set", "-g", "@ai_agent_bell", ""])
-                                .output()
-                                .await;
-                            Json(RpcResponse::Success {
-                                jsonrpc: "2.0".into(),
-                                result: serde_json::json!({
-                                    "status": "noop",
-                                    "pane_id": pane_id,
-                                }),
-                                id: payload.id,
-                            })
-                        }
-                    }
-                }
-                Err(e) => json_invalid_params(e, payload.id),
-            }
-        }
-        "agentState/wait" | "agent_state/wait" => {
-            match parse_rpc_params::<WaitParams>(payload.params) {
-                Ok(params) => {
-                    if params.pane_id.is_empty() {
-                        return Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32602,
-                                message: "Missing pane_id parameter".into(),
-                            },
-                            id: payload.id,
-                        });
-                    }
-
-                    let target_state = match params
-                        .target_state
-                        .as_deref()
-                        .unwrap_or("idle")
-                        .parse::<AgentState>()
-                    {
-                        Ok(s) => s,
-                        Err(e) => {
-                            return Json(RpcResponse::Error {
-                                jsonrpc: "2.0".into(),
-                                error: RpcError {
-                                    code: -32602,
-                                    message: format!("Invalid target_state: {}", e),
-                                },
-                                id: payload.id,
-                            });
-                        }
-                    };
-
-                    // Check if current state already matches target_state
-                    {
-                        let states = adapters.pane_states.lock().await;
-                        if let Some(info) = states.get(&params.pane_id) {
-                            if info.state == target_state {
-                                return Json(RpcResponse::Success {
-                                    jsonrpc: "2.0".into(),
-                                    result: serde_json::json!({
-                                        "status": "reached",
-                                        "pane_id": params.pane_id,
-                                        "state": target_state.as_str(),
-                                    }),
-                                    id: payload.id,
-                                });
-                            }
-                        } else if target_state == AgentState::Idle {
-                            return Json(RpcResponse::Success {
-                                jsonrpc: "2.0".into(),
-                                result: serde_json::json!({
-                                    "status": "reached",
-                                    "pane_id": params.pane_id,
-                                    "state": "idle",
-                                }),
-                                id: payload.id,
-                            });
-                        }
-                    }
-
-                    let mut rx = adapters.state_broadcast.subscribe();
-                    let pane_id = params.pane_id.clone();
-                    let timeout_secs = params.timeout_secs.unwrap_or(300);
-
-                    let wait_fut = async {
-                        loop {
-                            match rx.recv().await {
-                                Ok(update) => {
-                                    if update.pane_id == pane_id {
-                                        if update.state == target_state {
-                                            return Ok((
-                                                "reached",
-                                                update.state.as_str().to_string(),
-                                            ));
-                                        } else if update.state == AgentState::Closed {
-                                            return Ok(("closed", "closed".to_string()));
-                                        }
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                                    let states = adapters.pane_states.lock().await;
-                                    if let Some(info) = states.get(&pane_id) {
-                                        if info.state == target_state {
-                                            return Ok((
-                                                "reached",
-                                                target_state.as_str().to_string(),
-                                            ));
-                                        } else if info.state == AgentState::Closed {
-                                            return Ok(("closed", "closed".to_string()));
-                                        }
-                                    }
-                                }
-                                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                    return Err("Broadcast channel closed".to_string());
-                                }
-                            }
-                        }
-                    };
-
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(timeout_secs),
-                        wait_fut,
-                    )
-                    .await
-                    {
-                        Ok(Ok((status, state_str))) => Json(RpcResponse::Success {
-                            jsonrpc: "2.0".into(),
-                            result: serde_json::json!({
-                                "status": status,
-                                "pane_id": pane_id,
-                                "state": state_str,
-                            }),
-                            id: payload.id,
-                        }),
-                        Ok(Err(err)) => Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32000,
-                                message: err,
-                            },
-                            id: payload.id,
-                        }),
-                        Err(_) => {
-                            tracing::debug!(
-                                "RPC agentState/wait connection timed out after {}s for pane {}",
-                                timeout_secs,
-                                pane_id
-                            );
-                            let current_state = {
-                                let states = adapters.pane_states.lock().await;
-                                states
-                                    .get(&pane_id)
-                                    .map(|s| s.state.as_str().to_string())
-                                    .unwrap_or_else(|| "unknown".into())
-                            };
-                            Json(RpcResponse::Success {
-                                jsonrpc: "2.0".into(),
-                                result: serde_json::json!({
-                                    "status": "timeout",
-                                    "pane_id": pane_id,
-                                    "current_state": current_state,
-                                }),
-                                id: payload.id,
-                            })
-                        }
-                    }
-                }
-                Err(e) => json_invalid_params(e, payload.id),
-            }
-        }
+/// Runs one method. Methods whose params struct has defaults accept omitted params.
+async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
+    match method {
+        "agentState/update" => update_state(state, strict(params)?).await,
+        "agentState/list" => Ok(list_states(state).await),
+        "agentState/dismiss" | "agent_state/dismiss" => dismiss(state, lenient(params)?).await,
+        "agentState/wait" | "agent_state/wait" => wait(state, lenient(params)?).await,
         "tmux.split_pane" => {
-            match serde_json::from_value::<SplitPaneParams>(payload.params) {
-                Ok(params) => {
-                    let mut cmd = crate::tmux_cmd::async_command();
-                    cmd.arg("split-window");
-
-                    if params.vertical.unwrap_or(false) {
-                        cmd.arg("-h"); // tmux -h is vertical split
-                    } else {
-                        cmd.arg("-v"); // tmux -v is horizontal split
-                    }
-
-                    if let Some(target) = params.target_pane {
-                        cmd.arg("-t").arg(target);
-                    }
-
-                    if let Some(command) = params.command {
-                        cmd.arg(&command);
-                    }
-
-                    execute_tmux_cmd(cmd, payload.id, "pane created").await
-                }
-                Err(e) => Json(RpcResponse::Error {
-                    jsonrpc: "2.0".into(),
-                    error: RpcError {
-                        code: -32602,
-                        message: format!("Invalid params: {}", e),
-                    },
-                    id: payload.id,
-                }),
-            }
+            let p: SplitPaneParams = strict(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            // tmux -h splits side by side ("vertical" divider), -v stacks.
+            cmd.arg("split-window").arg(if p.vertical.unwrap_or(false) {
+                "-h"
+            } else {
+                "-v"
+            });
+            target(&mut cmd, p.target_pane);
+            cmd.args(p.command);
+            run(cmd, "pane created").await
         }
-        "tmux.new_window" => match serde_json::from_value::<NewWindowParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("new-window");
-                if let Some(name) = params.name {
-                    cmd.arg("-n").arg(name);
-                }
-                if let Some(target) = params.target {
-                    cmd.arg("-t").arg(target);
-                }
-                if let Some(command) = params.command {
-                    cmd.arg(&command);
-                }
-                execute_tmux_cmd(cmd, payload.id, "window created").await
+        "tmux.new_window" => {
+            let p: NewWindowParams = strict(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("new-window");
+            if let Some(name) = p.name {
+                cmd.arg("-n").arg(name);
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.new_session" => match serde_json::from_value::<NewSessionParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("new-session").arg("-d").arg("-s").arg(params.name);
-                if let Some(dir) = params.directory {
-                    cmd.arg("-c").arg(dir);
-                }
-                if let Some(command) = params.command {
-                    cmd.arg(&command);
-                }
-                execute_tmux_cmd(cmd, payload.id, "session created").await
+            target(&mut cmd, p.target);
+            cmd.args(p.command);
+            run(cmd, "window created").await
+        }
+        "tmux.new_session" => {
+            let p: NewSessionParams = strict(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.args(["new-session", "-d", "-s"]).arg(p.name);
+            if let Some(dir) = p.directory {
+                cmd.arg("-c").arg(dir);
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.kill_pane" => match serde_json::from_value::<TargetParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("kill-pane").arg("-t").arg(params.target);
-                execute_tmux_cmd(cmd, payload.id, "pane killed").await
+            cmd.args(p.command);
+            run(cmd, "session created").await
+        }
+        "tmux.kill_pane" => kill(params, "kill-pane", "pane killed").await,
+        "tmux.kill_window" => kill(params, "kill-window", "window killed").await,
+        "tmux.kill_session" => kill(params, "kill-session", "session killed").await,
+        "tmux.capture_pane" => {
+            let p: CapturePaneParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.args(["capture-pane", "-p"]);
+            target(&mut cmd, p.target.or(p.target_pane));
+            if let Some(start) = p.start_line {
+                cmd.arg("-S").arg(start.to_string());
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.kill_window" => match serde_json::from_value::<TargetParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("kill-window").arg("-t").arg(params.target);
-                execute_tmux_cmd(cmd, payload.id, "window killed").await
+            if let Some(end) = p.end_line {
+                cmd.arg("-E").arg(end.to_string());
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.kill_session" => match serde_json::from_value::<TargetParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("kill-session").arg("-t").arg(params.target);
-                execute_tmux_cmd(cmd, payload.id, "session killed").await
+            if p.escape_sequences.unwrap_or(false) {
+                cmd.arg("-e");
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.capture_pane" => match parse_rpc_params::<CapturePaneParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("capture-pane").arg("-p");
-                if let Some(target) = params.target.or(params.target_pane) {
-                    cmd.arg("-t").arg(target);
-                }
-                if let Some(start) = params.start_line {
-                    cmd.arg("-S").arg(start.to_string());
-                }
-                if let Some(end) = params.end_line {
-                    cmd.arg("-E").arg(end.to_string());
-                }
-                if params.escape_sequences.unwrap_or(false) {
-                    cmd.arg("-e");
-                }
-                match cmd.output().await {
-                    Ok(output) if output.status.success() => {
-                        let content = String::from_utf8_lossy(&output.stdout).to_string();
-                        Json(RpcResponse::Success {
-                            jsonrpc: "2.0".into(),
-                            result: serde_json::json!({ "content": content }),
-                            id: payload.id,
-                        })
-                    }
-                    Ok(output) => {
-                        let err_msg = String::from_utf8_lossy(&output.stderr);
-                        Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32000,
-                                message: format!("Tmux error: {}", err_msg),
-                            },
-                            id: payload.id,
-                        })
-                    }
-                    Err(e) => Json(RpcResponse::Error {
-                        jsonrpc: "2.0".into(),
-                        error: RpcError {
-                            code: -32000,
-                            message: format!("Failed to execute tmux: {}", e),
-                        },
-                        id: payload.id,
-                    }),
-                }
+            Ok(serde_json::json!({ "content": stdout(cmd).await? }))
+        }
+        "tmux.list_panes" => {
+            let p: ListPanesParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.args([
+                "list-panes",
+                "-F",
+                "#{pane_id}\t#{pane_active}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_current_command}",
+            ]);
+            if p.all.unwrap_or(false) {
+                cmd.arg("-a");
+            } else {
+                target(&mut cmd, p.target);
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.list_panes" => match parse_rpc_params::<ListPanesParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("list-panes");
-                cmd.arg("-F").arg(
-                    "#{pane_id}\t#{pane_active}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_current_command}",
-                );
-                if params.all.unwrap_or(false) {
-                    cmd.arg("-a");
-                } else if let Some(target) = params.target {
-                    cmd.arg("-t").arg(target);
-                }
-                match cmd.output().await {
-                    Ok(output) if output.status.success() => {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let panes: Vec<serde_json::Value> = stdout
-                            .lines()
-                            .filter_map(|line| {
-                                let parts: Vec<&str> = line.split('\t').collect();
-                                if parts.len() >= 6 {
-                                    Some(serde_json::json!({
-                                        "pane_id": parts[0],
-                                        "active": parts[1] == "1",
-                                        "width": parts[2].parse::<u32>().unwrap_or(0),
-                                        "height": parts[3].parse::<u32>().unwrap_or(0),
-                                        "current_path": parts[4],
-                                        "current_command": parts[5],
-                                    }))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        Json(RpcResponse::Success {
-                            jsonrpc: "2.0".into(),
-                            result: serde_json::json!(panes),
-                            id: payload.id,
-                        })
-                    }
-                    Ok(output) => {
-                        let err_msg = String::from_utf8_lossy(&output.stderr);
-                        Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32000,
-                                message: format!("Tmux error: {}", err_msg),
-                            },
-                            id: payload.id,
-                        })
-                    }
-                    Err(e) => Json(RpcResponse::Error {
-                        jsonrpc: "2.0".into(),
-                        error: RpcError {
-                            code: -32000,
-                            message: format!("Failed to execute tmux: {}", e),
-                        },
-                        id: payload.id,
-                    }),
-                }
+            Ok(rows(&stdout(cmd).await?, 6, |f| {
+                serde_json::json!({
+                    "pane_id": f[0],
+                    "active": f[1] == "1",
+                    "width": f[2].parse::<u32>().unwrap_or(0),
+                    "height": f[3].parse::<u32>().unwrap_or(0),
+                    "current_path": f[4],
+                    "current_command": f[5],
+                })
+            }))
+        }
+        "tmux.list_windows" => {
+            let p: ListWindowsParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.args([
+                "list-windows",
+                "-F",
+                "#{window_id}\t#{window_name}\t#{window_index}\t#{window_active}\t#{window_panes}",
+            ]);
+            target(&mut cmd, p.target.or(p.target_session));
+            Ok(rows(&stdout(cmd).await?, 5, |f| {
+                serde_json::json!({
+                    "window_id": f[0],
+                    "window_name": f[1],
+                    "active": f[3] == "1",
+                    "panes": f[4].parse::<u32>().unwrap_or(0),
+                })
+            }))
+        }
+        "tmux.list_sessions" => {
+            let _: ListSessionsParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.args([
+                "list-sessions",
+                "-F",
+                "#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}",
+            ]);
+            Ok(rows(&stdout(cmd).await?, 4, |f| {
+                serde_json::json!({
+                    "session_name": f[1],
+                    "windows": f[2].parse::<u32>().unwrap_or(0),
+                    "attached": f[3] == "1",
+                })
+            }))
+        }
+        "tmux.send_keys" => {
+            let p: SendKeysParams = strict(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("send-keys");
+            target(&mut cmd, p.target.or(p.target_pane));
+            if p.literal.unwrap_or(false) {
+                cmd.arg("-l");
             }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.list_windows" => match parse_rpc_params::<ListWindowsParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("list-windows");
-                cmd.arg("-F").arg(
-                    "#{window_id}\t#{window_name}\t#{window_index}\t#{window_active}\t#{window_panes}",
-                );
-                if let Some(target) = params.target.or(params.target_session) {
-                    cmd.arg("-t").arg(target);
-                }
-                match cmd.output().await {
-                    Ok(output) if output.status.success() => {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let windows: Vec<serde_json::Value> = stdout
-                            .lines()
-                            .filter_map(|line| {
-                                let parts: Vec<&str> = line.split('\t').collect();
-                                if parts.len() >= 5 {
-                                    Some(serde_json::json!({
-                                        "window_id": parts[0],
-                                        "window_name": parts[1],
-                                        "active": parts[3] == "1",
-                                        "panes": parts[4].parse::<u32>().unwrap_or(0),
-                                    }))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        Json(RpcResponse::Success {
-                            jsonrpc: "2.0".into(),
-                            result: serde_json::json!(windows),
-                            id: payload.id,
-                        })
-                    }
-                    Ok(output) => {
-                        let err_msg = String::from_utf8_lossy(&output.stderr);
-                        Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32000,
-                                message: format!("Tmux error: {}", err_msg),
-                            },
-                            id: payload.id,
-                        })
-                    }
-                    Err(e) => Json(RpcResponse::Error {
-                        jsonrpc: "2.0".into(),
-                        error: RpcError {
-                            code: -32000,
-                            message: format!("Failed to execute tmux: {}", e),
-                        },
-                        id: payload.id,
-                    }),
-                }
-            }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.list_sessions" => match parse_rpc_params::<ListSessionsParams>(payload.params) {
-            Ok(_) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("list-sessions");
-                cmd.arg("-F")
-                    .arg("#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}");
-                match cmd.output().await {
-                    Ok(output) if output.status.success() => {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        let sessions: Vec<serde_json::Value> = stdout
-                            .lines()
-                            .filter_map(|line| {
-                                let parts: Vec<&str> = line.split('\t').collect();
-                                if parts.len() >= 4 {
-                                    Some(serde_json::json!({
-                                        "session_name": parts[1],
-                                        "windows": parts[2].parse::<u32>().unwrap_or(0),
-                                        "attached": parts[3] == "1",
-                                    }))
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect();
-                        Json(RpcResponse::Success {
-                            jsonrpc: "2.0".into(),
-                            result: serde_json::json!(sessions),
-                            id: payload.id,
-                        })
-                    }
-                    Ok(output) => {
-                        let err_msg = String::from_utf8_lossy(&output.stderr);
-                        Json(RpcResponse::Error {
-                            jsonrpc: "2.0".into(),
-                            error: RpcError {
-                                code: -32000,
-                                message: format!("Tmux error: {}", err_msg),
-                            },
-                            id: payload.id,
-                        })
-                    }
-                    Err(e) => Json(RpcResponse::Error {
-                        jsonrpc: "2.0".into(),
-                        error: RpcError {
-                            code: -32000,
-                            message: format!("Failed to execute tmux: {}", e),
-                        },
-                        id: payload.id,
-                    }),
-                }
-            }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.send_keys" => match serde_json::from_value::<SendKeysParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("send-keys");
-                if let Some(target) = params.target.or(params.target_pane) {
-                    cmd.arg("-t").arg(target);
-                }
-                if params.literal.unwrap_or(false) {
-                    cmd.arg("-l");
-                }
-                for key in params.keys {
-                    cmd.arg(&key);
-                }
-                execute_tmux_cmd(cmd, payload.id, "keys sent").await
-            }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.select_window" => match parse_rpc_params::<SelectWindowParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("select-window");
-                if let Some(target) = params.target {
-                    cmd.arg("-t").arg(target);
-                }
-                execute_tmux_cmd(cmd, payload.id, "window selected").await
-            }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
-        "tmux.select_pane" => match parse_rpc_params::<SelectPaneParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("select-pane");
-                if let Some(target) = params.target {
-                    cmd.arg("-t").arg(target);
-                }
-                execute_tmux_cmd(cmd, payload.id, "pane selected").await
-            }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
+            cmd.args(p.keys);
+            run(cmd, "keys sent").await
+        }
+        "tmux.select_window" => {
+            let p: SelectWindowParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("select-window");
+            target(&mut cmd, p.target);
+            run(cmd, "window selected").await
+        }
+        "tmux.select_pane" => {
+            let p: SelectPaneParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("select-pane");
+            target(&mut cmd, p.target);
+            run(cmd, "pane selected").await
+        }
         "tmux.display_message" => {
-            match serde_json::from_value::<DisplayMessageParams>(payload.params) {
-                Ok(params) => {
-                    let mut cmd = crate::tmux_cmd::async_command();
-                    cmd.arg("display-message");
-                    if let Some(target) = params.target {
-                        cmd.arg("-t").arg(target);
-                    }
-                    cmd.arg(params.message);
-                    execute_tmux_cmd(cmd, payload.id, "message displayed").await
-                }
-                Err(e) => json_invalid_params(e, payload.id),
-            }
+            let p: DisplayMessageParams = strict(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("display-message");
+            target(&mut cmd, p.target);
+            cmd.arg(p.message);
+            run(cmd, "message displayed").await
         }
-        "tmux.ring_bell" => match parse_rpc_params::<RingBellParams>(payload.params) {
-            Ok(params) => {
-                let mut cmd = crate::tmux_cmd::async_command();
-                cmd.arg("send-keys");
-                if let Some(target) = params.target {
-                    cmd.arg("-t").arg(target);
-                }
-                cmd.arg("C-g");
-                execute_tmux_cmd(cmd, payload.id, "bell triggered").await
-            }
-            Err(e) => json_invalid_params(e, payload.id),
-        },
+        "tmux.ring_bell" => {
+            let p: RingBellParams = lenient(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("send-keys");
+            target(&mut cmd, p.target);
+            cmd.arg("C-g");
+            run(cmd, "bell triggered").await
+        }
         "tmux.select_layout" => {
-            match serde_json::from_value::<SelectLayoutParams>(payload.params) {
-                Ok(params) => {
-                    let mut cmd = crate::tmux_cmd::async_command();
-                    cmd.arg("select-layout");
-                    if let Some(target) = params.target {
-                        cmd.arg("-t").arg(target);
+            let p: SelectLayoutParams = strict(params)?;
+            let mut cmd = crate::tmux_cmd::async_command();
+            cmd.arg("select-layout");
+            target(&mut cmd, p.target);
+            cmd.arg(p.layout);
+            run(cmd, "layout applied").await
+        }
+        _ => Err(RpcError::new(METHOD_NOT_FOUND, "Method not found")),
+    }
+}
+
+async fn update_state(state: &ApiState, params: StateUpdateParams) -> RpcResult {
+    let agent_state = params
+        .state
+        .parse::<AgentState>()
+        .map_err(|e| RpcError::new(INVALID_PARAMS, e))?;
+    dispatch_update(
+        state,
+        IncomingUpdate {
+            pane_id: params.pane_id,
+            state: agent_state,
+            message: None,
+            timestamp: params.timestamp,
+        },
+    )
+    .await;
+    Ok(serde_json::json!("ok"))
+}
+
+async fn list_states(state: &ApiState) -> Value {
+    let states = state.pane_states.lock().await;
+    let mut map = serde_json::Map::new();
+    for (pane_id, info) in states.iter() {
+        let mut pane_obj = serde_json::json!({
+            "state": info.state.as_str(),
+            "last_timestamp": info.last_timestamp,
+        });
+        if let Some(ref msg) = info.message {
+            pane_obj["message"] = serde_json::json!(msg);
+        }
+        if info.finished_at > 0 {
+            pane_obj["finished_at"] = serde_json::json!(info.finished_at);
+        }
+        map.insert(pane_id.clone(), pane_obj);
+    }
+    Value::Object(map)
+}
+
+async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
+    let pane_id = params.pane_id.or(params.target).unwrap_or_default();
+    if pane_id.is_empty() {
+        return Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter"));
+    }
+
+    let current_state = {
+        let states = state.pane_states.lock().await;
+        states.get(&pane_id).map(|s| s.state.clone())
+    };
+
+    match current_state {
+        Some(AgentState::AwaitingInput)
+        | Some(AgentState::Permission)
+        | Some(AgentState::Stalled)
+        | Some(AgentState::Error) => {
+            tracing::info!("Dismissing attention state for pane {}", pane_id);
+            dispatch_update(
+                state,
+                IncomingUpdate {
+                    pane_id: pane_id.clone(),
+                    state: AgentState::Idle,
+                    message: Some("dismissed by user focus".into()),
+                    timestamp: None,
+                },
+            )
+            .await;
+            clear_bell().await;
+            let _ = crate::tmux_cmd::async_command()
+                .args(["refresh-client", "-S"])
+                .output()
+                .await;
+            Ok(serde_json::json!({ "status": "dismissed", "pane_id": pane_id }))
+        }
+        Some(AgentState::Working) => Ok(serde_json::json!({
+            "status": "ignored",
+            "pane_id": pane_id,
+            "reason": "agent_working",
+        })),
+        _ => {
+            clear_bell().await;
+            Ok(serde_json::json!({ "status": "noop", "pane_id": pane_id }))
+        }
+    }
+}
+
+async fn clear_bell() {
+    let _ = crate::tmux_cmd::async_command()
+        .args(["set", "-g", "@ai_agent_bell", ""])
+        .output()
+        .await;
+}
+
+async fn wait(state: &ApiState, params: WaitParams) -> RpcResult {
+    if params.pane_id.is_empty() {
+        return Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter"));
+    }
+
+    let target_state = params
+        .target_state
+        .as_deref()
+        .unwrap_or("idle")
+        .parse::<AgentState>()
+        .map_err(|e| RpcError::new(INVALID_PARAMS, format!("Invalid target_state: {}", e)))?;
+
+    let pane_id = params.pane_id;
+    let reached = |state: &str| serde_json::json!({ "status": "reached", "pane_id": pane_id, "state": state });
+
+    // Already there; an unknown pane counts as idle.
+    {
+        let states = state.pane_states.lock().await;
+        match states.get(&pane_id) {
+            Some(info) if info.state == target_state => return Ok(reached(target_state.as_str())),
+            None if target_state == AgentState::Idle => return Ok(reached("idle")),
+            _ => {}
+        }
+    }
+
+    let mut rx = state.state_broadcast.subscribe();
+    let timeout_secs = params.timeout_secs.unwrap_or(300);
+
+    let wait_fut = async {
+        loop {
+            match rx.recv().await {
+                Ok(update) => {
+                    if update.pane_id == pane_id {
+                        if update.state == target_state {
+                            return Ok(("reached", update.state.as_str().to_string()));
+                        } else if update.state == AgentState::Closed {
+                            return Ok(("closed", "closed".to_string()));
+                        }
                     }
-                    cmd.arg(params.layout);
-                    execute_tmux_cmd(cmd, payload.id, "layout applied").await
                 }
-                Err(e) => json_invalid_params(e, payload.id),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    let states = state.pane_states.lock().await;
+                    if let Some(info) = states.get(&pane_id) {
+                        if info.state == target_state {
+                            return Ok(("reached", target_state.as_str().to_string()));
+                        } else if info.state == AgentState::Closed {
+                            return Ok(("closed", "closed".to_string()));
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    return Err("Broadcast channel closed".to_string());
+                }
             }
         }
-        _ => Json(RpcResponse::Error {
-            jsonrpc: "2.0".into(),
-            error: RpcError {
-                code: -32601,
-                message: "Method not found".into(),
-            },
-            id: payload.id,
-        }),
-    }
-}
+    };
 
-async fn execute_tmux_cmd(
-    mut cmd: tokio::process::Command,
-    id: u64,
-    success_msg: &str,
-) -> Json<RpcResponse> {
-    match cmd.output().await {
-        Ok(output) if output.status.success() => Json(RpcResponse::Success {
-            jsonrpc: "2.0".into(),
-            result: serde_json::json!(success_msg),
-            id,
-        }),
-        Ok(output) => {
-            let err_msg = String::from_utf8_lossy(&output.stderr);
-            Json(RpcResponse::Error {
-                jsonrpc: "2.0".into(),
-                error: RpcError {
-                    code: -32000,
-                    message: format!("Tmux error: {}", err_msg),
-                },
-                id,
-            })
+    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), wait_fut).await {
+        Ok(Ok((status, state_str))) => Ok(serde_json::json!({
+            "status": status,
+            "pane_id": pane_id,
+            "state": state_str,
+        })),
+        Ok(Err(err)) => Err(RpcError::new(SERVER_ERROR, err)),
+        Err(_) => {
+            tracing::debug!(
+                "RPC agentState/wait connection timed out after {}s for pane {}",
+                timeout_secs,
+                pane_id
+            );
+            let current_state = {
+                let states = state.pane_states.lock().await;
+                states
+                    .get(&pane_id)
+                    .map(|s| s.state.as_str().to_string())
+                    .unwrap_or_else(|| "unknown".into())
+            };
+            Ok(serde_json::json!({
+                "status": "timeout",
+                "pane_id": pane_id,
+                "current_state": current_state,
+            }))
         }
-        Err(e) => Json(RpcResponse::Error {
-            jsonrpc: "2.0".into(),
-            error: RpcError {
-                code: -32000,
-                message: format!("Failed to execute tmux: {}", e),
-            },
-            id,
-        }),
     }
 }
 
-fn json_invalid_params(e: serde_json::Error, id: u64) -> Json<RpcResponse> {
-    Json(RpcResponse::Error {
-        jsonrpc: "2.0".into(),
-        error: RpcError {
-            code: -32602,
-            message: format!("Invalid params: {}", e),
-        },
-        id,
-    })
+async fn kill(params: Value, subcommand: &str, success_msg: &str) -> RpcResult {
+    let p: TargetParams = strict(params)?;
+    let mut cmd = crate::tmux_cmd::async_command();
+    cmd.arg(subcommand).arg("-t").arg(p.target);
+    run(cmd, success_msg).await
 }
 
-fn parse_rpc_params<T: serde::de::DeserializeOwned + Default>(
-    params: Value,
-) -> Result<T, serde_json::Error> {
+fn target(cmd: &mut tokio::process::Command, target: Option<String>) {
+    if let Some(target) = target {
+        cmd.arg("-t").arg(target);
+    }
+}
+
+/// Runs tmux and returns its stdout, or the error tmux reported.
+async fn stdout(mut cmd: tokio::process::Command) -> Result<String, RpcError> {
+    match cmd.output().await {
+        Ok(output) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        }
+        Ok(output) => Err(RpcError::new(
+            SERVER_ERROR,
+            format!("Tmux error: {}", String::from_utf8_lossy(&output.stderr)),
+        )),
+        Err(e) => Err(RpcError::new(
+            SERVER_ERROR,
+            format!("Failed to execute tmux: {}", e),
+        )),
+    }
+}
+
+async fn run(cmd: tokio::process::Command, success_msg: &str) -> RpcResult {
+    stdout(cmd).await.map(|_| serde_json::json!(success_msg))
+}
+
+/// Maps each tab-separated line with at least `min_cols` fields through `row`.
+fn rows(stdout: &str, min_cols: usize, row: impl Fn(&[&str]) -> Value) -> Value {
+    Value::Array(
+        stdout
+            .lines()
+            .map(|line| line.split('\t').collect::<Vec<_>>())
+            .filter(|fields| fields.len() >= min_cols)
+            .map(|fields| row(&fields))
+            .collect(),
+    )
+}
+
+/// Params that must be present and well-formed.
+fn strict<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RpcError> {
+    serde_json::from_value(params).map_err(RpcError::invalid_params)
+}
+
+/// Params that may be omitted (`null` falls back to the defaults).
+fn lenient<T: serde::de::DeserializeOwned + Default>(params: Value) -> Result<T, RpcError> {
     if params.is_null() {
         Ok(T::default())
     } else {
-        serde_json::from_value(params)
+        strict(params)
     }
 }
 
@@ -1025,5 +735,73 @@ mod tests {
             }
             _ => panic!("Expected dismiss ignored"),
         }
+    }
+
+    async fn rpc(state: &ApiState, method: &str, params: Value) -> RpcResponse {
+        let req = RpcRequest {
+            jsonrpc: "2.0".into(),
+            method: method.into(),
+            params,
+            id: 7,
+        };
+        handle_rpc(State(state.clone()), Json(req)).await.0
+    }
+
+    fn error_code(res: RpcResponse) -> i32 {
+        match res {
+            RpcResponse::Error { error, id, .. } => {
+                assert_eq!(id, 7);
+                error.code
+            }
+            RpcResponse::Success { result, .. } => panic!("expected an error, got {result}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rpc_error_codes() {
+        let state = ApiState::new(Vec::new(), 0);
+        let unknown = rpc(&state, "tmux.nope", Value::Null).await;
+        assert_eq!(error_code(unknown), METHOD_NOT_FOUND);
+
+        // Strict params reject a missing object; lenient ones still need a pane.
+        let missing = rpc(&state, "tmux.kill_pane", Value::Null).await;
+        assert_eq!(error_code(missing), INVALID_PARAMS);
+        let no_pane = rpc(&state, "agentState/dismiss", Value::Null).await;
+        assert_eq!(error_code(no_pane), INVALID_PARAMS);
+
+        let bad_state = rpc(
+            &state,
+            "agentState/update",
+            serde_json::json!({ "pane_id": "%1", "state": "workin" }),
+        )
+        .await;
+        assert_eq!(error_code(bad_state), INVALID_PARAMS);
+        let bad_target = rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%1", "target_state": "nope" }),
+        )
+        .await;
+        assert_eq!(error_code(bad_target), INVALID_PARAMS);
+
+        // Unit tests run tmux against a socket with no server behind it.
+        let tmux_down = rpc(&state, "tmux.list_sessions", Value::Null).await;
+        assert_eq!(error_code(tmux_down), SERVER_ERROR);
+    }
+
+    #[test]
+    fn test_rows_skips_short_lines() {
+        let out = rows(
+            "%1\t1\n%2\n%3\t0\n",
+            2,
+            |f| serde_json::json!({ "id": f[0], "active": f[1] == "1" }),
+        );
+        assert_eq!(
+            out,
+            serde_json::json!([
+                { "id": "%1", "active": true },
+                { "id": "%3", "active": false },
+            ])
+        );
     }
 }
