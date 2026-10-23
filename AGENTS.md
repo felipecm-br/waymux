@@ -53,6 +53,7 @@
 - `src/wt/mod.rs`: `waymux wt` (and `argv[0] == "awt"`) Git worktree orchestrator. Delegates to `awt-*.sh` helpers found in `~/.config/waymaker/scripts`, `~/.config/matchmaker/scripts`, then `$WAYMUX_SHARE_DIR/scripts` (default `~/.local/share/waymux/scripts`); a missing helper exits 127 with the searched paths.
 - `scripts/awt/`: The bundled `awt-*.sh` helpers that `install.sh` copies to `~/.local/share/waymux/scripts`. Keep them free of author-specific paths (`AWT_SWEEP_ROOTS`, `AWT_SWEEP_KEEP_BRANCHES` hold the personal defaults).
 - `src/init.rs`: `waymux init {--tmux|--systemd|--hooks}`: plugin line, the shipped `systemd/waymux.service` (embedded with `include_str!`), and a Claude Code hooks block.
+- `src/test_strategies.rs`: test-only `proptest` strategies (agent/tmux/`gh`-shaped JSON and hostile strings) shared by the property tests; `proptest-regressions/` keeps shrunk failures so they replay on every run.
 - `tests/cli.rs`: End-to-end tests that start the built binary on a free port with its own `HOME`, `XDG_RUNTIME_DIR` and `TMUX_TMPDIR`, so they never touch the developer's tmux server, sounds or token.
 
 ---
@@ -88,7 +89,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **86 unit tests** (in `src/`) and **8 integration tests** (`tests/cli.rs`) passing, with **0 Clippy warnings**.
+> Current baseline: **115 unit tests** (in `src/`, 15 of them `proptest` properties) and **8 integration tests** (`tests/cli.rs`) passing, with **0 Clippy warnings** and **56.9% line coverage** (CI fails below 55%: `cargo llvm-cov --summary-only --fail-under-lines 55`).
 
 ### Dependency Audit & Performance Budgets (also run in CI)
 

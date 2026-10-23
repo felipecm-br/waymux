@@ -25,6 +25,20 @@ jobs:
       - name: Run Unit Test Suite
         run: cargo test --all-targets
 
+  coverage:
+    # Line coverage of the unit + integration tests; the floor keeps it from sliding back.
+    # The Docker suite (tmux popups, delta, wt scripts) is not counted.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Measure Coverage
+        run: cargo llvm-cov --summary-only --fail-under-lines 55
+
   dependencies:
     # Advisories, licenses, duplicate crates and sources (deny.toml).
     runs-on: ubuntu-latest

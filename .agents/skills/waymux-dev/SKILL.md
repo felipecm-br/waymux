@@ -27,6 +27,8 @@ Read `AGENTS.md` first: it holds the module map and the engineering conventions.
 | Pure logic (parsing, ordering, colors, classification) | `#[cfg(test)]` unit test in the same file |
 | CLI behavior, exit codes, anything that talks to the daemon | `tests/cli.rs`: use `Sandbox::new()` and `spawn_daemon()`; it isolates `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR` and the port |
 | tmux panes, popups, bracketed paste, Cockpit rendering | `docker/entrypoint.sh` step in the Docker sandbox |
+| A parser of outside input (hook stdin, `/rpc` body, tmux/git/`gh` output, config) | A `proptest!` in the module's `tests::properties`, using `crate::test_strategies::{arb_json, arb_text}`; assert invariants (no panic, output shape), not examples. Commit any file proptest adds under `proptest-regressions/` |
+| Logic wrapped around tmux or daemon calls | Pass the calls in as closures or their output as `&str` (see `triage::select_notifying`, `cockpit::items::build_rows`) and test the pure part |
 | HTTP routes and auth | Unit test that sends requests through `api_router(...)` with `tower::ServiceExt::oneshot` |
 
 Never run tests that call tmux, play sounds or write `$XDG_RUNTIME_DIR/waymux` against the developer's real session: go through `tests/cli.rs` or Docker. Check that a new test fails when the code it covers is broken.
@@ -64,6 +66,10 @@ cargo build --release && ./scripts/bench.sh target/release/waymux /tmp/waymux-ol
 ```
 
 The daemon is always the first binary's, so a daemon-side change shows in both columns; compare against an earlier run of the old build instead. `--check` exits 1 over budget (`BENCH_SLACK=4` in CI). `cockpit-items` needs a live tmux session; time it with a 30-iteration `date +%s%N` loop.
+
+## Coverage
+
+`cargo llvm-cov --summary-only` (CI fails below 55% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
 
 ## Dependencies
 
