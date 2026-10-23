@@ -19,7 +19,7 @@ const DEFAULT_PROGRAMS: &[(&str, &str)] = &[
     ("codex", ""),
     ("devin", ""),
     ("muse", "󱚣"),
-    ("opencode", "󰚩"),
+    ("opencode", "󰅪"),
 ];
 
 const DEFAULT_STATES: &[(&str, &str)] = &[

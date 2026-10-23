@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(icon("codex"), "");
         assert_eq!(icon("agy"), "");
         assert_eq!(icon("devin"), "");
-        assert_eq!(icon("opencode"), "󰚩");
+        assert_eq!(icon("opencode"), "󰅪");
         let hook_ctx = serde_json::json!({"hook_event_name": "SessionStart"});
         assert_eq!(resolve_window_icon(&reg, "", &hook_ctx, Some("aider")), "󰚩");
     }
