@@ -1,10 +1,11 @@
 use crate::cockpit::items::{contains_agent_name, is_agent_binary_name};
-use crate::rpc_client;
+use crate::rpc_client::{self, AgentPaneEntry};
 use crate::theme::ThemePalette;
 use crate::tmux_cmd::{
     tmux_display_msg_timed, tmux_get_global_opt, tmux_out, tmux_set_global_opt, tmux_status,
     tmux_unset_global_opt,
 };
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -56,107 +57,139 @@ pub fn next_in_queue<'a>(queue: &'a [String], current: &str) -> Option<&'a Strin
 }
 
 pub fn collect_notifying_panes() -> Vec<String> {
-    let mut notifying = Vec::new();
-    let acpd_map = rpc_client::fetch_agent_states();
+    select_notifying(
+        &rpc_client::fetch_agent_states(),
+        || {
+            tmux_out(&[
+                "list-panes",
+                "-a",
+                "-F",
+                "#{pane_id}\t#{@ai_agent_state_raw}",
+            ])
+            .unwrap_or_default()
+        },
+        pane_exists,
+        || tmux_get_global_opt("@ai_agent_last_bell"),
+        || {
+            tmux_out(&[
+                "list-panes",
+                "-a",
+                "-F",
+                "#{pane_id}\t#{pane_current_command}\t#{pane_title}",
+            ])
+            .unwrap_or_default()
+        },
+    )
+}
 
-    if !acpd_map.is_empty() {
-        let urgent = order_urgent(
-            acpd_map
-                .iter()
-                .map(|(k, v)| (k.clone(), v.state.clone(), v.last_timestamp)),
-        );
-        notifying.extend(urgent.into_iter().filter(|p| pane_exists(p)));
-
-        if notifying.is_empty() {
-            let mut active: Vec<(&String, u64)> = acpd_map
-                .iter()
-                .filter(|(_, v)| matches!(v.state.as_str(), "working" | "busy"))
-                .map(|(k, v)| (k, v.last_timestamp))
-                .collect();
-            active.sort_by_key(|b| std::cmp::Reverse(b.1));
-
-            for (p, _) in active {
-                if pane_exists(p) {
-                    notifying.push(p.clone());
-                }
-            }
-        }
+/// The panes triage visits, from the first source that yields any:
+///
+/// 1. agents the daemon reports waiting on you, in `order_urgent` order
+/// 2. agents the daemon reports working, most recent first
+/// 3. waiting states recorded on panes (`@ai_agent_state_raw`), for a daemon that is down
+/// 4. the pane that rang the bell last
+/// 5. panes recorded as working, then any pane with a recorded agent state
+/// 6. panes running an agent binary or with an agent in their title
+///
+/// tmux is reached only through the closures, so the order is testable.
+fn select_notifying(
+    daemon: &HashMap<String, AgentPaneEntry>,
+    tmux_states: impl FnOnce() -> String,
+    exists: impl Fn(&str) -> bool,
+    last_bell: impl FnOnce() -> String,
+    pane_commands: impl FnOnce() -> String,
+) -> Vec<String> {
+    let urgent = order_urgent(
+        daemon
+            .iter()
+            .map(|(k, v)| (k.clone(), v.state.clone(), v.last_timestamp)),
+    );
+    let notifying: Vec<String> = urgent.into_iter().filter(|p| exists(p)).collect();
+    if !notifying.is_empty() {
+        return notifying;
     }
 
-    let list_raw = tmux_out(&[
-        "list-panes",
-        "-a",
-        "-F",
-        "#{pane_id}\t#{@ai_agent_state_raw}",
-    ])
-    .unwrap_or_default();
+    let mut active: Vec<(&String, u64)> = daemon
+        .iter()
+        .filter(|(_, v)| matches!(v.state.as_str(), "working" | "busy"))
+        .map(|(k, v)| (k, v.last_timestamp))
+        .collect();
+    active.sort_by_key(|b| std::cmp::Reverse(b.1));
+    let notifying: Vec<String> = active
+        .into_iter()
+        .filter(|(p, _)| exists(p))
+        .map(|(p, _)| p.clone())
+        .collect();
+    if !notifying.is_empty() {
+        return notifying;
+    }
 
-    if notifying.is_empty() {
-        notifying = order_urgent(list_raw.lines().filter_map(|line| {
+    let list_raw = tmux_states();
+    let recorded: Vec<(&str, &str)> = list_raw
+        .lines()
+        .filter_map(|line| {
             let (p, st) = line.split_once('\t')?;
-            Some((p.to_string(), st.trim().to_string(), 0))
-        }));
+            Some((p, st.trim()))
+        })
+        .collect();
+
+    let notifying = order_urgent(
+        recorded
+            .iter()
+            .map(|(p, st)| (p.to_string(), st.to_string(), 0)),
+    );
+    if !notifying.is_empty() {
+        return notifying;
     }
 
-    if notifying.is_empty() {
-        let last_bell = tmux_get_global_opt("@ai_agent_last_bell");
-        if pane_exists(&last_bell) {
-            notifying.push(last_bell);
-        }
+    let bell = last_bell();
+    if exists(&bell) {
+        return vec![bell];
     }
 
-    if notifying.is_empty() {
-        for line in list_raw.lines() {
-            if let Some((p, st)) = line.split_once('\t')
-                && matches!(st.trim(), "working" | "busy")
-            {
-                notifying.push(p.to_string());
-            }
-        }
+    let with_state = |states: &[&str]| -> Vec<String> {
+        recorded
+            .iter()
+            .filter(|(_, st)| states.contains(st))
+            .map(|(p, _)| p.to_string())
+            .collect()
+    };
+    let working = with_state(&["working", "busy"]);
+    if !working.is_empty() {
+        return working;
+    }
+    let tagged = with_state(&[
+        "idle",
+        "working",
+        "busy",
+        "question",
+        "permission",
+        "error",
+        "awaiting_input",
+        "stalled",
+    ]);
+    if !tagged.is_empty() {
+        return tagged;
     }
 
-    if notifying.is_empty() {
-        for line in list_raw.lines() {
-            if let Some((p, st)) = line.split_once('\t')
-                && matches!(
-                    st.trim(),
-                    "idle"
-                        | "working"
-                        | "busy"
-                        | "question"
-                        | "permission"
-                        | "error"
-                        | "awaiting_input"
-                        | "stalled"
-                )
-            {
-                notifying.push(p.to_string());
-            }
-        }
-    }
-
-    if notifying.is_empty() {
-        let cmd_raw = tmux_out(&[
-            "list-panes",
-            "-a",
-            "-F",
-            "#{pane_id}\t#{pane_current_command}\t#{pane_title}",
-        ])
-        .unwrap_or_default();
-        for line in cmd_raw.lines() {
+    pane_commands()
+        .lines()
+        .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 3 {
-                let p = parts[0];
-                let cmd = parts[1];
-                let title = parts[2];
-                if is_agent_binary_name(cmd) || contains_agent_name(title) {
-                    notifying.push(p.to_string());
-                }
-            }
-        }
-    }
+            (parts.len() >= 3 && (is_agent_binary_name(parts[1]) || contains_agent_name(parts[2])))
+                .then(|| parts[0].to_string())
+        })
+        .collect()
+}
 
-    notifying
+/// Sound played when triage lands on a pane in `state`.
+fn alert_sound(state: &str) -> &'static str {
+    match state {
+        "question" | "awaiting_input" => "02-gentle-ping.wav",
+        "permission" => "06-cyber-pulse.wav",
+        "error" | "stalled" => "10-arcade-blip.wav",
+        _ => "04-subtle-bell.wav",
+    }
 }
 
 pub fn run_popup() -> i32 {
@@ -353,12 +386,7 @@ pub fn run_jump() -> i32 {
     let _ = tmux_status(&["select-pane", "-t", target_pane]);
 
     if let Ok(home) = std::env::var("HOME") {
-        let sound_rel = match target_state.as_str() {
-            "question" | "awaiting_input" => "02-gentle-ping.wav",
-            "permission" => "06-cyber-pulse.wav",
-            "error" | "stalled" => "10-arcade-blip.wav",
-            _ => "04-subtle-bell.wav",
-        };
+        let sound_rel = alert_sound(&target_state);
         let sound_file = format!("{}/.local/share/sounds/ai/{}", home, sound_rel);
         if Path::new(&sound_file).is_file() {
             let _ = Command::new(crate::sys::default_sound_player())
@@ -456,5 +484,86 @@ mod tests {
         let serviced: Vec<String> = ["%b", "%c"].iter().map(|s| s.to_string()).collect();
         assert_eq!(next_in_queue(&serviced, "%a").unwrap(), "%b");
         assert!(next_in_queue(&[], "%a").is_none());
+    }
+
+    fn daemon(entries: &[(&str, &str, u64)]) -> HashMap<String, AgentPaneEntry> {
+        entries
+            .iter()
+            .map(|(pane, state, ts)| {
+                (
+                    pane.to_string(),
+                    AgentPaneEntry {
+                        state: state.to_string(),
+                        last_timestamp: *ts,
+                        message: None,
+                        finished_at: 0,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// Runs the selection with the given tmux outputs; every pane but `%gone` exists.
+    fn select(
+        daemon: &HashMap<String, AgentPaneEntry>,
+        states: &str,
+        bell: &str,
+        commands: &str,
+    ) -> Vec<String> {
+        select_notifying(
+            daemon,
+            || states.to_string(),
+            |p| p.starts_with('%') && p != "%gone",
+            || bell.to_string(),
+            || commands.to_string(),
+        )
+    }
+
+    #[test]
+    fn test_select_notifying_prefers_daemon_waiting_agents() {
+        let d = daemon(&[
+            ("%1", "working", 50),
+            ("%2", "question", 20),
+            ("%3", "permission", 30),
+            ("%gone", "permission", 10),
+        ]);
+        let tmux_never = || -> String { panic!("tmux is not consulted when the daemon answers") };
+        let picked = select_notifying(&d, tmux_never, |p| p != "%gone", tmux_never, tmux_never);
+        assert_eq!(
+            picked,
+            ["%3", "%2"],
+            "class first; panes that are gone are skipped"
+        );
+    }
+
+    #[test]
+    fn test_select_notifying_falls_back_in_order() {
+        // Daemon: only working agents, newest first.
+        let d = daemon(&[("%1", "working", 10), ("%2", "busy", 20)]);
+        assert_eq!(select(&d, "", "", ""), ["%2", "%1"]);
+
+        // Daemon down: waiting states recorded on panes.
+        let none = HashMap::new();
+        let states = "%4\tidle\n%5\tpermission\n%6\t question \nbroken-line\n";
+        assert_eq!(select(&none, states, "%9", ""), ["%5", "%6"]);
+
+        // Nothing waiting: the pane that rang last, if it still exists.
+        assert_eq!(select(&none, "%4\tidle\n", "%9", ""), ["%9"]);
+        // ...else working panes, else any pane with a state.
+        assert_eq!(select(&none, "%4\tidle\n%7\tbusy\n", "%gone", ""), ["%7"]);
+        assert_eq!(select(&none, "%4\tidle\n%8\tnormal\n", "", ""), ["%4"]);
+
+        // Last resort: panes running an agent binary or titled after one.
+        let commands = "%1\tzsh\tshell\n%2\tclaude\t-\n%3\tnode\tOpenCode session\n%4\tvim\n";
+        assert_eq!(select(&none, "", "", commands), ["%2", "%3"]);
+        assert!(select(&none, "", "", "%1\tzsh\tshell\n").is_empty());
+    }
+
+    #[test]
+    fn test_alert_sound_per_state() {
+        assert_eq!(alert_sound("permission"), "06-cyber-pulse.wav");
+        assert_eq!(alert_sound("question"), alert_sound("awaiting_input"));
+        assert_eq!(alert_sound("stalled"), "10-arcade-blip.wav");
+        assert_eq!(alert_sound("active"), "04-subtle-bell.wav");
     }
 }
