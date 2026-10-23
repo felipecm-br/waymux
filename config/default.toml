@@ -36,6 +36,13 @@ icon = "󱥁"
 
 [theme.states.error]
 icon = "󰨄"
+# Program/agent name -> Nerd Font glyph, merged over the built-ins (agent, agy, claude, codex,
+# devin, muse, opencode). `agent` is the fallback for agents without an entry.
+# Shell and tmux consumers read the merged registry with `waymux icon` / `waymux icons`.
+[icons]
+# devin = ""
+# yazi = "󰇥"
+
 [spinners]
 minidot = { interval = 83, frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] }
 line = { interval = 100, frames = ["|", "/", "-", "\\"] }

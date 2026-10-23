@@ -51,6 +51,8 @@ pub struct Config {
     pub theme: Option<ThemeConfig>,
     pub spinners: Option<HashMap<String, Spinner>>,
     pub sound: Option<SoundConfig>,
+    /// Program/agent name -> Nerd Font glyph, merged over the built-ins in `icons`.
+    pub icons: Option<HashMap<String, String>>,
 }
 
 fn default_listen_addr() -> String {
@@ -79,6 +81,7 @@ impl Default for Config {
                 permission: None,
                 error: None,
             }),
+            icons: None,
         }
     }
 }

@@ -1,3 +1,4 @@
+use crate::icons::{self, Registry};
 use crate::inject::sanitize_workspace_key;
 use crate::rpc_client::{http_get_json, http_post_json, post_agent_status};
 use crate::tmux_cmd::{tmux_out, tmux_status};
@@ -58,32 +59,19 @@ pub fn get_active_tmux_pane() -> String {
     String::new()
 }
 
-fn resolve_window_icon(
+fn resolve_window_icon<'a>(
+    reg: &'a Registry,
     pane: &str,
     ctx: &serde_json::Value,
     agent_hint: Option<&str>,
-) -> &'static str {
-    if let Some(agent) = agent_hint {
-        match agent.to_ascii_lowercase().as_str() {
-            "claude" => return "",
-            "codex" => return "",
-            "muse" => return "󱚣",
-            "agy" | "agy-bin" | "antigravity" => return "",
-            "devin" => return "",
-            "opencode" => return "󰚩",
-            _ => {}
-        }
-    }
-    if let Some(agent) = ctx.get("agent").and_then(|v| v.as_str()) {
-        match agent.to_ascii_lowercase().as_str() {
-            "claude" => return "",
-            "codex" => return "",
-            "muse" => return "󱚣",
-            "agy" | "agy-bin" | "antigravity" => return "",
-            "devin" => return "",
-            "opencode" => return "󰚩",
-            _ => {}
-        }
+) -> &'a str {
+    let ctx_agent = ctx.get("agent").and_then(|v| v.as_str());
+    if let Some(glyph) = [agent_hint, ctx_agent]
+        .into_iter()
+        .flatten()
+        .find_map(|name| reg.program(name))
+    {
+        return glyph;
     }
     if !pane.is_empty()
         && let Some(cmd) = tmux_out(&[
@@ -93,21 +81,15 @@ fn resolve_window_icon(
             pane,
             "#{pane_current_command}",
         ])
+        && crate::cockpit::items::is_agent_binary_name(cmd.trim())
+        && let Some(glyph) = reg.program(cmd.trim())
     {
-        match cmd.trim() {
-            "claude" => return "",
-            "devin" => return "",
-            "opencode" => return "󰚩",
-            "codex" => return "",
-            "muse" => return "󱚣",
-            "agy" | "agy-bin" | "antigravity" => return "",
-            _ => {}
-        }
+        return glyph;
     }
     if ctx.get("hook_event_name").is_some() {
-        "󰚩"
+        reg.agent(icons::AGENT)
     } else {
-        ""
+        reg.program("agy").unwrap_or_default()
     }
 }
 
@@ -346,6 +328,11 @@ fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
     }
 }
 
+/// SessionStart fires before any turn, except `compact`, which can land mid-turn.
+fn session_start_awaits_prompt(ctx: &serde_json::Value) -> bool {
+    ctx.get("source").and_then(|v| v.as_str()) != Some("compact")
+}
+
 fn print_hook_response(event_type: &str, ctx: &serde_json::Value) {
     if event_type == "PreToolUse" && ctx.get("hook_event_name").is_none() {
         println!("{{\"decision\":\"allow\"}}");
@@ -361,13 +348,20 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
     match event_type {
         "SessionStart" | "PreInvocation" | "UserPromptSubmit" => {
             if !tmux_pane.is_empty() {
-                let icon = resolve_window_icon(&tmux_pane, &ctx, agent_hint);
+                let icon = resolve_window_icon(Registry::global(), &tmux_pane, &ctx, agent_hint);
                 let _ = tmux_status(&["rename-window", "-t", &tmux_pane, icon]);
             }
             if let Some(title) = extract_session_title(&ctx) {
                 set_ai_agent_title(&tmux_pane, Some(&title));
             }
-            send_acp_state(&tmux_pane, "working", None);
+            if event_type != "SessionStart" {
+                send_acp_state(&tmux_pane, "working", None);
+            } else if session_start_awaits_prompt(&ctx) && !tmux_pane.is_empty() {
+                // A fresh, resumed or cleared session sits at the prompt: no Stop follows until
+                // a turn runs, so "working" would spin forever. Skip the offline chime fallback.
+                write_pane_state_file(&tmux_pane, "idle");
+                post_agent_status(&tmux_pane, "idle", None);
+            }
         }
         "PreToolUse" => {
             let state = classify_pre_tool_state(&ctx);
@@ -542,6 +536,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_session_start_awaits_prompt_except_compact() {
+        for source in ["startup", "resume", "clear"] {
+            assert!(session_start_awaits_prompt(
+                &serde_json::json!({"source": source})
+            ));
+        }
+        assert!(session_start_awaits_prompt(&serde_json::json!({})));
+        assert!(!session_start_awaits_prompt(
+            &serde_json::json!({"source": "compact"})
+        ));
+    }
+
+    #[test]
     fn test_tool_summary_shapes() {
         let bash = serde_json::json!({
             "tool_name": "Bash",
@@ -588,12 +595,16 @@ mod tests {
 
     #[test]
     fn test_resolve_window_icon() {
+        let reg = Registry::builtin();
         let ctx = serde_json::json!({});
-        assert_eq!(resolve_window_icon("", &ctx, Some("claude")), "");
-        assert_eq!(resolve_window_icon("", &ctx, Some("codex")), "");
-        assert_eq!(resolve_window_icon("", &ctx, Some("agy")), "");
-        assert_eq!(resolve_window_icon("", &ctx, Some("devin")), "");
-        assert_eq!(resolve_window_icon("", &ctx, Some("opencode")), "󰚩");
+        let icon = |agent| resolve_window_icon(&reg, "", &ctx, Some(agent));
+        assert_eq!(icon("claude"), "");
+        assert_eq!(icon("codex"), "");
+        assert_eq!(icon("agy"), "");
+        assert_eq!(icon("devin"), "");
+        assert_eq!(icon("opencode"), "󰚩");
+        let hook_ctx = serde_json::json!({"hook_event_name": "SessionStart"});
+        assert_eq!(resolve_window_icon(&reg, "", &hook_ctx, Some("aider")), "󰚩");
     }
 
     #[test]

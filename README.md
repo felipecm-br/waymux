@@ -101,6 +101,8 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
 | `waymux init <--tmux\|--systemd\|--hooks>` | Print the tmux plugin line, the systemd unit, or a Claude Code hooks block |
 | `waymux doctor` | Check the setup and print a fix for each gap |
+| `waymux icon <name>` / `waymux icon --state <state>` | Print one glyph from the icon registry (exit 1 when unknown) |
+| `waymux icons [--format tsv\|sh\|tmux]` | Export the icon registry: TSV, `ICON_*` assignments to `eval`, or the `icons:` section for tmux-nerd-font-window-name |
 
 Every command accepts `--help`. Unknown commands exit `2` instead of starting the daemon. `cockpit-items`, `cockpit-preview`, `cockpit-diff`, `cockpit-help`, `agent-action`, `window-create` and `window-delete` are plumbing called by the Cockpit preset and tmux bindings.
 
@@ -198,6 +200,8 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 ## ⚙️ Configuration & Environment
 
 The daemon reads `~/.config/waymux/config.toml` when present (see [`config/default.toml`](config/default.toml)); everything has a built-in default.
+
+**Icon registry.** `[icons]` maps program/agent names to Nerd Font glyphs (`devin = ""`, `agent` is the generic fallback) and `[theme.states.<state>].icon` sets the state glyphs. Both merge over built-in defaults. waymux uses them for the window rename, the Cockpit, state badges and alert bells. `waymux icon` and `waymux icons` hand the same registry to shell scripts and tmux plugins, so an icon is defined once.
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |

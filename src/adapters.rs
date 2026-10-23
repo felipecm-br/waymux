@@ -102,18 +102,15 @@ fn urgency_score(state: &AgentState) -> u8 {
     }
 }
 
-/// Icon from `[theme.states.<key>]` (else `fallback_icon`) and the semantic state color.
-fn state_icon_color(
-    theme: Option<&ThemeConfig>,
-    key: &str,
-    fallback_icon: &str,
-    mode: Mode,
-) -> (String, String) {
+/// Icon from `[theme.states.<key>]` (else the registry's built-in) and the semantic state color.
+fn state_icon_color(theme: Option<&ThemeConfig>, key: &str, mode: Mode) -> (String, String) {
     let icon = theme
         .and_then(|t| t.states.get(key))
-        .map(|s| s.icon.clone())
+        .map(|s| s.icon.as_str())
         .filter(|i| !i.is_empty())
-        .unwrap_or_else(|| fallback_icon.to_string());
+        .or_else(|| crate::icons::default_state(key))
+        .unwrap_or("?")
+        .to_string();
     (icon, status_palette::state_color(theme, key, mode))
 }
 
@@ -161,9 +158,7 @@ impl OutputAdapter for WaybarAdapter {
                 AgentState::Closed => ("idle", "Agent Closed"),
             };
 
-            let fallback_icon = if raw_state == "stalled" { "󱥁" } else { "" };
-            let (icon, color) =
-                state_icon_color(self.theme.as_ref(), raw_state, fallback_icon, self.mode);
+            let (icon, color) = state_icon_color(self.theme.as_ref(), raw_state, self.mode);
 
             let json_payload = serde_json::json!({
                 "text": icon,
@@ -478,18 +473,18 @@ impl TmuxAdapter {
             }
             Some(state) => {
                 self.stop_spinner(window_id).await;
-                let (raw, fallback_icon) = match state {
-                    AgentState::Idle => ("idle", "?"),
-                    AgentState::AwaitingInput => ("question", "?"),
-                    AgentState::Permission => ("permission", "?"),
-                    AgentState::Stalled => ("stalled", "󱥁"),
-                    AgentState::Error => ("error", "?"),
-                    _ => ("", ""),
+                let raw = match state {
+                    AgentState::Idle => "idle",
+                    AgentState::AwaitingInput => "question",
+                    AgentState::Permission => "permission",
+                    AgentState::Stalled => "stalled",
+                    AgentState::Error => "error",
+                    _ => "",
                 };
                 let (icon, color) = if raw.is_empty() {
                     (String::new(), String::new())
                 } else {
-                    state_icon_color(self.theme.as_ref(), raw, fallback_icon, self.mode)
+                    state_icon_color(self.theme.as_ref(), raw, self.mode)
                 };
                 set_tmux_window_state(window_id, &icon, raw, &color).await;
             }
@@ -514,7 +509,7 @@ impl TmuxAdapter {
         let target_clone = target_id.clone();
         let frames = self.spinner_frames.clone();
         let interval = self.spinner_interval;
-        let (icon, color) = state_icon_color(self.theme.as_ref(), "busy", "󰑮", self.mode);
+        let (icon, color) = state_icon_color(self.theme.as_ref(), "busy", self.mode);
 
         let task = tokio::spawn(async move {
             if frames.is_empty() {
@@ -697,15 +692,17 @@ impl OutputAdapter for TmuxAdapter {
         self.sync_window_state(&window_id).await;
 
         // Trigger bell if this specific pane requested attention
-        let (action_msg, force_bell) = match update.state {
-            AgentState::AwaitingInput => (Some("󱜻 question"), true),
-            AgentState::Permission => (Some("󱅭 permission"), true),
-            AgentState::Stalled => (Some("󱥁 stalled"), true),
-            _ => (None, false),
+        let bell_state = match update.state {
+            AgentState::AwaitingInput => Some("question"),
+            AgentState::Permission => Some("permission"),
+            AgentState::Stalled => Some("stalled"),
+            _ => None,
         };
 
-        if let Some(msg) = action_msg {
-            self.trigger_bell(&update.pane_id, msg, force_bell).await;
+        if let Some(state) = bell_state {
+            let (icon, _) = state_icon_color(self.theme.as_ref(), state, self.mode);
+            let msg = format!("{icon} {state}");
+            self.trigger_bell(&update.pane_id, &msg, true).await;
         }
 
         tracing::info!(
@@ -1099,12 +1096,12 @@ mod tests {
         };
         // Icon from config, color from the built-in palette when the config leaves it empty.
         assert_eq!(
-            state_icon_color(Some(&theme), "permission", "?", Mode::Dark),
+            state_icon_color(Some(&theme), "permission", Mode::Dark),
             ("󱅭".to_string(), "#ff9e57".to_string())
         );
-        // Missing state: fallback icon, semantic color.
+        // Missing state: built-in registry icon, semantic color.
         assert_eq!(
-            state_icon_color(Some(&theme), "stalled", "󱥁", Mode::Light),
+            state_icon_color(Some(&theme), "stalled", Mode::Light),
             ("󱥁".to_string(), "#a21caf".to_string())
         );
     }

@@ -7,6 +7,7 @@ pub mod daemon;
 pub mod doctor;
 pub mod health;
 pub mod hook;
+pub mod icons;
 pub mod init;
 pub mod inject;
 pub mod pid;
@@ -96,6 +97,18 @@ const COMMANDS: &[CommandSpec] = &[
         name: "hook",
         usage: "hook <tmux|lazygit> <Event> [agent]",
         about: "AI agent lifecycle hook; reads the hook JSON on stdin",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "icon",
+        usage: "icon <name> | icon --state <state>",
+        about: "Print the Nerd Font glyph for a program/agent or an agent state",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "icons",
+        usage: "icons [--format tsv|sh|tmux]",
+        about: "Export the icon registry for shell scripts and the tmux window-name plugin",
         plumbing: false,
     },
     CommandSpec {
@@ -267,6 +280,8 @@ pub fn entry() -> anyhow::Result<()> {
         "hook" => Some(hook::run_cli(&args[2..])),
         "inject" => Some(inject::run_cli(&args[2..])),
         "wt" | "awt" => Some(wt::run_cli(&args[2..])),
+        "icon" => Some(icons::run_icon_cli(&args[2..])),
+        "icons" => Some(icons::run_icons_cli(&args[2..])),
         "init" => Some(init::run_cli(&args[2..])),
         "doctor" => Some(doctor::run_cli()),
         other if !is_daemon_invocation(other) => {

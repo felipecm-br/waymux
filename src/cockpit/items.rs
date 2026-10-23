@@ -1,3 +1,4 @@
+use crate::icons::Registry;
 use crate::rpc_client;
 use crate::theme::{BOLD, RESET, ThemePalette};
 use crate::tmux_cmd::tmux_out;
@@ -348,17 +349,14 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 /// Row priority and glyph. Urgent rows use `triage::service_class` + 1 so the Cockpit lists
 /// waiting agents in the same order `Prefix+I` visits them. Finished work nobody has opened yet
 /// (`review`) comes next: it does not block the agent, but it is the next thing that needs you.
-fn state_prio_icon(st: &str, agent_like: bool) -> (u8, &'static str) {
+fn state_prio_icon<'a>(reg: &'a Registry, st: &str, agent_like: bool) -> (u8, &'a str) {
     let ico = match st {
-        "permission" => "󱅭",
-        "question" | "awaiting_input" => "󱜻",
-        "stalled" | "hanging" => "󱥁",
-        "error" => "󰨄",
-        "review" => "󰈈",
         "busy" | "working" => "@SPIN@",
-        "idle" => "󱥂",
-        _ if agent_like => "󰑮",
-        _ => "·",
+        _ => match reg.state(st) {
+            Some(glyph) => glyph,
+            None if agent_like => reg.state("busy").unwrap_or_default(),
+            None => "·",
+        },
     };
     let prio = match (crate::triage::service_class(st), st) {
         (Some(class), _) => class + 1,
@@ -614,6 +612,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         }
 
         let (prio, ico) = state_prio_icon(
+            Registry::global(),
             &st,
             !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
         );
@@ -1008,7 +1007,8 @@ mod tests {
 
     #[test]
     fn test_cockpit_priority_matches_triage_order() {
-        let prio = |st| state_prio_icon(st, true).0;
+        let reg = Registry::builtin();
+        let prio = |st| state_prio_icon(&reg, st, true).0;
         assert!(prio("permission") < prio("question"));
         assert_eq!(prio("question"), prio("awaiting_input"));
         assert!(prio("question") < prio("stalled"));
@@ -1016,9 +1016,9 @@ mod tests {
         assert!(prio("error") < prio("review"));
         assert!(prio("review") < prio("busy"));
         assert!(prio("busy") < prio("idle"));
-        assert_eq!(state_prio_icon("review", true), (REVIEW_PRIO, "󰈈"));
-        assert_eq!(state_prio_icon("normal", false), (7, "·"));
-        assert_eq!(state_prio_icon("normal", true), (6, "󰑮"));
+        assert_eq!(state_prio_icon(&reg, "review", true), (REVIEW_PRIO, "󰈈"));
+        assert_eq!(state_prio_icon(&reg, "normal", false), (7, "·"));
+        assert_eq!(state_prio_icon(&reg, "normal", true), (6, "󰑮"));
     }
 
     #[test]
