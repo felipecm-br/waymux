@@ -128,6 +128,22 @@ fn set_lazygitrs_icon(pane: &str, icon: Option<&str>) {
     let _ = tmux_status(&["refresh-client", "-S"]);
 }
 
+/// First line of a transcript, at most 1 MiB. Transcripts grow to tens of MB and the hook
+/// only needs the opening request, so it must not read the rest.
+fn read_first_line(path: &Path) -> Option<String> {
+    use std::io::BufRead;
+    const MAX_FIRST_LINE: u64 = 1 << 20;
+    let file = fs::File::open(path).ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut line = String::new();
+    io::BufReader::new(file.take(MAX_FIRST_LINE))
+        .read_line(&mut line)
+        .ok()?;
+    Some(line)
+}
+
 pub fn extract_session_title(ctx: &serde_json::Value) -> Option<String> {
     if let Some(t) = ctx.get("title").and_then(|v| v.as_str())
         && !t.trim().is_empty()
@@ -155,10 +171,8 @@ pub fn extract_session_title(ctx: &serde_json::Value) -> Option<String> {
         .get("transcriptPath")
         .or_else(|| ctx.get("transcript_path"))
         .and_then(|v| v.as_str())
-        && Path::new(tp).is_file()
-        && let Ok(content) = fs::read_to_string(tp)
-        && let Some(first_line) = content.lines().next()
-        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(first_line)
+        && let Some(first_line) = read_first_line(Path::new(tp))
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&first_line)
         && let Some(raw_content) = parsed.get("content").and_then(|v| v.as_str())
     {
         let mut raw = if let Some(start) = raw_content.find("<USER_REQUEST>")
@@ -637,5 +651,28 @@ mod tests {
             extract_session_title(&prompt_ctx).as_deref(),
             Some("Refactor the cockpit HUD")
         );
+    }
+
+    #[test]
+    fn test_session_title_from_transcript_first_line() {
+        let dir = std::env::temp_dir().join(format!("waymux-hook-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("transcript.jsonl");
+        let mut content = String::from(
+            r#"{"content":"<USER_REQUEST>/plan  Fix the   flaky test</USER_REQUEST>"}"#,
+        );
+        content.push('\n');
+        content.push_str(&"{\"filler\":true}\n".repeat(1000));
+        fs::write(&path, content).unwrap();
+
+        let ctx = serde_json::json!({ "transcript_path": path.to_str().unwrap() });
+        assert_eq!(
+            extract_session_title(&ctx).as_deref(),
+            Some("Fix the flaky test")
+        );
+        // A directory or a missing file yields no title rather than an error.
+        let dir_ctx = serde_json::json!({ "transcript_path": dir.to_str().unwrap() });
+        assert_eq!(extract_session_title(&dir_ctx), None);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -34,6 +34,7 @@ All notable changes to **Waymux** are documented in this file.
 - **Dependency audit (`deny.toml`)**: a CI job runs `cargo deny check` (RustSec advisories, licenses, sources, duplicate crates) on every push and weekly. Its first run flagged two unsound releases in the lockfile, `tokio` 1.52.3 (RUSTSEC-2026-0386) and `anyhow` 1.0.102 (RUSTSEC-2026-0190); both are updated (1.54.1, 1.0.104) and the minimums in `Cargo.toml` raised.
 - **Hot-path budgets (`scripts/bench.sh`)**: times `--version`, `health`, `list`, `status`, `dismiss` and `hook tmux Stop` against a sandboxed daemon, optionally next to a baseline binary; `--check` fails over budget. CI runs it with 4x slack.
 - **Faster `dismiss` (`src/api/rpc.rs`)**: the daemon cleared `@ai_agent_bell` and refreshed clients before replying, so focus changes took 2.1–2.7 ms; the cleanup now runs after the reply (0.84–0.91 ms).
+- **`SessionStart` on long sessions (`src/hook.rs`)**: the hook read the whole transcript to get its first line; on a resumed 13 MB session it took 8.1 ms of its 10 ms budget and grew with the file. It reads the first line only (capped at 1 MiB): 2.7–3.3 ms.
 
 ### 󰸌 Gradient Cockpit Frame
 
