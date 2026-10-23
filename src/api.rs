@@ -9,6 +9,9 @@ pub struct PaneStateInfo {
     pub seq_id: u64,
     pub state: AgentState,
     pub message: Option<String>,
+    /// Epoch ms of the last working → idle transition seen live; 0 when unknown (e.g. panes
+    /// rehydrated after a restart), so a restart never looks like freshly finished work.
+    pub finished_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -112,6 +115,11 @@ impl ApiState {
                 Some(s) if !s.trim().is_empty() => s.trim(),
                 _ => continue,
             };
+            // Completion time persisted on the pane by a previous daemon, if any.
+            let finished_at = parts
+                .next()
+                .and_then(|t| t.trim().parse::<u64>().ok())
+                .unwrap_or(0);
 
             if let Some(state) = AgentState::from_tmux_raw(raw_state) {
                 let seq = self
@@ -127,6 +135,7 @@ impl ApiState {
                             seq_id: seq,
                             state: state.clone(),
                             message: None,
+                            finished_at,
                         },
                     );
                 }
@@ -154,7 +163,7 @@ impl ApiState {
                 "list-panes",
                 "-a",
                 "-F",
-                "#{pane_id}\t#{@ai_agent_state_raw}",
+                "#{pane_id}\t#{@ai_agent_state_raw}\t#{@ai_agent_finished_at}",
             ])
             .output()
             .await
@@ -172,6 +181,11 @@ impl ApiState {
     }
 
     pub async fn check_pane_stalls(&self) {
+        // The heuristic needs per-process CPU from /proc. Without it (macOS) every quiet
+        // agent would read as zero CPU and be flagged stalled, so detection stays off.
+        if !std::path::Path::new("/proc/self/stat").exists() {
+            return;
+        }
         let target_panes: Vec<(String, AgentState)> = {
             let states = self.pane_states.lock().await;
             states
@@ -513,7 +527,9 @@ pub struct StatusResponse {
 }
 
 fn log_flow_event(event: &str, target: &str, extra: &str) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/home/fecavmi".to_string());
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
     let script = format!("{}/.config/tmux/flow-log.sh", home);
     let event = event.to_string();
     let target = target.to_string();
@@ -574,6 +590,35 @@ async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
             (None, false)
         } else {
             let prev = states.get(&update.pane_id).map(|s| s.state.clone());
+            let finished_at =
+                if update.state == AgentState::Idle && prev == Some(AgentState::Working) {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    // Persist on the pane so a restarted daemon still knows (theme switches
+                    // restart it); rehydrate_from_tmux reads it back.
+                    let pane = update.pane_id.clone();
+                    tokio::spawn(async move {
+                        let _ = tokio::process::Command::new("tmux")
+                            .args([
+                                "set-option",
+                                "-p",
+                                "-t",
+                                &pane,
+                                "@ai_agent_finished_at",
+                                &now_ms.to_string(),
+                            ])
+                            .output()
+                            .await;
+                    });
+                    now_ms
+                } else {
+                    states
+                        .get(&update.pane_id)
+                        .map(|s| s.finished_at)
+                        .unwrap_or(0)
+                };
             states.insert(
                 update.pane_id.clone(),
                 PaneStateInfo {
@@ -581,6 +626,7 @@ async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                     seq_id: seq,
                     state: update.state.clone(),
                     message: update.message.clone(),
+                    finished_at,
                 },
             );
             (prev, true)
@@ -731,6 +777,9 @@ async fn handle_rpc(
                 });
                 if let Some(ref msg) = info.message {
                     pane_obj["message"] = serde_json::json!(msg);
+                }
+                if info.finished_at > 0 {
+                    pane_obj["finished_at"] = serde_json::json!(info.finished_at);
                 }
                 map.insert(pane_id.clone(), pane_obj);
             }
@@ -1398,6 +1447,15 @@ async fn handle_status(
     }
 }
 
+/// Compares without an early exit, so response time does not reveal how much of a
+/// guessed token matched.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 pub async fn auth_middleware(
     State(token): State<Arc<String>>,
     req: axum::extract::Request,
@@ -1408,7 +1466,7 @@ pub async fn auth_middleware(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .is_some_and(|b| b.trim() == token.as_str());
+        .is_some_and(|b| constant_time_eq(b.trim().as_bytes(), token.as_bytes()));
 
     if authenticated {
         Ok(next.run(req).await)
@@ -1637,6 +1695,7 @@ mod tests {
                 seq_id: 1,
                 state: AgentState::Working,
                 message: None,
+                finished_at: 0,
             },
         );
 
@@ -1666,24 +1725,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_middleware_header_check() {
+    async fn test_auth_middleware_rejects_missing_and_wrong_tokens() {
+        use tower::ServiceExt;
+
         let token = Arc::new("secret-token-123".to_string());
+        let state = ApiState::new(Vec::new(), 0);
+        let body = r#"{"jsonrpc":"2.0","method":"agentState/list","id":1}"#;
+        let call = |auth: Option<&'static str>| {
+            let router = api_router(state.clone(), token.clone());
+            async move {
+                let mut req = axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("content-type", "application/json");
+                if let Some(value) = auth {
+                    req = req.header("Authorization", value);
+                }
+                let req = req.body(axum::body::Body::from(body)).unwrap();
+                router.oneshot(req).await.unwrap().status()
+            }
+        };
 
-        let req = axum::http::Request::builder()
-            .uri("/api/status")
-            .header("Authorization", "Bearer secret-token-123")
-            .body(axum::body::Body::empty())
-            .unwrap();
+        assert_eq!(call(None).await, axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            call(Some("Bearer secret-token-12")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(Some("secret-token-123")).await,
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            call(Some("Bearer secret-token-123")).await,
+            axum::http::StatusCode::OK
+        );
+    }
 
-        let auth_str = req
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert_eq!(auth_str, "Bearer secret-token-123");
-        let bearer = auth_str.strip_prefix("Bearer ").unwrap();
-        assert_eq!(bearer.trim(), token.as_str());
+    #[test]
+    fn test_constant_time_eq() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"abcd"));
+        assert!(constant_time_eq(b"", b""));
     }
 
     #[tokio::test]
@@ -1714,6 +1797,51 @@ mod tests {
             AgentState::Permission
         );
         assert_eq!(pane_states.get("%31").unwrap().state, AgentState::Error);
+        // A restart must not look like freshly finished work.
+        assert_eq!(pane_states.get("%21").unwrap().finished_at, 0);
+        drop(pane_states);
+
+        // ...but a completion time persisted on the pane survives it.
+        state
+            .rehydrate_from_raw_lines("%40\tidle\t1700000000000\n", 12345)
+            .await;
+        assert_eq!(
+            state.pane_states.lock().await["%40"].finished_at,
+            1_700_000_000_000
+        );
+    }
+
+    #[tokio::test]
+    async fn test_finished_at_set_only_by_live_working_to_idle() {
+        let updates = Arc::new(StdMutex::new(Vec::new()));
+        let state = ApiState::new(
+            vec![Box::new(TestAdapter {
+                updates: updates.clone(),
+            })],
+            0,
+        );
+        let update = |st: AgentState| IncomingUpdate {
+            pane_id: "%999998".into(),
+            state: st,
+            message: None,
+            timestamp: None,
+        };
+
+        dispatch_update(&state, update(AgentState::AwaitingInput)).await;
+        dispatch_update(&state, update(AgentState::Idle)).await;
+        assert_eq!(state.pane_states.lock().await["%999998"].finished_at, 0);
+
+        dispatch_update(&state, update(AgentState::Working)).await;
+        dispatch_update(&state, update(AgentState::Idle)).await;
+        let finished = state.pane_states.lock().await["%999998"].finished_at;
+        assert!(finished > 0);
+
+        // Later updates keep the completion time until the next finish.
+        dispatch_update(&state, update(AgentState::Permission)).await;
+        assert_eq!(
+            state.pane_states.lock().await["%999998"].finished_at,
+            finished
+        );
     }
 
     #[test]

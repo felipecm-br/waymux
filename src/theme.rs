@@ -1,5 +1,6 @@
+use crate::config::ThemeConfig;
+use crate::status_palette::{self, Mode};
 use std::fs;
-use std::path::PathBuf;
 
 pub const RESET: &str = "\x1b[0m";
 pub const BOLD: &str = "\x1b[1m";
@@ -14,7 +15,10 @@ pub struct ThemePalette {
     pub cyan: String,
     pub blue: String,
     pub fg: String,
+    /// Metadata text color, lifted to 4.5:1 against the theme background when needed.
     pub muted: String,
+    /// Separator and border color, lifted to 3:1 when needed.
+    pub muted_line: String,
 
     pub c_perm: String,
     pub c_question: String,
@@ -31,6 +35,16 @@ pub struct ThemePalette {
     pub c_diff_del: String,
     pub c_diff_dirty: String,
     pub c_pr: String,
+
+    /// Agent-state glyph colors (`status_palette`), shared with the status bar. The `c_*`
+    /// fields above stay theme-derived chrome.
+    pub s_permission: String,
+    pub s_question: String,
+    pub s_stalled: String,
+    pub s_error: String,
+    pub s_busy: String,
+    pub s_idle: String,
+    pub s_review: String,
 }
 
 impl Default for ThemePalette {
@@ -78,6 +92,7 @@ impl ThemePalette {
             blue: blue.to_string(),
             fg: fg.to_string(),
             muted: muted.to_string(),
+            muted_line: muted.to_string(),
             c_perm,
             c_question,
             c_error,
@@ -93,7 +108,28 @@ impl ThemePalette {
             c_diff_del,
             c_diff_dirty,
             c_pr,
+            s_permission: String::new(),
+            s_question: String::new(),
+            s_stalled: String::new(),
+            s_error: String::new(),
+            s_busy: String::new(),
+            s_idle: String::new(),
+            s_review: String::new(),
         }
+        .with_state_colors(None, Mode::Dark)
+    }
+
+    /// Resolves the agent-state colors from config overrides or the built-in palette.
+    pub fn with_state_colors(mut self, theme: Option<&ThemeConfig>, mode: Mode) -> Self {
+        let color = |state| hex_to_ansi_fg(&status_palette::state_color(theme, state, mode));
+        self.s_permission = color("permission");
+        self.s_question = color("question");
+        self.s_stalled = color("stalled");
+        self.s_error = color("error");
+        self.s_busy = color("busy");
+        self.s_idle = color("idle");
+        self.s_review = color("review");
+        self
     }
 
     pub fn load() -> Self {
@@ -105,38 +141,65 @@ impl ThemePalette {
         let mut blue = "#7fbbb3".to_string();
         let mut fg = "#d3c6aa".to_string();
         let mut muted = "#475258".to_string();
+        let mut background = String::new();
+        let mut mode = Mode::Dark;
 
-        if let Ok(home) = std::env::var("HOME") {
-            let path = PathBuf::from(home).join(".local/state/omarchy/current/theme/colors.toml");
-            if let Ok(content) = fs::read_to_string(path) {
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() || trimmed.starts_with('#') {
+        if let Some(path) = status_palette::theme_colors_path()
+            && let Ok(content) = fs::read_to_string(path)
+        {
+            mode = status_palette::mode_from_colors_toml(&content);
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if let Some((k, v)) = trimmed.split_once('=') {
+                    let key = k.trim();
+                    let val = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+                    if val.is_empty() {
                         continue;
                     }
-                    if let Some((k, v)) = trimmed.split_once('=') {
-                        let key = k.trim();
-                        let val = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
-                        if val.is_empty() {
-                            continue;
-                        }
-                        match key {
-                            "orange" => orange = val.to_string(),
-                            "yellow" => yellow = val.to_string(),
-                            "red" => red = val.to_string(),
-                            "magenta" => magenta = val.to_string(),
-                            "cyan" => cyan = val.to_string(),
-                            "blue" => blue = val.to_string(),
-                            "foreground" => fg = val.to_string(),
-                            "muted" => muted = val.to_string(),
-                            _ => {}
-                        }
+                    match key {
+                        "orange" => orange = val.to_string(),
+                        "yellow" => yellow = val.to_string(),
+                        "red" => red = val.to_string(),
+                        "magenta" => magenta = val.to_string(),
+                        "cyan" => cyan = val.to_string(),
+                        "blue" => blue = val.to_string(),
+                        "foreground" => fg = val.to_string(),
+                        "muted" => muted = val.to_string(),
+                        "background" => background = val.to_string(),
+                        _ => {}
                     }
                 }
             }
         }
 
-        Self::from_hex_values(&orange, &yellow, &red, &magenta, &cyan, &blue, &fg, &muted)
+        // Theme metadata can be illegible (lumon's muted is 1.68:1 on its background): lift it to
+        // the WCAG minimums, keeping the theme's hue.
+        let lift = |min| {
+            if background.is_empty() {
+                muted.clone()
+            } else {
+                status_palette::ensure_contrast(&muted, &background, &fg, min)
+            }
+        };
+        let muted_text = lift(status_palette::MIN_TEXT_CONTRAST);
+        let muted_line = lift(status_palette::MIN_LINE_CONTRAST);
+
+        let mut palette = Self::from_hex_values(
+            &orange,
+            &yellow,
+            &red,
+            &magenta,
+            &cyan,
+            &blue,
+            &fg,
+            &muted_text,
+        )
+        .with_state_colors(crate::config::load_default_theme().as_ref(), mode);
+        palette.muted_line = muted_line;
+        palette
     }
 }
 

@@ -3,7 +3,8 @@
 
 listen_addr = "127.0.0.1"
 port = 4040
-pid_file = "/tmp/waymux.pid"
+# Default: $XDG_RUNTIME_DIR/waymux/waymux.pid
+# pid_file = "/run/user/1000/waymux/waymux.pid"
 shutdown_timeout_secs = 30
 log_level = "info"
 
@@ -14,25 +15,27 @@ idle_debounce_ms = 0
 [theme]
 active_spinner = "dot"
 
+# State colors are semantic and come from a built-in palette (src/status_palette.rs),
+# picked per light/dark theme mode so permission, question, stalled and error stay
+# distinguishable on every theme. Add `color = "#rrggbb"` to a state only to override it.
+
 [theme.states.idle]
 icon = "󱥂"
-color = "#94e2d5"
 
 [theme.states.busy]
 icon = "󰝲"
-color = "#f9e2af"
 
 [theme.states.question]
 icon = "󱜻"
-color = "#cba6f7"
 
 [theme.states.permission]
 icon = "󱅭"
-color = "#f38ba8"
+
+[theme.states.stalled]
+icon = "󱥁"
 
 [theme.states.error]
 icon = "󰨄"
-color = "#f38ba8"
 [spinners]
 minidot = { interval = 83, frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] }
 line = { interval = 100, frames = ["|", "/", "-", "\\"] }

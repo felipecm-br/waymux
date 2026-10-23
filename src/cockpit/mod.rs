@@ -6,6 +6,7 @@ pub mod notes;
 pub mod preview;
 
 use crate::presets::materialize_cockpit_toml;
+use crate::sys::shell_quote;
 use crate::theme::ThemePalette;
 use crate::tmux_cmd::{
     tmux_display_msg, tmux_get_global_opt, tmux_out, tmux_set_global_opt, tmux_status,
@@ -99,6 +100,9 @@ fn compute_start_idx(
             n += 1;
         }
     } else {
+        if let Some(n) = first_waiting_row(items_str) {
+            return n;
+        }
         let mut n = 0usize;
         for line in items_str.lines() {
             if line.starts_with('#') || line.is_empty() {
@@ -114,6 +118,27 @@ fn compute_start_idx(
         }
     }
     0
+}
+
+/// Index of the first row that needs the human (column 6 is the raw state): an agent waiting
+/// on you, else finished work nobody has reviewed. Rows arrive sorted by service class and
+/// wait time, so this is the next thing to serve.
+fn first_waiting_row(items_str: &str) -> Option<usize> {
+    let states: Vec<&str> = items_str
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| l.split('\t').nth(6).unwrap_or(""))
+        .collect();
+    states
+        .iter()
+        .position(|st| crate::triage::service_class(st).is_some())
+        .or_else(|| states.iter().position(|st| *st == "review"))
+}
+
+/// `S` ships (merge → push → delete branch), which cannot be undone: ask first,
+/// exactly like `S` in the awt popup.
+fn ship_cli_args(branch: String) -> Vec<String> {
+    vec!["ship".to_string(), branch, "--confirm".to_string()]
 }
 
 fn find_wm_bin() -> String {
@@ -153,7 +178,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 
     if is_fullscreen {
         if !is_stdout_tty() {
-            let cmd = format!("'{}' cockpit --fullscreen", exe_str);
+            let cmd = format!("{} cockpit --fullscreen", shell_quote(&exe_str));
             let _ = tmux_status(&["split-window", "-Z", &cmd]);
             return 0;
         }
@@ -168,8 +193,10 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             .or_else(|| (!popup_text_opt.is_empty()).then_some(popup_text_opt))
             .unwrap_or_else(|| "default".into());
         let popup_cmd = format!(
-            "TMUX_POPUP=1 TMUX_ORIGIN_SESSION='{}' TMUX_ORIGIN_WINDOW='{}' '{}' cockpit",
-            orig_sess, orig_win, exe_str
+            "TMUX_POPUP=1 TMUX_ORIGIN_SESSION={} TMUX_ORIGIN_WINDOW={} {} cockpit",
+            shell_quote(&orig_sess),
+            shell_quote(&orig_win),
+            shell_quote(&exe_str)
         );
         let _ = tmux_status(&[
             "display-popup",
@@ -305,7 +332,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
                 return 0;
             }
             let _ = std::env::set_current_dir(&target_path);
-            return crate::wt::run_cli(&["ship".to_string(), branch]);
+            return crate::wt::run_cli(&ship_cli_args(branch));
         } else if let Some(raw_item) = chosen.strip_prefix("__SWEEP_WORKTREES__") {
             let target_path = resolve_target_path(raw_item, &orig_sess);
             let _ = std::env::set_current_dir(&target_path);
@@ -321,12 +348,13 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             saved_sess = cols.get(3).copied().unwrap_or("").to_string();
             saved_idx = cols.get(1).copied().unwrap_or("").to_string();
 
-            let script = format!(
-                "cd '{}' 2>/dev/null && gh pr view --web 2>/dev/null || tmux display-message 'No pull request found for current branch'",
-                target_path
-            );
             let _ = Command::new("sh")
-                .args(["-c", &script])
+                .args([
+                    "-c",
+                    "cd \"$1\" 2>/dev/null && gh pr view --web 2>/dev/null || tmux display-message 'No pull request found for current branch'",
+                    "sh",
+                    &target_path,
+                ])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -339,12 +367,13 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             saved_sess = cols.get(3).copied().unwrap_or("").to_string();
             saved_idx = cols.get(1).copied().unwrap_or("").to_string();
 
-            let script = format!(
-                "cd '{}' 2>/dev/null && gh pr checks --web 2>/dev/null || tmux display-message 'No PR checks found for current branch'",
-                target_path
-            );
             let _ = Command::new("sh")
-                .args(["-c", &script])
+                .args([
+                    "-c",
+                    "cd \"$1\" 2>/dev/null && gh pr checks --web 2>/dev/null || tmux display-message 'No PR checks found for current branch'",
+                    "sh",
+                    &target_path,
+                ])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -409,6 +438,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 
             saved_sess = target_sess;
             saved_idx = target_idx;
+            items::mark_reviewed(Path::new(&target_path));
 
             let lzg_bin = find_lazygitrs_bin();
             let mut lzg_args = vec!["-d", "-c", "popup"];
@@ -470,5 +500,62 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             }
             return 0;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(idx: &str, sess: &str, state: &str) -> String {
+        format!("t\t{idx}\tname\t{sess}\t%1\t/tmp\t{state}\t-\t-\t-\t-\t-")
+    }
+
+    #[test]
+    fn test_start_idx_prefers_first_waiting_agent() {
+        let items = [
+            "#  api".to_string(),
+            row("2", "api", "permission"),
+            "#  dotfiles".to_string(),
+            row("0", "dotfiles", "busy"),
+            row("1", "dotfiles", "idle"),
+        ]
+        .join("\n");
+        // Nothing saved: the cursor starts on the agent waiting for you, not your window.
+        assert_eq!(compute_start_idx(&items, "", "", "dotfiles", "1"), 0);
+        // A saved selection (returning from lazygitrs) still wins.
+        assert_eq!(
+            compute_start_idx(&items, "dotfiles", "1", "dotfiles", "1"),
+            2
+        );
+    }
+
+    #[test]
+    fn test_start_idx_falls_back_to_origin_window() {
+        let items = [row("0", "s", "busy"), row("1", "s", "idle")].join("\n");
+        assert_eq!(compute_start_idx(&items, "", "", "s", "1"), 1);
+        assert_eq!(first_waiting_row(&items), None);
+    }
+
+    #[test]
+    fn test_start_idx_prefers_waiting_then_unreviewed() {
+        let review_only = [row("0", "s", "busy"), row("1", "s", "review")].join("\n");
+        assert_eq!(compute_start_idx(&review_only, "", "", "s", "0"), 1);
+
+        let both = [
+            row("0", "s", "review"),
+            row("1", "s", "busy"),
+            row("2", "s", "question"),
+        ]
+        .join("\n");
+        assert_eq!(first_waiting_row(&both), Some(2));
+    }
+
+    #[test]
+    fn test_ship_asks_for_confirmation() {
+        assert_eq!(
+            ship_cli_args("feat/x".to_string()),
+            vec!["ship", "feat/x", "--confirm"]
+        );
     }
 }

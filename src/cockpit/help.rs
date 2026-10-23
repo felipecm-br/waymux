@@ -30,7 +30,7 @@ pub fn run_cli() -> i32 {
         c_yellow, BOLD, RESET
     );
     println!(
-        "    {}{}[S]{}      Ship Worktree     Merge, push & clean worktree",
+        "    {}{}[S]{}      Ship Worktree     Merge, push & clean worktree (asks first)",
         c_cyan, BOLD, RESET
     );
     println!(
@@ -78,7 +78,7 @@ pub fn run_cli() -> i32 {
         c_blue, BOLD, RESET
     );
     println!(
-        "    {}{}[g]{}      Git Cockpit       Toggle Lazygitrs (Dual-Diff, Esc returns)",
+        "    {}{}[g]{}      Git Cockpit       Toggle Lazygitrs (Dual-Diff, Esc returns; clears 󰈈 review)",
         c_magenta, BOLD, RESET
     );
     println!(
@@ -104,7 +104,7 @@ pub fn run_cli() -> i32 {
         c_cyan, BOLD, RESET
     );
     println!(
-        "    {}{}[d / C-d]{} Kill / Delete     Kill window or delete session",
+        "    {}{}[d / x]{}  Kill / Delete     Kill window or session (agent at work: press twice)",
         c_red, BOLD, RESET
     );
     println!(

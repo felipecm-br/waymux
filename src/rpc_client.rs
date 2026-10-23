@@ -109,10 +109,22 @@ pub fn http_post_json(
     http_request("POST", path, port, token, Some(&body), timeout_ms)
 }
 
+/// Daemon port: `WAYMUX_PORT` when set (tests, a second instance), else 4040.
+pub fn daemon_port() -> u16 {
+    std::env::var("WAYMUX_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(4040)
+}
+
 #[derive(Debug, Clone)]
 pub struct AgentPaneEntry {
     pub state: String,
     pub last_timestamp: u64,
+    /// Why the agent is in this state, e.g. the tool behind a permission prompt.
+    pub message: Option<String>,
+    /// Epoch ms of the last working → idle transition the daemon saw; 0 when unknown.
+    pub finished_at: u64,
 }
 
 pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
@@ -128,7 +140,7 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
         "id": 1
     });
 
-    if let Some((200, body)) = http_post_json(4040, "/rpc", Some(&token), &payload, 150)
+    if let Some((200, body)) = http_post_json(daemon_port(), "/rpc", Some(&token), &payload, 150)
         && let Ok(val) = serde_json::from_str::<serde_json::Value>(&body)
         && let Some(res_obj) = val.get("result").and_then(|r| r.as_object())
     {
@@ -142,12 +154,22 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                 .get("last_timestamp")
                 .and_then(|t| t.as_u64())
                 .unwrap_or(0);
+            let message = info
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(str::to_string);
+            let finished_at = info
+                .get("finished_at")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(0);
             if !state.is_empty() {
                 map.insert(
                     pane_id.clone(),
                     AgentPaneEntry {
                         state,
                         last_timestamp: ts,
+                        message,
+                        finished_at,
                     },
                 );
             }
@@ -172,13 +194,13 @@ pub fn post_agent_status(pane_id: &str, state: &str, message: Option<&str>) -> b
     });
 
     matches!(
-        http_post_json(4040, "/api/status", token.as_deref(), &payload, 250),
+        http_post_json(daemon_port(), "/api/status", token.as_deref(), &payload, 250),
         Some((code, _)) if (200..300).contains(&code)
     )
 }
 
 pub fn check_health_cli() -> i32 {
-    match http_request("GET", "/health", 4040, None, None, 1500) {
+    match http_request("GET", "/health", daemon_port(), None, None, 1500) {
         Some((200, body)) => {
             let trimmed = body.trim();
             if trimmed.is_empty() {
@@ -193,7 +215,10 @@ pub fn check_health_cli() -> i32 {
             1
         }
         None => {
-            eprintln!("waymux daemon is not running or unreachable on port 4040");
+            eprintln!(
+                "waymux daemon is not running or unreachable on port {}",
+                daemon_port()
+            );
             1
         }
     }
@@ -223,7 +248,7 @@ pub fn dismiss_pane_cli(args: &[String]) -> i32 {
         "id": 1
     });
 
-    let _ = http_post_json(4040, "/rpc", Some(&token), &payload, 200);
+    let _ = http_post_json(daemon_port(), "/rpc", Some(&token), &payload, 200);
     0
 }
 

@@ -7,6 +7,25 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Refreshes a branch's PR cache in the background: `$1` is the worktree, `$2` the cache
+/// file. Paths travel as arguments, never spliced into the script, so quotes in a path are inert.
+const PR_CACHE_REFRESH_SCRIPT: &str = r#"cd "$1" 2>/dev/null || exit 0
+if gh pr view --json number,title,state,statusCheckRollup > "$2.tmp" 2>/dev/null && [ -s "$2.tmp" ]; then
+  mv "$2.tmp" "$2"
+else
+  c_sha=$(git rev-parse HEAD 2>/dev/null || echo '')
+  c_state=none
+  if [ -n "$c_sha" ]; then
+    c_state=$(gh api "repos/:owner/:repo/commits/$c_sha/status" --jq .state 2>/dev/null | tail -n 1)
+  fi
+  if [ -n "$c_state" ] && [ "$c_state" != none ]; then
+    printf '{"commit_state":"%s"}\n' "$c_state" > "$2"
+  else
+    echo '{}' > "$2"
+  fi
+  rm -f "$2.tmp"
+fi"#;
+
 const AGENT_NAMES: &[&str] = &[
     "agy",
     "agy-bin",
@@ -123,7 +142,11 @@ fn parse_pr_cache_json(path: &Path) -> (String, String) {
         Ok(c) if !c.trim().is_empty() => c,
         _ => return (String::new(), String::new()),
     };
-    let val: serde_json::Value = match serde_json::from_str(&content) {
+    // Wrappers around `gh` (e.g. mise shims) can print a line before the JSON.
+    let json = content
+        .find('{')
+        .map_or(content.as_str(), |i| &content[i..]);
+    let val: serde_json::Value = match serde_json::from_str(json) {
         Ok(v) => v,
         Err(_) => return (String::new(), String::new()),
     };
@@ -270,7 +293,13 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     let br = &meta.branch;
     if !br.is_empty() && !matches!(br.as_str(), "main" | "master" | "HEAD" | "detached") {
         let hash_key = format!("{}_{}", ppath.replace('/', "_"), br.replace('/', "_"));
-        let cache_file = format!("/tmp/gh-pr-cache-{}.json", hash_key);
+        // Per-user runtime dir, not /tmp: other users cannot pre-create or symlink the file.
+        let cache_dir = crate::presets::runtime_dir().join("pr-cache");
+        let _ = fs::create_dir_all(&cache_dir);
+        let cache_file = cache_dir
+            .join(format!("{}.json", hash_key))
+            .to_string_lossy()
+            .to_string();
         let cache_path = Path::new(&cache_file);
 
         let cache_age = fs::metadata(cache_path)
@@ -285,38 +314,8 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
                 .create(true)
                 .append(true)
                 .open(cache_path);
-            let ppath_owned = ppath.to_string();
-            let cache_owned = cache_file.clone();
-            let bg_script = format!(
-                "cd '{}' 2>/dev/null || exit 0; \
-                 if gh pr view --json number,title,state,statusCheckRollup > '{}.tmp' 2>/dev/null && [ -s '{}.tmp' ]; then \
-                   mv '{}.tmp' '{}'; \
-                 else \
-                   c_sha=$(git rev-parse HEAD 2>/dev/null || echo ''); \
-                   if [ -n \"$c_sha\" ]; then \
-                     c_state=$(gh api \"repos/:owner/:repo/commits/$c_sha/status\" --jq .state 2>/dev/null || echo 'none'); \
-                     if [ -n \"$c_state\" ] && [ \"$c_state\" != 'none' ]; then \
-                       echo \"{{\\\"commit_state\\\":\\\"$c_state\\\"}}\" > '{}'; \
-                     else \
-                       echo '{{}}' > '{}'; \
-                     fi; \
-                   else \
-                     echo '{{}}' > '{}'; \
-                   fi; \
-                   rm -f '{}.tmp'; \
-                 fi",
-                ppath_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned,
-                cache_owned
-            );
             let _ = Command::new("sh")
-                .args(["-c", &bg_script])
+                .args(["-c", PR_CACHE_REFRESH_SCRIPT, "sh", ppath, &cache_file])
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -346,6 +345,88 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     format!("{}…", prefix)
 }
 
+/// Row priority and glyph. Urgent rows use `triage::service_class` + 1 so the Cockpit lists
+/// waiting agents in the same order `Prefix+I` visits them. Finished work nobody has opened yet
+/// (`review`) comes next: it does not block the agent, but it is the next thing that needs you.
+fn state_prio_icon(st: &str, agent_like: bool) -> (u8, &'static str) {
+    let ico = match st {
+        "permission" => "󱅭",
+        "question" | "awaiting_input" => "󱜻",
+        "stalled" | "hanging" => "󱥁",
+        "error" => "󰨄",
+        "review" => "󰈈",
+        "busy" | "working" => "@SPIN@",
+        "idle" => "󱥂",
+        _ if agent_like => "󰑮",
+        _ => "·",
+    };
+    let prio = match (crate::triage::service_class(st), st) {
+        (Some(class), _) => class + 1,
+        (None, "review") => REVIEW_PRIO,
+        (None, "busy" | "working") => 5,
+        (None, "idle") => 6,
+        (None, _) if agent_like => 6,
+        _ => 7,
+    };
+    (prio, ico)
+}
+
+/// Rows at or above this priority need the human: waiting agents (1–3) and unreviewed work.
+const REVIEW_PRIO: u8 = 4;
+
+/// Rows that need you sort oldest-first within their class; everything else keeps window order.
+fn wait_order_key(prio: u8, ts: u64) -> u64 {
+    if prio <= REVIEW_PRIO {
+        crate::triage::normalize_ts(ts)
+    } else {
+        0
+    }
+}
+
+/// Marker in a worktree's git dir; its mtime is when the worktree was last opened for review.
+const REVIEW_MARKER: &str = "waymux-reviewed";
+
+/// Git dir of a worktree without forking git: `.git` is a directory, or a `gitdir: <path>` file.
+pub fn git_dir_of(worktree: &Path) -> Option<std::path::PathBuf> {
+    let dot_git = worktree.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let content = fs::read_to_string(&dot_git).ok()?;
+    let target = content
+        .lines()
+        .find_map(|l| l.strip_prefix("gitdir:"))?
+        .trim();
+    let target = Path::new(target);
+    Some(if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        worktree.join(target)
+    })
+}
+
+/// Records that the worktree was just opened for review (lazygitrs from the Cockpit or Ctrl+G).
+pub fn mark_reviewed(worktree: &Path) {
+    if let Some(dir) = git_dir_of(worktree) {
+        let _ = fs::write(dir.join(REVIEW_MARKER), b"");
+    }
+}
+
+fn mtime_secs(path: &Path) -> u64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// "Done, not reviewed": the agent finished after the last review and left something to look
+/// at, either uncommitted changes or a HEAD that moved since the review.
+fn needs_review(finished_at: u64, reviewed_at: u64, head_moved_at: u64, dirty: bool) -> bool {
+    finished_at > reviewed_at && (dirty || head_moved_at > reviewed_at)
+}
+
 #[derive(Debug, Clone)]
 struct RawPaneRow {
     prio: u8,
@@ -369,6 +450,41 @@ struct RawPaneRow {
     diffstat_str: String,
     pr_num: String,
     pr_ci: String,
+}
+
+/// The directory git metadata is read from for a pane path: the path itself, or its
+/// `main/` worktree when the pane sits in a `.bare` container. None when not a directory.
+fn repo_path_for(ppath: &str) -> Option<String> {
+    let p = Path::new(ppath);
+    if ppath.is_empty() || !p.is_dir() {
+        return None;
+    }
+    if !p.join(".git").exists() && p.join(".bare").is_dir() && p.join("main").is_dir() {
+        return Some(format!("{}/main", ppath));
+    }
+    Some(ppath.to_string())
+}
+
+/// Git status for every distinct pane path, one thread each: the `git status` and
+/// `git diff` calls dominated the scan when run back to back.
+fn prefetch_git_metadata(list_out: &str, now_s: u64) -> HashMap<String, GitMetadata> {
+    let paths: HashSet<String> = list_out
+        .lines()
+        .filter_map(|line| line.split('\x1f').nth(5))
+        .filter_map(repo_path_for)
+        .collect();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = paths
+            .into_iter()
+            .map(|path| {
+                scope.spawn(move || {
+                    let meta = resolve_git_metadata(&path, now_s);
+                    (path, meta)
+                })
+            })
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    })
 }
 
 pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> String {
@@ -417,7 +533,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
     let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
     let list_out = tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default();
 
-    let mut git_cache: HashMap<String, GitMetadata> = HashMap::new();
+    let git_cache = prefetch_git_metadata(&list_out, now_s);
     let mut raw_rows: Vec<RawPaneRow> = Vec::new();
 
     for line in list_out.lines() {
@@ -444,9 +560,14 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
 
         let detected_agent = sess_agent.get(pane_os_pid).cloned().unwrap_or_default();
 
-        let (mut st, ts) = match acpd_map.get(pid) {
-            Some(entry) => (entry.state.clone(), entry.last_timestamp),
-            None => (String::new(), 0),
+        let (mut st, ts, reason, finished_at) = match acpd_map.get(pid) {
+            Some(entry) => (
+                entry.state.clone(),
+                entry.last_timestamp,
+                entry.message.clone().unwrap_or_default(),
+                entry.finished_at,
+            ),
+            None => (String::new(), 0, String::new(), 0),
         };
 
         if st.is_empty() {
@@ -460,25 +581,6 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             }
         }
 
-        let (prio, ico) = match st.as_str() {
-            "permission" => (1, "󱅭"),
-            "question" | "awaiting_input" => (2, "󱜻"),
-            "stalled" | "hanging" => (2, "󱥁"),
-            "error" => (3, "󰨄"),
-            "busy" | "working" => (4, "@SPIN@"),
-            "idle" => (5, "󱥂"),
-            _ => {
-                if !detected_agent.is_empty()
-                    || is_agent_binary_name(pcmd)
-                    || contains_agent_name(ptitle)
-                {
-                    (5, "󰑮")
-                } else {
-                    (6, "·")
-                }
-            }
-        };
-
         let diff_s = if ts > 0 {
             if ts < 10_000_000_000 {
                 now_s.saturating_sub(ts)
@@ -491,26 +593,42 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let age_str = format_age(diff_s);
 
         let mut git_meta = GitMetadata::default();
-        if !ppath.is_empty() && Path::new(&ppath).is_dir() {
-            let p_obj = Path::new(&ppath);
-            if !p_obj.join(".git").exists()
-                && p_obj.join(".bare").is_dir()
-                && p_obj.join("main").is_dir()
-            {
-                ppath = format!("{}/main", ppath);
-            }
-            git_meta = git_cache
-                .entry(ppath.clone())
-                .or_insert_with(|| resolve_git_metadata(&ppath, now_s))
-                .clone();
+        if let Some(repo_path) = repo_path_for(&ppath) {
+            ppath = repo_path;
+            git_meta = git_cache.get(&ppath).cloned().unwrap_or_default();
         }
+
+        // Only a completion the daemon saw counts: after a restart idle panes are rehydrated
+        // with a fresh timestamp but no finished_at.
+        if st == "idle"
+            && finished_at > 0
+            && let Some(git_dir) = git_dir_of(Path::new(&ppath))
+            && needs_review(
+                crate::triage::normalize_ts(finished_at) / 1000,
+                mtime_secs(&git_dir.join(REVIEW_MARKER)),
+                mtime_secs(&git_dir.join("logs").join("HEAD")),
+                !git_meta.diffstat.is_empty(),
+            )
+        {
+            st = "review".to_string();
+        }
+
+        let (prio, ico) = state_prio_icon(
+            &st,
+            !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
+        );
 
         let is_agent = !detected_agent.is_empty()
             || is_agent_binary_name(pcmd)
             || !ai_title.is_empty()
             || (!st.is_empty() && st != "normal");
 
-        let raw_label = if !ai_title.is_empty() {
+        // Waiting rows say why the agent waits (e.g. the tool behind a permission prompt)
+        // instead of the task title.
+        let raw_label = if crate::triage::service_class(&st).is_some() && !reason.trim().is_empty()
+        {
+            reason.as_str()
+        } else if !ai_title.is_empty() {
             ai_title
         } else if !detected_agent.is_empty() {
             &detected_agent
@@ -555,7 +673,12 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         });
     }
 
-    raw_rows.sort_by(|a, b| a.prio.cmp(&b.prio).then_with(|| a.idx_num.cmp(&b.idx_num)));
+    raw_rows.sort_by(|a, b| {
+        a.prio
+            .cmp(&b.prio)
+            .then_with(|| wait_order_key(a.prio, a.ts).cmp(&wait_order_key(b.prio, b.ts)))
+            .then_with(|| a.idx_num.cmp(&b.idx_num))
+    });
 
     let mut sess_prio: HashMap<String, u8> = HashMap::new();
     let mut sess_ts: HashMap<String, u64> = HashMap::new();
@@ -571,7 +694,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let cur_p = sess_prio.get(&row.sess).copied().unwrap_or(99);
         if row.prio < cur_p {
             sess_prio.insert(row.sess.clone(), row.prio);
-            sess_ts.insert(row.sess.clone(), row.ts);
+            sess_ts.insert(row.sess.clone(), crate::triage::normalize_ts(row.ts));
         }
 
         let win_key = format!("{}:{}", row.sess, row.idx);
@@ -580,12 +703,13 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         }
 
         let c_ico = match row.st.as_str() {
-            "permission" => &theme.c_perm,
-            "question" | "awaiting_input" => &theme.c_question,
-            "stalled" | "hanging" => &theme.c_perm,
-            "error" => &theme.c_error,
-            "busy" | "working" => &theme.c_busy,
-            "idle" => &theme.c_idle,
+            "permission" => &theme.s_permission,
+            "question" | "awaiting_input" => &theme.s_question,
+            "stalled" | "hanging" => &theme.s_stalled,
+            "error" => &theme.s_error,
+            "busy" | "working" => &theme.s_busy,
+            "idle" => &theme.s_idle,
+            "review" => &theme.s_review,
             _ => &theme.c_normal,
         };
 
@@ -702,7 +826,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let age_col = if !row.age_str.is_empty() {
             let pad_a = 6usize.saturating_sub(char_len(&row.age_str));
             let age_spaces = " ".repeat(pad_a);
-            if row.prio <= 3 {
+            if row.prio <= REVIEW_PRIO {
                 format!(" {}{}{}{}{}", age_spaces, c_ico, BOLD, row.age_str, RESET)
             } else {
                 format!(" {}{}{}{}", age_spaces, theme.c_muted, row.age_str, RESET)
@@ -853,6 +977,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_pr_cache_tolerates_wrapper_noise_before_json() {
+        let path =
+            std::env::temp_dir().join(format!("waymux-pr-cache-{}.json", std::process::id()));
+        fs::write(
+            &path,
+            "mise ~/.config/mise/config.toml tools: gh@2.103.0\n\
+             {\"number\":42,\"statusCheckRollup\":[{\"conclusion\":\"SUCCESS\",\"status\":\"COMPLETED\"}]}",
+        )
+        .unwrap();
+        let parsed = parse_pr_cache_json(&path);
+        let _ = fs::remove_file(&path);
+        assert_eq!(parsed, ("42".to_string(), "success".to_string()));
+    }
+
+    #[test]
     fn test_format_age() {
         assert_eq!(format_age(0), "");
         assert_eq!(format_age(45), "45s");
@@ -865,5 +1004,61 @@ mod tests {
     fn test_truncate_chars() {
         assert_eq!(truncate_chars("hello", 10), "hello");
         assert_eq!(truncate_chars("hello world", 6), "hello…");
+    }
+
+    #[test]
+    fn test_cockpit_priority_matches_triage_order() {
+        let prio = |st| state_prio_icon(st, true).0;
+        assert!(prio("permission") < prio("question"));
+        assert_eq!(prio("question"), prio("awaiting_input"));
+        assert!(prio("question") < prio("stalled"));
+        assert_eq!(prio("stalled"), prio("error"));
+        assert!(prio("error") < prio("review"));
+        assert!(prio("review") < prio("busy"));
+        assert!(prio("busy") < prio("idle"));
+        assert_eq!(state_prio_icon("review", true), (REVIEW_PRIO, "󰈈"));
+        assert_eq!(state_prio_icon("normal", false), (7, "·"));
+        assert_eq!(state_prio_icon("normal", true), (6, "󰑮"));
+    }
+
+    #[test]
+    fn test_wait_order_key_only_reorders_rows_that_need_you() {
+        assert!(wait_order_key(1, 1_000) < wait_order_key(1, 2_000));
+        assert!(wait_order_key(REVIEW_PRIO, 1_000) < wait_order_key(REVIEW_PRIO, 2_000));
+        assert_eq!(wait_order_key(1, 0), u64::MAX);
+        assert_eq!(wait_order_key(5, 1_000), wait_order_key(5, 2_000));
+    }
+
+    #[test]
+    fn test_needs_review() {
+        // Finished after the last review with uncommitted changes, or with new commits.
+        assert!(needs_review(200, 100, 0, true));
+        assert!(needs_review(200, 100, 150, false));
+        // Reviewed since it finished, or nothing to look at.
+        assert!(!needs_review(100, 200, 300, true));
+        assert!(!needs_review(200, 100, 50, false));
+        // Never reviewed: any finished work with changes counts.
+        assert!(needs_review(200, 0, 0, true));
+    }
+
+    #[test]
+    fn test_git_dir_of_main_checkout_and_linked_worktree() {
+        let base = std::env::temp_dir().join(format!("waymux-gitdir-{}", std::process::id()));
+        let main = base.join("main");
+        let linked = base.join("feat");
+        fs::create_dir_all(main.join(".git")).unwrap();
+        fs::create_dir_all(&linked).unwrap();
+        fs::write(linked.join(".git"), "gitdir: ../main/.git/worktrees/feat\n").unwrap();
+
+        assert_eq!(git_dir_of(&main), Some(main.join(".git")));
+        assert_eq!(
+            git_dir_of(&linked),
+            Some(linked.join("../main/.git/worktrees/feat"))
+        );
+        assert_eq!(git_dir_of(&base), None);
+
+        mark_reviewed(&main);
+        assert!(mtime_secs(&main.join(".git").join(REVIEW_MARKER)) > 0);
+        let _ = fs::remove_dir_all(&base);
     }
 }

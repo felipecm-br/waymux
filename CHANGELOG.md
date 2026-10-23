@@ -4,6 +4,50 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### 🩺 Works Beyond One Machine
+
+- **`waymux doctor` (`src/doctor.rs`)**: checks the daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, `notify-send`, a sound player, the worktree helpers, Claude Code hooks and the theme file, and prints a fix for each gap. Exits 1 only when the daemon, tmux or git is missing.
+- **Typos no longer start the daemon (`src/lib.rs`)**: `waymux stauts` or `waymux status --help` fell through to daemon mode. Only the bare binary, `daemon` or a leading `--config` start it; unknown commands exit 2. One `COMMANDS` table drives `--help` (plumbing listed separately) and `<command> --help`. Print-only commands restore the default SIGPIPE, so `waymux --help | head` no longer panics.
+- **Bundled worktree helpers (`scripts/awt/`, `install.sh`, `src/wt/mod.rs`)**: `waymux wt` delegated to `awt-*.sh` scripts that existed only in the author's dotfiles and exited 0 silently without them. The ten helpers now ship with Waymux and install to `~/.local/share/waymux/scripts`; `~/.config/waymaker/scripts` still wins. A missing helper exits 127 and lists the searched paths. `awt sweep --all` scans `$AWT_SWEEP_ROOTS` and spares `$AWT_SWEEP_KEEP_BRANCHES` instead of hard-coded personal values.
+- **Installer (`install.sh`)**: checksums fail closed (missing or mismatched `.sha256` stops the install unless `WAYMUX_SKIP_CHECKSUM=1`) and use `sha256sum` or `shasum`, so macOS installs verify instead of failing. `--with-stack` builds `wm` and `lazygitrs`; it used to be ignored.
+- **`waymux init` (`src/init.rs`)**: `--hooks` prints a complete Claude Code hooks block (it printed four comment lines); `--tmux` loads the plugin instead of binding `prefix+c` over tmux's new-window; `--systemd` embeds the shipped unit. Unknown options exit 2.
+- **Portable defaults**: theme colors resolve from `$WAYMUX_COLORS`, `~/.config/waymux/colors.toml`, then Omarchy; sound uses the first of `pw-play`, `paplay`, `aplay`, `afplay` (macOS `Glass.aiff` joins the fallbacks); the PID file defaults to `$XDG_RUNTIME_DIR/waymux/waymux.pid`; the flow log no longer falls back to the author's home.
+- **macOS stall alerts (`src/api.rs`)**: without `/proc`, CPU always read 0 and quiet agents were flagged stalled. Stall detection is off where `/proc` is missing.
+
+### 🛡️ Hardening
+
+- **Shell quoting (`src/cockpit/`, `src/sys.rs`)**: the PR cache refresh and "open PR / checks" spliced worktree paths into `sh -c` strings inside single quotes; paths now travel as positional arguments, and tmux command strings quote each word with a tested `shell_quote`. The PR cache moved from `/tmp` to `$XDG_RUNTIME_DIR/waymux/pr-cache` and tolerates wrapper output before the JSON (a mise shim around `gh` blanked every PR badge).
+- **Auth (`src/api.rs`)**: the middleware test never called the middleware; it now sends requests through `api_router` (401 without or with a wrong token, 200 with the right one). Token comparison is constant-time.
+
+### ⚡ Performance & Build
+
+- **Parallel git status (`src/cockpit/items.rs`)**: `cockpit-items` resolves git metadata for all pane paths on scoped threads; 10 panes went from 31–60 ms to 17–18 ms with identical output.
+- **Release profile (`Cargo.toml`)**: thin LTO, one codegen unit and stripped symbols take the binary from 5.5 MB to 3.3 MB; tokio uses 9 named features instead of `full`.
+
+### 🧪 Tests & CI
+
+- **`tests/cli.rs`**: 8 end-to-end tests run the real binary against a sandboxed daemon (own port, `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR`): unknown commands, `--help`, a missing daemon, hook → list → dismiss, the PID guard, 401 without the token, `init --hooks` JSON and `doctor`.
+- **CI (`.github/workflows/ci.yml`)**: a second job runs the 8-step Docker sandbox suite on every push.
+
+### 󰈈 Cockpit Says Why An Agent Waits
+
+- **Wait reasons (`src/hook.rs`, `src/rpc_client.rs`, `src/cockpit/items.rs`)**: the hook always sent `message: null`, so the Cockpit could show that an agent waited but not why. `PreToolUse` now sends a one-line tool summary (`Bash: cargo test -p auth`, `Edit: main.rs`, `AskUserQuestion: <question>`; bounded to 120 chars) and remembers it per pane in `$XDG_RUNTIME_DIR/waymux` (`0700`, since commands can hold secrets), so the permission `Notification` that follows carries it; without a preceding tool it falls back to the notification text. `agentState/list` already returned `message`; the client now reads it, and waiting rows show the reason in the title column instead of the task title.
+- **`WAYMUX_PORT`**: client subcommands honor it (default `4040`) so end-to-end tests can drive a sandboxed second daemon.
+- **Done, not reviewed (`src/cockpit/items.rs`, `src/cockpit/mod.rs`, `src/status_palette.rs`)**: an idle agent looked the same whether or not anyone had checked its work. A row now shows `󰈈` (mint `#7ee0b5` dark / `#166534` light) when the agent finished after the worktree was last opened for review and left something to look at: uncommitted changes, or a HEAD that moved since the review. Opening lazygitrs from the Cockpit (`g`/`p`) touches `<git-dir>/waymux-reviewed`, which clears it; the dotfiles `Ctrl+G` popup does the same. Unreviewed rows sort right after waiting agents, oldest first, and the Cockpit opens on the first one when no agent is waiting. Detection reads `.git`, the marker and `logs/HEAD` from the filesystem, no extra git processes. The completion time is the daemon's observed working → idle transition (`finished_at` in `agentState/list`), persisted on the pane as `@ai_agent_finished_at` so a daemon restart (e.g. a theme switch) neither re-flags reviewed work nor forgets unreviewed work; rehydration used to stamp every idle pane with the restart time.
+- **Legible metadata (`src/presets/cockpit-picker.toml`, `src/presets/mod.rs`, `src/theme.rs`)**: non-selected rows were rendered `DIM` (about 0.5 opacity in ghostty) on top of ANSI darkgray metadata, which is 1.68:1 under lumon, so the rows you scan for urgency were the hardest to read. Rows are no longer dimmed (the selection keeps BOLD and the cyan bar). Theme `muted` is lifted toward the foreground until it reaches 4.5:1 for metadata text and 3:1 for separators and borders (`status_palette::ensure_contrast`), only when the theme falls short; the footer, separators and preview border get those colors through `__MUTED_TEXT__` / `__MUTED_LINE__` when the preset is materialized.
+
+### 🔔 Completion Chimes Respect Focus & Breakpoints
+
+- **Focus-aware, breakpoint-deferred completion chimes (`src/adapters.rs`)**: every alert used to play immediately, including the "done" chime for the pane you were looking at, and done chimes were most of the sound (92 of 95 in one week of logs). Now the completion chime is skipped when a focused client shows that pane, otherwise it waits for a 2 s typing pause (`#{client_activity}`, capped at 15 s), and agents finishing while it waits share one chime. Permission, question, stalled and error alerts still play immediately.
+
+### 🛡️ Cockpit Safety & Triage Signals
+
+- **Ship asks first (`src/cockpit/mod.rs`)**: `S` in the Cockpit merges, pushes to origin and deletes the branch, which cannot be undone. It now passes `--confirm` to `awt-merge.sh`, matching `S` in the awt popup. `split_merge_args` (`src/wt/mod.rs`) is extracted and tested so `--confirm` keeps reaching the script.
+- **Guarded kills (`src/cockpit/actions.rs`)**: `waymux window-delete` checks every pane of the target window (or session) against the daemon and `@ai_agent_state_raw`, using the same rule as `close-window.sh` (anything but idle/done counts as in-flight). Idle targets still close on one press (`Prefix+u` restores them); a target with an agent at work arms on the first press and closes on a second press within 2 s. The redundant `D`, `X` and filter-mode `ctrl-x` aliases are removed from the embedded preset; `d`, `x` and `ctrl-d` remain.
+- **Triage queue (`src/triage.rs`)**: `triage --jump` and `--popup` served urgent agents newest-first and cycled a stored position over a list that changes as agents are serviced, so handling A in `[A, B, C]` sent the next jump to C. They now use a stateless queue: `service_class` (permission → question → error/stalled), then the longest-waiting agent first, with second and millisecond timestamps normalized. The next target is the entry after the current pane (`--jump`) or after the last peeked pane (`--popup`), else the head.
+- **Cockpit follows the same order (`src/cockpit/items.rs`, `src/cockpit/mod.rs`)**: row priority now derives from `service_class` (stalled moves next to error), waiting rows sort oldest-first, and when no selection is saved the cursor opens on the first agent waiting on you instead of the window you came from.
+- **Semantic state colors (`src/status_palette.rs`)**: state colors came from the theme's ANSI slots, so monochrome themes (e.g. `lumon`) drew permission, question and stalled in the same blue, and the reference config gave permission and error the same red. The status bar, Waybar and the Cockpit now share one built-in palette per light/dark mode (read from `colors.toml`, falling back to background luminance): dark worst-case CIEDE2000 10.8 including simulated deuteranopia and protanopia, light 18.5 for normal vision, ≥ 4.5:1 contrast on every built-in Omarchy background. `[theme.states.<state>].color` is now optional and still overrides; Cockpit chrome (branches, diffstat, PR badges) keeps following the theme.
+
 ### 🐛 Release Pipeline & Cross-Platform Build
 
 - **GitHub Release Asset Uploads (`.github/workflows/release.yml`)**: Split `taiki-e/upload-rust-binary-action@v1` into separate steps for `waymux` and `acpd` so `archive: $bin-$tag-$target` builds and uploads both binary archives instead of failing with `when multiple binary names are specified, default archive name or '$bin' variable cannot be used in 'archive' option`.

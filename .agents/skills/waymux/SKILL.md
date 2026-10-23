@@ -1,51 +1,94 @@
 ---
 name: waymux
-description: "Orchestrate Tmux, AI agent fleet states, Cockpit HUD popups, alert triage, and Git worktrees using Waymux (and the ACPD JSON-RPC 2.0 daemon at localhost:4040/rpc). Use this skill whenever you need to inspect or control Tmux panes/windows/sessions, wait on or dismiss agent states, manage isolated Git worktrees (`waymux wt`), or configure zero-latency AI hooks (`waymux hook`)."
+description: "Use, set up, and troubleshoot Waymux, the tmux AI-agent cockpit and JSON-RPC daemon on 127.0.0.1:4040. Use when an agent runs inside a Waymux-managed tmux and needs to inspect or control panes/windows/sessions, wait on or dismiss agent states, send review notes or prompts to another agent, or manage worktrees with `waymux wt`; and when a user wants to install Waymux, wire agent hooks (Claude Code, Antigravity, Devin), or asks why the status bar, Cockpit, sounds or `wt` are not working."
 ---
 
-# Waymux Orchestrator & Control Plane Skill
+# Waymux: Use, Set Up, Troubleshoot
 
-You are an AI agent operating inside a Tmux environment managed by **Waymux** (`waymux` / `acpd`). Waymux combines a sub-millisecond synchronous CLI with an asynchronous JSON-RPC 2.0 daemon listening on `http://127.0.0.1:4040/rpc`.
+Waymux is one binary (`waymux`, legacy alias `acpd`): a synchronous CLI for interactive hot paths and a Tokio daemon (`waymux daemon`) that tracks every agent pane's state and paints tmux, Waybar, notifications and sounds. Every command accepts `--help`; unknown commands exit 2.
 
-## 1. Synchronous CLI Commands (`waymux`)
+## 1. First, check the setup
 
-All CLI subcommands execute synchronously in `<1.5ms` without initializing an async runtime:
-
-- `waymux health`: Verify daemon health (`GET /health`).
-- `waymux status`: Display daemon health and all active AI agent pane states.
-- `waymux list`: List active AI agent pane states in TSV format (`pane_id`, `state`, `last_timestamp`).
-- `waymux dismiss [pane_id]`: Clear attention/question/permission badge for a pane.
-- `waymux cockpit`: Launch the interactive Golden-Ratio (`85% × 75%`) AI Fleet & Window Cockpit HUD via Waymaker (`wm`).
-- `waymux triage --popup`: Open or cycle notifying AI agent panes in an isolated `_popups` overlay.
-- `waymux triage --jump`: Jump focus directly to the next AI agent requiring attention (with origin-return memory).
-- `waymux review-notes <count|list|send> <repo_path> [session] [idx] [pane_id]`: Inspect or atomically dispatch inline Lazygitrs code review notes (`.git/info/lines.json`) via bracketed paste.
-- `waymux hook <tmux|lazygit> <Event>`: Native sub-10ms AI agent lifecycle hook handler (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`, `SessionEnd`).
-- `waymux inject <workspace_dir> <prompt>`: Bracketed-paste multi-line prompt injector into the active AI agent pane for a workspace.
-- `waymux wt <subcommand>`: Native Git worktree orchestrator (`new`, `go`, `ls`, `rm`, `ship`, `reap`, `sweep`, `pick`).
-- `waymux init <--tmux|--systemd|--hooks>`: Print portable configuration snippets.
-
-## 2. JSON-RPC 2.0 Control Plane (`http://127.0.0.1:4040/rpc`)
-
-Local requests authenticate using the Bearer token stored at `$XDG_RUNTIME_DIR/waymux/token` (or `/run/user/$UID/acpd/token`).
-
-### Supported RPC Methods
-- **Agent State**:
-  - `agentState/update`: Update pane state (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
-  - `agentState/list`: List all tracked agent panes and timestamps.
-  - `agentState/dismiss`: Clear attention badge on `pane_id`.
-  - `agentState/wait`: Block until `pane_id` reaches `target_state` (with `timeout_secs`).
-- **Tmux Orchestration**:
-  - `tmux.list_sessions`, `tmux.new_session`, `tmux.kill_session`
-  - `tmux.list_windows`, `tmux.new_window`, `tmux.select_window`, `tmux.kill_window`
-  - `tmux.list_panes`, `tmux.split_pane`, `tmux.select_pane`, `tmux.kill_pane`
-  - `tmux.capture_pane`, `tmux.send_keys`, `tmux.select_layout`
-  - `tmux.display_message`, `tmux.ring_bell`
-
-### Example RPC Call
 ```bash
-TOKEN=$(cat "${XDG_RUNTIME_DIR:-/run/user/$UID}/waymux/token" 2>/dev/null || cat "/run/user/$UID/acpd/token")
-curl -s -X POST http://127.0.0.1:4040/rpc \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","method":"tmux.split_pane","params":{"vertical":true,"command":"cargo test"},"id":1}'
+waymux doctor
 ```
+
+It reports `[ok]`, `[warn]` or `[FAIL]` for the daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, `notify-send`, a sound player, the `awt-*.sh` helpers, Claude Code hooks and the theme, with a `fix:` line per gap. Exit 1 means the daemon, tmux or git is missing. Run it from a tmux pane, and run it again after each fix.
+
+## 2. Install and wire it up
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/felipecm-br/waymux/main/install.sh | bash
+# or from a checkout: ./install.sh --from-source   (add --with-stack to build wm and lazygitrs)
+```
+
+Then:
+
+1. tmux: add `run-shell "~/.local/share/waymux/tmux/waymux.tmux"` to `~/.tmux.conf` (`waymux init --tmux` prints it with the bindings). Keys: `prefix+Space` Cockpit, `prefix+i` triage popup, `prefix+I` or `C-S-i` jump to the next waiting agent, `C-g` lazygitrs. Override with `@waymux_key_*` options.
+2. Hooks: `waymux init --hooks` prints a Claude Code `hooks` block. Merge it into `~/.claude/settings.json`; never overwrite the user's existing hooks, append the `waymux hook ...` commands to the matching events.
+3. Daemon: `systemctl --user enable --now waymux` (installed by `install.sh`). On macOS run `waymux daemon` yourself.
+
+## 3. Agent states
+
+| State | Meaning | Who sets it |
+| --- | --- | --- |
+| `working` | Agent is running tools or thinking | `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` hooks |
+| `permission` | Waiting for the user to approve a tool | `Notification` / `PermissionRequest` hook |
+| `awaiting_input` (alias `question`) | Agent asked the user something | `PreToolUse` of a question tool |
+| `stalled` | No output and no CPU for 20 s while working (Linux only) | Daemon stall detector |
+| `error` | Agent reported an error | RPC or hook |
+| `idle` | Finished; the Cockpit shows it as "done, not reviewed" until the worktree is opened in lazygitrs | `Stop` hook |
+| `closed` | Session ended | `SessionEnd` hook |
+
+The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission, then question, then error/stalled, oldest first.
+
+## 4. CLI for agents
+
+- `waymux list`: TSV `pane_id  state  last_timestamp_ms`, one line per tracked pane.
+- `waymux status`: health plus the same states, human-readable.
+- `waymux dismiss <pane_id>`: clear a permission/question/stalled/error badge back to idle.
+- `waymux inject <workspace_dir> <prompt>`: paste a multi-line prompt into the agent pane working in that directory (bracketed paste, so newlines do not submit early).
+- `waymux review-notes <count|list|send> <repo_path> [session] [idx] [pane_id]`: lazygitrs review notes from `<git-dir>/info/lines.json`; `send` pastes them to the agent.
+- `waymux wt`: one worktree per tmux session. `wt -c <branch> [base] [-- cmd]` creates one and runs a command in it; `wt <branch>` switches; `wt rm`, `rebase`, `ship`, `pr [n]`, `clone`, `sweep`, `reap`; bare `wt` opens the picker. `wt --help` lists flags. `ship` merges, pushes and deletes the branch, and `rm` deletes one: confirm with the user first.
+
+## 5. JSON-RPC (`POST http://127.0.0.1:4040/rpc`)
+
+Authenticate with the Bearer token in `$XDG_RUNTIME_DIR/waymux/token` (`0600`). Requests without it get 401. Clients honor `WAYMUX_PORT`.
+
+```bash
+TOKEN=$(cat "$XDG_RUNTIME_DIR/waymux/token")
+rpc() { curl -s -X POST "http://127.0.0.1:${WAYMUX_PORT:-4040}/rpc" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$1"; }
+
+# Block until another agent's pane finishes (or 600 s pass)
+rpc '{"jsonrpc":"2.0","method":"agentState/wait","params":{"pane_id":"%12","target_state":"idle","timeout_secs":600},"id":1}'
+```
+
+| Method | Params |
+| --- | --- |
+| `agentState/list` | none |
+| `agentState/update` | `pane_id`, `state`, optional `timestamp` |
+| `agentState/dismiss` | `pane_id` |
+| `agentState/wait` | `pane_id`, `target_state`, `timeout_secs` |
+| `tmux.list_sessions` / `list_windows` / `list_panes` | `target` where it applies |
+| `tmux.new_session` | `name`, optional `directory`, `command` |
+| `tmux.new_window` | optional `name`, `target`, `command` |
+| `tmux.split_pane` | optional `command`, `target_pane`, `vertical` |
+| `tmux.send_keys` | `target`, `keys` (array), optional `literal` |
+| `tmux.capture_pane` | `target`, optional `start_line`, `end_line`, `escape_sequences` |
+| `tmux.select_window` / `select_pane` / `select_layout` / `kill_*` / `display_message` / `ring_bell` | `target` (+ method-specific fields) |
+
+`tmux.send_keys` and `kill_*` act on the user's live tmux: target only panes you created or were asked to touch.
+
+## 6. Troubleshooting
+
+| Symptom | Likely cause | Fix |
+| --- | --- | --- |
+| Status bar never changes | Hooks not wired, or daemon down | `waymux doctor`; while the agent works, `waymux list` should show its pane |
+| `waymux cockpit` does nothing | `wm` (Waymaker) not on PATH | `./install.sh --with-stack` |
+| `awt-*.sh not found` (exit 127) | Bundled helpers missing | Rerun `install.sh`; helpers in `~/.config/waymaker/scripts` take precedence |
+| No sound | No player found, or sounds muted | `doctor` sound row; set `[sound] player` in `~/.config/waymux/config.toml` |
+| `daemon already running` | Another daemon holds the PID file | `systemctl --user restart waymux` |
+| PR badges empty | `gh` not authenticated, or a `gh` wrapper printing to stdout | `gh auth status`; wrappers must keep stdout clean |
+
+Config: `~/.config/waymux/config.toml` (reference: `config/default.toml` in the repo). Theme: `$WAYMUX_COLORS`, else `~/.config/waymux/colors.toml`, else Omarchy's theme, else built-in colors.

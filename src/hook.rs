@@ -58,7 +58,11 @@ pub fn get_active_tmux_pane() -> String {
     String::new()
 }
 
-fn resolve_window_icon(pane: &str, ctx: &serde_json::Value, agent_hint: Option<&str>) -> &'static str {
+fn resolve_window_icon(
+    pane: &str,
+    ctx: &serde_json::Value,
+    agent_hint: Option<&str>,
+) -> &'static str {
     if let Some(agent) = agent_hint {
         match agent.to_ascii_lowercase().as_str() {
             "claude" => return "",
@@ -237,12 +241,99 @@ fn write_pane_state_file(pane_id: &str, state: &str) {
     }
 }
 
-fn send_acp_state(pane_id: &str, state: &str) {
+/// Longest reason we keep; the Cockpit shows far less, the rest only bloats RPC payloads.
+const MAX_REASON_CHARS: usize = 120;
+
+/// One-line summary of the tool an agent is about to run (`Bash: cargo test -p auth`,
+/// `Edit: main.rs`, `AskUserQuestion: Keep the v1 schema?`). Shown as the reason an agent waits.
+pub fn tool_summary(ctx: &serde_json::Value) -> Option<String> {
+    let name = ctx
+        .get("tool_name")
+        .and_then(|v| v.as_str())
+        .or_else(|| {
+            ctx.get("toolCall")
+                .and_then(|tc| tc.get("name"))
+                .and_then(|v| v.as_str())
+        })
+        .or_else(|| ctx.get("tool").and_then(|v| v.as_str()))
+        .filter(|n| !n.trim().is_empty())?;
+    let input = ctx.get("tool_input").or_else(|| {
+        ctx.get("toolCall")
+            .and_then(|tc| tc.get("args").or_else(|| tc.get("input")))
+    });
+    let detail = input.and_then(|i| {
+        let field = |k: &str| i.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        field("command")
+            .or_else(|| {
+                field("file_path").or_else(|| field("path")).map(|p| {
+                    Path::new(&p)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or(p)
+                })
+            })
+            .or_else(|| {
+                i.get("questions")
+                    .and_then(|qs| qs.get(0))
+                    .and_then(|q| q.get("question"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
+            .or_else(|| field("url"))
+            .or_else(|| field("pattern"))
+    });
+    let detail = detail
+        .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|d| !d.is_empty());
+    let summary = match detail {
+        Some(d) => format!("{}: {}", name.trim(), d),
+        None => name.trim().to_string(),
+    };
+    Some(summary.chars().take(MAX_REASON_CHARS).collect())
+}
+
+/// Per-pane memo of the last tool summary, so the permission prompt that follows a
+/// PreToolUse can say what it is about. Lives in the private runtime dir (0700): commands can
+/// contain secrets.
+fn pane_tool_memo(pane_id: &str) -> Option<std::path::PathBuf> {
+    let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let safe_pane: String = pane_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    Some(
+        std::path::PathBuf::from(xdg)
+            .join("waymux")
+            .join(format!("pane-tool-{}", safe_pane)),
+    )
+}
+
+fn remember_pane_tool(pane_id: &str, summary: Option<&str>) {
+    let Some(path) = pane_tool_memo(pane_id) else {
+        return;
+    };
+    match summary {
+        Some(s) if path.parent().is_some_and(|d| d.is_dir()) => {
+            let _ = fs::write(path, s);
+        }
+        _ => {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn recall_pane_tool(pane_id: &str) -> Option<String> {
+    pane_tool_memo(pane_id)
+        .and_then(|p| fs::read_to_string(p).ok())
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
     if pane_id.is_empty() {
         return;
     }
     write_pane_state_file(pane_id, state);
-    if !post_agent_status(pane_id, state, None) && state == "idle" {
+    if !post_agent_status(pane_id, state, message) && state == "idle" {
         let _ = Command::new("ai-sound-notify")
             .arg("response")
             .stdin(Stdio::null())
@@ -273,20 +364,30 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
             if let Some(title) = extract_session_title(&ctx) {
                 set_ai_agent_title(&tmux_pane, Some(&title));
             }
-            send_acp_state(&tmux_pane, "working");
+            send_acp_state(&tmux_pane, "working", None);
         }
         "PreToolUse" => {
             let state = classify_pre_tool_state(&ctx);
-            send_acp_state(&tmux_pane, state);
+            let summary = tool_summary(&ctx);
+            remember_pane_tool(&tmux_pane, summary.as_deref());
+            send_acp_state(&tmux_pane, state, summary.as_deref());
         }
         "PostToolUse" => {
-            send_acp_state(&tmux_pane, "working");
+            remember_pane_tool(&tmux_pane, None);
+            send_acp_state(&tmux_pane, "working", None);
         }
         "PermissionRequest" | "Notification" => {
-            send_acp_state(&tmux_pane, "permission");
+            // The prompt is about the tool announced by the preceding PreToolUse, when any.
+            let reason = recall_pane_tool(&tmux_pane).or_else(|| {
+                ctx.get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|m| m.chars().take(MAX_REASON_CHARS).collect())
+            });
+            send_acp_state(&tmux_pane, "permission", reason.as_deref());
         }
         "Stop" => {
-            send_acp_state(&tmux_pane, "idle");
+            remember_pane_tool(&tmux_pane, None);
+            send_acp_state(&tmux_pane, "idle", None);
         }
         "SessionEnd" | "Exit" => {
             set_ai_agent_title(&tmux_pane, None);
@@ -299,7 +400,8 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
                     "on",
                 ]);
             }
-            send_acp_state(&tmux_pane, "closed");
+            remember_pane_tool(&tmux_pane, None);
+            send_acp_state(&tmux_pane, "closed", None);
         }
         _ => {}
     }
@@ -435,6 +537,51 @@ pub fn run_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tool_summary_shapes() {
+        let bash = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test\n  -p auth", "description": "Run tests"}
+        });
+        assert_eq!(
+            tool_summary(&bash).as_deref(),
+            Some("Bash: cargo test -p auth")
+        );
+
+        let edit = serde_json::json!({
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/repo/src/main.rs", "old_string": "a"}
+        });
+        assert_eq!(tool_summary(&edit).as_deref(), Some("Edit: main.rs"));
+
+        let ask = serde_json::json!({
+            "tool_name": "AskUserQuestion",
+            "tool_input": {"questions": [{"question": "Keep the v1 schema?"}]}
+        });
+        assert_eq!(
+            tool_summary(&ask).as_deref(),
+            Some("AskUserQuestion: Keep the v1 schema?")
+        );
+
+        // agy-style payload, tool without recognized input.
+        let agy = serde_json::json!({"toolCall": {"name": "view_file", "args": {"x": 1}}});
+        assert_eq!(tool_summary(&agy).as_deref(), Some("view_file"));
+
+        assert_eq!(tool_summary(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn test_tool_summary_is_bounded() {
+        let long = serde_json::json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "x".repeat(500)}
+        });
+        assert_eq!(
+            tool_summary(&long).unwrap().chars().count(),
+            MAX_REASON_CHARS
+        );
+    }
 
     #[test]
     fn test_resolve_window_icon() {

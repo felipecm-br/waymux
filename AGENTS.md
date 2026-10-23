@@ -5,8 +5,9 @@
 **Waymux** (`waymux` / `acpd`) is a unified Rust orchestrator and headless JSON-RPC 2.0 control plane daemon that bridges AI coding agent lifecycle events (`agy`, `claude`, `codex`, `opencode`, `crush`), Tmux state/UI surfaces, Cockpit HUD popups (`wm`), inline code review notes (`lazygitrs`), and Git worktrees (`awt`).
 
 - **Language:** Rust (edition 2024)
-- **Binaries:** `waymux` (`src/bin/waymux.rs`) and `acpd` (`src/main.rs`), sharing 100% of `src/lib.rs`
+- **Binaries:** `waymux` (`src/main.rs`) and the legacy `acpd` alias (`src/bin/acpd.rs`), both calling `waymux::entry()` in `src/lib.rs`
 - **Fast-Path CLI:** Synchronous execution (`<1.5ms`) before Tokio runtime initialization
+- **Platforms:** Linux is fully supported. On macOS the daemon, hooks, status bar and triage work; `/proc`-based Cockpit CPU/RAM and stall detection are Linux-only
 - **Daemon Runtime:** Tokio multi-threaded async runtime + Axum 0.8 (`127.0.0.1:4040`)
 - **Deployment:** User-level systemd service (`systemd/waymux.service`, `Type=notify`, `Alias=acpd.service`)
 
@@ -14,29 +15,46 @@
 
 ## Architecture & Module Map
 
-- `src/lib.rs`: Synchronous CLI fast-path router and async Tokio daemon entrypoint.
-- `src/bin/waymux.rs` & `src/main.rs`: Thin binary entrypoints invoking `acpd::entry()`.
+- `src/lib.rs`: `COMMANDS` table (drives `--help` and `<command> --help`), synchronous CLI fast-path router, and async Tokio daemon entrypoint. Only the bare binary, `daemon` or a leading `--config` start the daemon; anything else unknown exits 2. Print-only commands restore the default SIGPIPE.
+- `src/main.rs` & `src/bin/acpd.rs`: Thin binary entrypoints invoking `waymux::entry()`.
 - `src/api.rs`: Axum HTTP/JSON-RPC 2.0 handlers (`/rpc`, `/api/status`, `/health`, `/ready`), sequence-tracked 300ms idle debounce, and pane rehydration.
 - `src/daemon.rs`: Background task supervisor, 30s stale pane reaper, and 5s proactive stall detector (20s zero-output + zero-CPU delta heuristic).
-- `src/adapters.rs`: Output sinks for Tmux window/pane options, multi-pane urgency aggregation, Waybar status JSON, desktop notifications, and event-isolated sound playback.
+- `src/adapters.rs`: Output sinks for Tmux window/pane options, multi-pane urgency aggregation, Waybar status JSON, desktop notifications, and event-isolated sound playback (completion chimes skipped for the pane in view and deferred to a typing pause; blocking alerts immediate).
 - `src/auth.rs`: Session token generator (`0600` permissions at `$XDG_RUNTIME_DIR/waymux/token` mirrored to `$XDG_RUNTIME_DIR/acpd/token`).
+- `src/doctor.rs`: `waymux doctor` setup checks (daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, sound player, awt scripts, Claude Code hooks, theme) with a fix per gap; exits 1 on a required failure.
+- `src/sys.rs`: `find_in_path` (`command -v`), `shell_quote` (one POSIX word), and `default_sound_player` (`pw-play` → `paplay` → `aplay` → `afplay`).
 - `src/rpc_client.rs`: Zero-dependency synchronous TCP HTTP client for CLI subcommands (`status`, `list`, `dismiss`, `health`, `agentState/list`, `/api/status`).
 - `src/tmux_cmd.rs`: Synchronous Tmux command execution and atomic bracketed-paste buffer injection (`load-buffer` + `paste-buffer -p`).
-- `src/theme.rs`: Dynamic Omarchy `colors.toml` parser, TrueColor ANSI escape generator, and ANSI stripper.
+- `src/theme.rs`: Theme `colors.toml` parser (path from `status_palette::theme_colors_path`: `$WAYMUX_COLORS`, `~/.config/waymux/colors.toml`, then Omarchy's active theme; built-in colors otherwise), TrueColor ANSI escape generator, and ANSI stripper.
+- `src/status_palette.rs`: Semantic agent-state colors (built-in light/dark palettes, `[theme.states.*].color` overrides) shared by the status bar, Waybar and the Cockpit.
 - `src/cockpit/`: Native Cockpit HUD engine:
   - `mod.rs`: `waymux cockpit` popup launcher, `@SEGMENT_BG`/`@FG`/`@ACCENT_COLOR` Waymaker color resolver, and `__ACTION__` dispatch loop.
-  - `items.rs`: `waymux cockpit-items` (~14ms native `/proc/<pid>/stat` & `/proc/<pid>/comm` scanner, memoized Git/PR status, 12-column TSV emitter).
+  - `items.rs`: `waymux cockpit-items` (native `/proc/<pid>/stat` & `/proc/<pid>/comm` scanner, Git status read in parallel per pane path, PR cache in `$XDG_RUNTIME_DIR/waymux/pr-cache`, 12-column TSV emitter; ~17ms with 10 panes).
   - `preview.rs`: `waymux cockpit-preview` (contextual agent card, PR badge, review notes, terminal snapshot).
   - `diff.rs`: `waymux cockpit-diff` (diff header card, untracked files, flushed stdout into `delta --side-by-side` / `bat`).
   - `help.rs`: `waymux cockpit-help` (telemetry HUD and keybinding cheat-sheet).
   - `notes.rs`: `waymux review-notes` (`serde_json` parser/mutator for `<git-dir>/info/lines.json`).
   - `actions.rs`: `waymux agent-action`, `waymux window-create`, `waymux window-delete`.
 - `src/presets/`: Embedded Waymaker preset (`cockpit-picker.toml`) materialized dynamically to `$XDG_RUNTIME_DIR/waymux/cockpit-picker.toml`.
-- `src/triage.rs`: `waymux triage --popup` and `waymux triage --jump` ring-buffer alert navigation.
+- `src/triage.rs`: `waymux triage --popup` and `waymux triage --jump` alert navigation over a stateless queue (`service_class`: permission → question → error/stalled, oldest first), shared with the Cockpit sort.
 - `src/hook.rs`: `waymux hook {tmux|lazygit}` native sub-10ms AI agent lifecycle hooks.
 - `src/inject.rs`: `waymux inject` bracketed-paste prompt injector with staleness guard.
-- `src/wt/mod.rs`: `waymux wt` (and `argv[0] == "awt"`) native Git worktree orchestrator.
-- `src/init.rs`: `waymux init {--tmux|--systemd|--hooks}` portable configuration generator.
+- `src/wt/mod.rs`: `waymux wt` (and `argv[0] == "awt"`) Git worktree orchestrator. Delegates to `awt-*.sh` helpers found in `~/.config/waymaker/scripts`, `~/.config/matchmaker/scripts`, then `$WAYMUX_SHARE_DIR/scripts` (default `~/.local/share/waymux/scripts`); a missing helper exits 127 with the searched paths.
+- `scripts/awt/`: The bundled `awt-*.sh` helpers that `install.sh` copies to `~/.local/share/waymux/scripts`. Keep them free of author-specific paths (`AWT_SWEEP_ROOTS`, `AWT_SWEEP_KEEP_BRANCHES` hold the personal defaults).
+- `src/init.rs`: `waymux init {--tmux|--systemd|--hooks}`: plugin line, the shipped `systemd/waymux.service` (embedded with `include_str!`), and a Claude Code hooks block.
+- `tests/cli.rs`: End-to-end tests that start the built binary on a free port with its own `HOME`, `XDG_RUNTIME_DIR` and `TMUX_TMPDIR`, so they never touch the developer's tmux server, sounds or token.
+
+---
+
+## Agent Skills
+
+Skills live in `.agents/skills/` and are symlinked into `.claude/skills/` for Claude Code:
+
+- `waymux`: using, setting up and troubleshooting Waymux (CLI, RPC methods, states, hooks, `doctor`).
+- `waymux-dev`: the development loop, where each kind of test goes, recipes for new commands/RPC methods/hooks, performance budgets, and the release steps.
+- `rust-daemon`: general Rust + systemd daemon patterns.
+
+Update the matching skill in the same commit as a change to commands, RPC methods, states or the release flow.
 
 ---
 
@@ -59,7 +77,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **30 unit tests passing** across `adapters`, `api`, `auth`, `cockpit`, `config`, `hook`, `inject`, `signals`, `theme`, and `wt`, with **0 Clippy warnings**.
+> Current baseline: **75 unit tests** (in `src/`) and **8 integration tests** (`tests/cli.rs`) passing, with **0 Clippy warnings**.
+
+### End-to-End Sandbox
+
+```bash
+# 8-step suite in an isolated tmux container (also runs in CI)
+WAYMUX_BIN=$PWD/target/release/waymux ./scripts/docker-sandbox.sh test
+```
 
 ---
 
@@ -68,7 +93,10 @@ cargo test
 1. **Preserve the Synchronous Fast-Path:** Never initialize Tokio or heavy global state before matching CLI subcommands in `src/lib.rs`. CLI subcommands (`hook`, `dismiss`, `cockpit-items`, `triage`) are invoked on interactive hot-paths and must start in `<1.5ms`.
 2. **Use `anyhow::Result` & Safe Error Handling:** Avoid `.unwrap()` in production code paths; handle missing files, dead PIDs, or unreachable sockets gracefully.
 3. **Flush Before Piping:** When printing Rust headers before spawning child processes that inherit stdout (e.g., `delta` or `bat` in `cockpit/diff.rs`), always call `std::io::stdout().flush()` first.
-4. **Atomic Commits:** Keep commits focused, tested, and formatted.
-5. **Storage & Worktree Hygiene:**
+4. **Never Splice Values Into Shell Strings:** Pass paths and names to `sh -c` as positional arguments (`"$1"`), or quote each word with `sys::shell_quote` when tmux needs one command string (`display-popup`, `split-window`).
+5. **No Author-Specific Paths:** Resolve paths from `$HOME`, `$XDG_RUNTIME_DIR` and config, with a working fallback when an optional file (Omarchy theme, sounds, dotfile scripts) is absent. Per-user runtime files go in `presets::runtime_dir()`, never `/tmp`.
+6. **New Commands Go In `COMMANDS`:** Add the entry (usage, one-line about, `plumbing` flag) and the router arm together; `waymux doctor` should learn about any new external dependency.
+7. **Atomic Commits:** Keep commits focused, tested, and formatted.
+8. **Storage & Worktree Hygiene:**
    - Before finishing any task, remove temporary files or scratch worktrees created during the task, and only those. Never delete files or worktrees you did not create without asking the user.
    - `target/` grows without bound as Rust test binaries accumulate across edits. Run `cargo clean` in completed feature worktrees and after every release (once `./scripts/update-daemon.sh` has installed the updated binaries).

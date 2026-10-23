@@ -10,6 +10,8 @@ pub struct Spinner {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AgentStateTheme {
     pub icon: String,
+    /// Optional override; empty means the built-in semantic color (`status_palette`).
+    #[serde(default)]
     pub color: String,
 }
 
@@ -87,6 +89,31 @@ impl Config {
         let config: Config = toml::from_str(&content)?;
         Ok(config)
     }
+
+    /// The first existing default config path, in the order the daemon searches.
+    pub fn default_path() -> Option<String> {
+        let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+            format!("{}/.config", home)
+        });
+        [
+            format!("{}/waymux/config.toml", xdg_config),
+            format!("{}/acpd/config.toml", xdg_config),
+            "/etc/waymux/config.toml".to_string(),
+            "/etc/acpd/config.toml".to_string(),
+            "config/default.toml".to_string(),
+        ]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).is_file())
+    }
+}
+
+/// Theme section of the default config, for CLI surfaces (Cockpit) that share the
+/// daemon's state colors.
+pub fn load_default_theme() -> Option<ThemeConfig> {
+    Config::default_path()
+        .and_then(|p| Config::load(&p).ok())
+        .and_then(|c| c.theme)
 }
 
 #[cfg(test)]
@@ -123,5 +150,29 @@ mod tests {
             minidot.frames,
             vec!["⠋".to_string(), "⠙".to_string(), "⠹".to_string()]
         );
+    }
+
+    #[test]
+    fn test_state_color_is_optional() {
+        let config: Config = toml::from_str(
+            r##"
+            [theme]
+            active_spinner = "minidot"
+
+            [theme.states.permission]
+            icon = "󱅭"
+        "##,
+        )
+        .unwrap();
+        let theme = config.theme.unwrap();
+        let permission = theme.states.get("permission").unwrap();
+        assert_eq!(permission.icon, "󱅭");
+        assert!(permission.color.is_empty());
+    }
+
+    #[test]
+    fn test_reference_config_parses() {
+        let config = Config::load(concat!(env!("CARGO_MANIFEST_DIR"), "/config/default.toml"));
+        assert!(config.is_ok(), "{:?}", config.err());
     }
 }

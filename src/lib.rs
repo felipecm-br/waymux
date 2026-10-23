@@ -4,6 +4,7 @@ pub mod auth;
 pub mod cockpit;
 pub mod config;
 pub mod daemon;
+pub mod doctor;
 pub mod health;
 pub mod hook;
 pub mod init;
@@ -12,6 +13,8 @@ pub mod pid;
 pub mod presets;
 pub mod rpc_client;
 pub mod signals;
+pub mod status_palette;
+pub mod sys;
 pub mod theme;
 pub mod tmux_cmd;
 pub mod triage;
@@ -20,38 +23,194 @@ pub mod wt;
 use std::path::Path;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+struct CommandSpec {
+    name: &'static str,
+    usage: &'static str,
+    about: &'static str,
+    /// Called by the Cockpit preset and tmux bindings rather than typed by hand.
+    plumbing: bool,
+}
+
+const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "daemon",
+        usage: "daemon [-c <FILE>]",
+        about: "Start the JSON-RPC & HTTP state daemon on 127.0.0.1:4040",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "health",
+        usage: "health",
+        about: "Exit 0 if the daemon answers GET /health",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "status",
+        usage: "status",
+        about: "Print daemon health and active AI agent states",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "list",
+        usage: "list",
+        about: "List active AI agent pane states (TSV: pane, state, timestamp)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "dismiss",
+        usage: "dismiss [pane_id]",
+        about: "Dismiss the attention badge for a pane (default: $TMUX_PANE)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "cockpit",
+        usage: "cockpit [--agents]",
+        about: "Open the Fleet & Agent Cockpit popup (needs Waymaker `wm`)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "triage",
+        usage: "triage [--popup | --jump]",
+        about: "Cycle (--popup, default) or jump to (--jump) the next waiting agent",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "review-notes",
+        usage: "review-notes <count|list|send> <path> [session] [idx] [pane_id]",
+        about: "Count, list, or send lazygitrs review notes to an agent",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "inject",
+        usage: "inject <workspace_dir> <prompt>",
+        about: "Paste a multi-line prompt into the workspace's agent pane",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "wt",
+        usage: "wt <subcommand>",
+        about: "Git worktree & multi-agent session orchestrator (also `awt`)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "hook",
+        usage: "hook <tmux|lazygit> <Event> [agent]",
+        about: "AI agent lifecycle hook; reads the hook JSON on stdin",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "init",
+        usage: "init <--tmux | --systemd | --hooks>",
+        about: "Print configuration snippets for tmux, systemd, and agent hooks",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "doctor",
+        usage: "doctor",
+        about: "Check the daemon, tools, scripts and theme, and say how to fix gaps",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "cockpit-items",
+        usage: "cockpit-items [--agents] [session] [window]",
+        about: "Emit the Cockpit's 12-column TSV rows",
+        plumbing: true,
+    },
+    CommandSpec {
+        name: "cockpit-preview",
+        usage: "cockpit-preview <session> <idx> [pane_id] [path]",
+        about: "Render the Cockpit preview card",
+        plumbing: true,
+    },
+    CommandSpec {
+        name: "cockpit-diff",
+        usage: "cockpit-diff <session> <idx> ...",
+        about: "Render the Cockpit diff pane",
+        plumbing: true,
+    },
+    CommandSpec {
+        name: "cockpit-help",
+        usage: "cockpit-help",
+        about: "Render the Cockpit keybinding cheat-sheet",
+        plumbing: true,
+    },
+    CommandSpec {
+        name: "agent-action",
+        usage: "agent-action <approve|deny|prompt> <state> <pane_id>",
+        about: "Approve, deny or prompt an agent from the Cockpit",
+        plumbing: true,
+    },
+    CommandSpec {
+        name: "window-create",
+        usage: "window-create",
+        about: "Create a window next to the Cockpit selection",
+        plumbing: true,
+    },
+    CommandSpec {
+        name: "window-delete",
+        usage: "window-delete",
+        about: "Close the Cockpit selection, guarding working agents",
+        plumbing: true,
+    },
+];
+
+fn find_command(name: &str) -> Option<&'static CommandSpec> {
+    COMMANDS.iter().find(|c| c.name == name)
+}
+
 fn print_help(bin_name: &str) {
     println!(
-        "{} {}\nWaymux — Autonomous Terminal AI Cockpit & Orchestrator Daemon\n\n\
-USAGE:\n    {} [OPTIONS] [COMMAND]\n\n\
+        "{bin_name} {}\nWaymux — Terminal AI Cockpit & Agent Control Plane Daemon\n\n\
+USAGE:\n    {bin_name} <COMMAND> [ARGS]\n    {bin_name} <COMMAND> --help\n\n\
 OPTIONS:\n    \
--c, --config <FILE>    Custom path to config.toml (daemon mode)\n    \
 -h, --help             Print help information\n    \
--V, --version          Print version information\n\n\
-COMMANDS:\n    \
-daemon                 Start the async JSON-RPC & HTTP state daemon (default)\n    \
-health                 Check health status of running daemon\n    \
-status                 Print daemon health and active AI agent states\n    \
-list                   List active AI agent pane states (TSV)\n    \
-dismiss                Dismiss attention/question/permission badge for a pane\n    \
-cockpit                Launch the interactive Fleet & Agent Cockpit HUD popup\n    \
-cockpit-items          Emit prioritized 12-column TSV rows for Cockpit HUD\n    \
-cockpit-preview        Render contextual agent card and terminal snapshot\n    \
-cockpit-diff           Render side-by-side Git diff and review notes\n    \
-cockpit-help           Render telemetry HUD and keybindings cheat-sheet\n    \
-agent-action           Execute guarded agent confirmation/prompt action\n    \
-review-notes           Count, list, or dispatch Lazygitrs AI review notes\n    \
-window-create          Create Tmux window preserving row context\n    \
-window-delete          Delete Tmux window or linked worktree session\n    \
-triage                 Cycle AI agent alerts (--popup or --jump)\n    \
-hook                   Zero-latency AI agent lifecycle hook (tmux | lazygit)\n    \
-inject                 Bracketed-paste prompt injector for Lazygitrs\n    \
-wt                     Git worktree & multi-agent session orchestrator (awt)\n    \
-init                   Portable zero-config bootstrapper (--tmux | --systemd | --hooks)",
-        bin_name,
-        env!("CARGO_PKG_VERSION"),
-        bin_name
+-V, --version          Print version information\n\nCOMMANDS:",
+        env!("CARGO_PKG_VERSION")
     );
+    for c in COMMANDS.iter().filter(|c| !c.plumbing) {
+        println!("    {:<16} {}", c.name, c.about);
+    }
+    println!("\nPLUMBING (called by the Cockpit and tmux bindings):");
+    for c in COMMANDS.iter().filter(|c| c.plumbing) {
+        println!("    {:<16} {}", c.name, c.about);
+    }
+}
+
+fn print_command_help(bin_name: &str, c: &CommandSpec) {
+    println!("{}\n\nUSAGE:\n    {bin_name} {}", c.about, c.usage);
+}
+
+/// Commands whose own parser prints richer help than the shared one-liner.
+fn has_own_help(name: &str) -> bool {
+    matches!(name, "wt" | "awt" | "init")
+}
+
+fn is_help_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help")
+}
+
+/// Daemon mode is the bare binary, `daemon`, or a leading `--config` flag
+/// (kept for the original `acpd --config <file>` invocation).
+fn is_daemon_invocation(first_arg: &str) -> bool {
+    first_arg.is_empty()
+        || first_arg == "daemon"
+        || first_arg == "-c"
+        || first_arg == "--config"
+        || first_arg.starts_with("--config=")
+}
+
+/// Rust ignores SIGPIPE, so `waymux list | head` panics on the closed pipe. Commands that
+/// only print get the default disposition back and exit quietly. The daemon and the
+/// socket-writing hot paths (`hook`, `inject`, `dismiss`) keep EPIPE as an error.
+fn restore_default_sigpipe(command: &str) {
+    if is_daemon_invocation(command) || matches!(command, "hook" | "inject" | "dismiss") {
+        return;
+    }
+    use nix::sys::signal::{SigHandler, Signal, signal};
+    // SAFETY: single-threaded at this point, and SIG_DFL installs no handler code.
+    unsafe {
+        let _ = signal(Signal::SIGPIPE, SigHandler::SigDfl);
+    }
 }
 
 pub fn entry() -> anyhow::Result<()> {
@@ -71,6 +230,15 @@ pub fn entry() -> anyhow::Result<()> {
     }
 
     let first_arg = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    restore_default_sigpipe(first_arg);
+
+    if let Some(spec) = find_command(first_arg)
+        && !has_own_help(first_arg)
+        && args.get(2).is_some_and(|a| is_help_flag(a))
+    {
+        print_command_help(&bin_name, spec);
+        return Ok(());
+    }
 
     // Fast-path synchronous subcommands (zero Tokio startup, <1.5ms execution)
     let exit_code = match first_arg {
@@ -100,6 +268,13 @@ pub fn entry() -> anyhow::Result<()> {
         "inject" => Some(inject::run_cli(&args[2..])),
         "wt" | "awt" => Some(wt::run_cli(&args[2..])),
         "init" => Some(init::run_cli(&args[2..])),
+        "doctor" => Some(doctor::run_cli()),
+        other if !is_daemon_invocation(other) => {
+            eprintln!(
+                "{bin_name}: unknown command '{other}'\nRun '{bin_name} --help' for the list of commands."
+            );
+            Some(2)
+        }
         _ => None,
     };
 
@@ -144,21 +319,9 @@ pub fn entry() -> anyhow::Result<()> {
                 crate::config::Config::load(&path)?
             }
             None => {
-                let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-                    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-                    format!("{}/.config", home)
-                });
-                let candidates = [
-                    format!("{}/waymux/config.toml", xdg_config),
-                    format!("{}/acpd/config.toml", xdg_config),
-                    "/etc/waymux/config.toml".to_string(),
-                    "/etc/acpd/config.toml".to_string(),
-                    "config/default.toml".to_string(),
-                ];
-
-                if let Some(found) = candidates.iter().find(|p| Path::new(p).is_file()) {
+                if let Some(found) = crate::config::Config::default_path() {
                     tracing::info!("Loading config from {}", found);
-                    crate::config::Config::load(found)?
+                    crate::config::Config::load(&found)?
                 } else {
                     tracing::info!("No external config file found, using built-in defaults");
                     crate::config::Config::default()
@@ -166,14 +329,63 @@ pub fn entry() -> anyhow::Result<()> {
             }
         };
 
-        let _pid_file = if let Some(ref path) = config.pid_file {
-            tracing::info!("Creating PID file at {}", path);
-            Some(crate::pid::PidFile::create(path)?)
-        } else {
-            None
+        // Default to the per-user runtime dir (systemd's RuntimeDirectory=waymux) so a second
+        // daemon is refused even without a config file.
+        let pid_path = match config.pid_file.clone() {
+            Some(path) => path,
+            None => {
+                let dir = crate::presets::runtime_dir();
+                std::fs::create_dir_all(&dir)?;
+                dir.join("waymux.pid").to_string_lossy().to_string()
+            }
         };
+        tracing::info!("Creating PID file at {}", pid_path);
+        let _pid_file = crate::pid::PidFile::create(&pid_path)?;
 
         crate::daemon::run(config).await?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_daemon_invocation_only_for_bare_daemon_or_config() {
+        for arg in ["", "daemon", "-c", "--config", "--config=/tmp/x.toml"] {
+            assert!(is_daemon_invocation(arg), "{arg:?} should start the daemon");
+        }
+        for arg in ["stauts", "--verbose", "status --help", "Daemon"] {
+            assert!(
+                !is_daemon_invocation(arg),
+                "{arg:?} must not start the daemon"
+            );
+        }
+    }
+
+    #[test]
+    fn test_command_table_names_are_unique_and_documented() {
+        let mut names: Vec<&str> = COMMANDS.iter().map(|c| c.name).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(before, names.len(), "duplicate command names");
+        for c in COMMANDS {
+            assert!(
+                c.usage.starts_with(c.name),
+                "{} usage must start with its name",
+                c.name
+            );
+            assert!(!c.about.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_help_flag_detection() {
+        assert!(is_help_flag("-h") && is_help_flag("--help"));
+        assert!(!is_help_flag("help") && !is_help_flag("-H"));
+        assert!(has_own_help("wt") && has_own_help("init"));
+        assert!(!has_own_help("status"));
+    }
 }

@@ -110,22 +110,41 @@ pub fn slugify_prompt(prompt: &str) -> String {
     format!("{}/{}", prefix, slug)
 }
 
-fn find_waymaker_script(script_name: &str) -> Option<PathBuf> {
+/// Directories searched for `awt-*.sh` helpers, in priority order: the user's own
+/// Waymaker scripts, the legacy matchmaker location, then the copies `install.sh`
+/// ships to `$WAYMUX_SHARE_DIR/scripts` (default `~/.local/share/waymux/scripts`).
+pub(crate) fn waymaker_script_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
-        let p1 = PathBuf::from(&home)
-            .join(".config/waymaker/scripts")
-            .join(script_name);
-        if p1.is_file() {
-            return Some(p1);
-        }
-        let p2 = PathBuf::from(&home)
-            .join(".config/matchmaker/scripts")
-            .join(script_name);
-        if p2.is_file() {
-            return Some(p2);
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".config/waymaker/scripts"));
+        dirs.push(home.join(".config/matchmaker/scripts"));
+        match std::env::var("WAYMUX_SHARE_DIR") {
+            Ok(share) if !share.is_empty() => dirs.push(PathBuf::from(share).join("scripts")),
+            _ => dirs.push(home.join(".local/share/waymux/scripts")),
         }
     }
-    None
+    dirs
+}
+
+/// Report a helper script that none of [`waymaker_script_dirs`] holds; 127 like a shell.
+fn missing_script(script_name: &str) -> i32 {
+    let searched: Vec<String> = waymaker_script_dirs()
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect();
+    eprintln!(
+        "awt: {script_name} not found in {}.\nReinstall with install.sh to restore the bundled scripts, or run `waymux doctor`.",
+        searched.join(", ")
+    );
+    127
+}
+
+pub(crate) fn find_waymaker_script(script_name: &str) -> Option<PathBuf> {
+    waymaker_script_dirs()
+        .into_iter()
+        .map(|dir| dir.join(script_name))
+        .find(|p| p.is_file())
 }
 
 fn find_wm_bin() -> String {
@@ -230,6 +249,51 @@ awt help | -h | --help                  Show this help message"
     );
 }
 
+/// Splits `merge|ship` arguments into the target branch and the flags forwarded to
+/// awt-merge.sh. Unknown flags (e.g. `--confirm`) are forwarded untouched.
+fn split_merge_args(args: &[String], is_ship: bool) -> (String, Vec<String>) {
+    let mut flags = Vec::new();
+    let mut target = String::new();
+    let mut idx = 1usize;
+    while idx < args.len() {
+        let a = &args[idx];
+        if matches!(
+            a.as_str(),
+            "--squash"
+                | "--no-squash"
+                | "--no-commit"
+                | "--no-remove"
+                | "--no-tmux"
+                | "--no-connect"
+                | "--no-rebase"
+                | "--rebase"
+                | "--push"
+                | "--ship"
+                | "--no-hooks"
+                | "--skip-pre-merge"
+                | "-H"
+        ) || a.starts_with("--into=")
+        {
+            flags.push(a.clone());
+        } else if a == "--into" {
+            idx += 1;
+            if let Some(val) = args.get(idx) {
+                flags.push("--into".to_string());
+                flags.push(val.clone());
+            }
+        } else if target.is_empty() {
+            target = a.clone();
+        } else {
+            flags.push(a.clone());
+        }
+        idx += 1;
+    }
+    if is_ship {
+        flags.push("--push".to_string());
+    }
+    (target, flags)
+}
+
 pub fn run_cli(args: &[String]) -> i32 {
     let first = args.first().map(|s| s.as_str()).unwrap_or("");
     match first {
@@ -299,7 +363,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 cmd.args(&flags);
                 return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
             }
-            return 0;
+            return missing_script("awt-delete.sh");
         }
         "rebase" => {
             let base = args.get(1).map(|s| s.as_str()).unwrap_or("");
@@ -317,49 +381,10 @@ pub fn run_cli(args: &[String]) -> i32 {
                 cmd.args(&args[1..]);
                 return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
             }
-            return 0;
+            return missing_script("awt-rebase.sh");
         }
         "merge" | "ship" => {
-            let is_ship = first == "ship";
-            let mut flags = Vec::new();
-            let mut target = String::new();
-            let mut idx = 1usize;
-            while idx < args.len() {
-                let a = &args[idx];
-                if matches!(
-                    a.as_str(),
-                    "--squash"
-                        | "--no-squash"
-                        | "--no-commit"
-                        | "--no-remove"
-                        | "--no-tmux"
-                        | "--no-connect"
-                        | "--no-rebase"
-                        | "--rebase"
-                        | "--push"
-                        | "--ship"
-                        | "--no-hooks"
-                        | "--skip-pre-merge"
-                        | "-H"
-                ) || a.starts_with("--into=")
-                {
-                    flags.push(a.clone());
-                } else if a == "--into" {
-                    idx += 1;
-                    if let Some(val) = args.get(idx) {
-                        flags.push("--into".to_string());
-                        flags.push(val.clone());
-                    }
-                } else if target.is_empty() {
-                    target = a.clone();
-                } else {
-                    flags.push(a.clone());
-                }
-                idx += 1;
-            }
-            if is_ship {
-                flags.push("--push".to_string());
-            }
+            let (target, flags) = split_merge_args(args, first == "ship");
             let repo_root = get_repo_root();
             let cur_folder = Path::new(&repo_root)
                 .file_name()
@@ -372,7 +397,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 cmd.args(&flags);
                 return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
             }
-            return 0;
+            return missing_script("awt-merge.sh");
         }
         "pr" => {
             if let Some(script) = find_waymaker_script("awt-pr.sh") {
@@ -383,8 +408,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                     .and_then(|s| s.code())
                     .unwrap_or(0);
             }
-            eprintln!("awt: awt-pr.sh not found.");
-            return 1;
+            return missing_script("awt-pr.sh");
         }
         "sweep" => {
             if let Some(script) = find_waymaker_script("awt-sweep.sh") {
@@ -395,8 +419,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                     .and_then(|s| s.code())
                     .unwrap_or(0);
             }
-            eprintln!("awt: awt-sweep.sh not found.");
-            return 1;
+            return missing_script("awt-sweep.sh");
         }
         "reap" => {
             if let Some(script) = find_waymaker_script("awt-reap.sh") {
@@ -407,8 +430,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                     .and_then(|s| s.code())
                     .unwrap_or(0);
             }
-            eprintln!("awt: awt-reap.sh not found.");
-            return 1;
+            return missing_script("awt-reap.sh");
         }
         _ => {}
     }
@@ -527,7 +549,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             cmd.args(&extra_flags);
             return cmd.status().ok().and_then(|s| s.code()).unwrap_or(0);
         }
-        return 0;
+        return missing_script("awt-new.sh");
     }
 
     if branch.is_empty() {
@@ -710,5 +732,24 @@ mod tests {
         let body = slug.strip_prefix("feat/").unwrap();
         assert!(body.len() <= 45);
         assert!(!body.ends_with('-'));
+    }
+
+    #[test]
+    fn test_split_merge_args_forwards_confirm_and_push() {
+        let args: Vec<String> = ["ship", "feat/x", "--confirm"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (target, flags) = split_merge_args(&args, true);
+        assert_eq!(target, "feat/x");
+        assert_eq!(flags, vec!["--confirm", "--push"]);
+
+        let args: Vec<String> = ["merge", "--into", "main", "feat/y", "--squash"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (target, flags) = split_merge_args(&args, false);
+        assert_eq!(target, "feat/y");
+        assert_eq!(flags, vec!["--into", "main", "--squash"]);
     }
 }

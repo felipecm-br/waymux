@@ -1,8 +1,10 @@
-use crate::config::{AgentStateTheme, SoundConfig, Spinner, ThemeConfig};
+use crate::config::{SoundConfig, Spinner, ThemeConfig};
+use crate::status_palette::{self, Mode};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -100,8 +102,24 @@ fn urgency_score(state: &AgentState) -> u8 {
     }
 }
 
+/// Icon from `[theme.states.<key>]` (else `fallback_icon`) and the semantic state color.
+fn state_icon_color(
+    theme: Option<&ThemeConfig>,
+    key: &str,
+    fallback_icon: &str,
+    mode: Mode,
+) -> (String, String) {
+    let icon = theme
+        .and_then(|t| t.states.get(key))
+        .map(|s| s.icon.clone())
+        .filter(|i| !i.is_empty())
+        .unwrap_or_else(|| fallback_icon.to_string());
+    (icon, status_palette::state_color(theme, key, mode))
+}
+
 pub struct WaybarAdapter {
     theme: Option<ThemeConfig>,
+    mode: Mode,
     pane_updates: Arc<Mutex<HashMap<String, AgentUpdate>>>,
 }
 
@@ -109,6 +127,7 @@ impl WaybarAdapter {
     pub fn new(theme: Option<ThemeConfig>) -> Self {
         Self {
             theme,
+            mode: status_palette::detect_mode(),
             pane_updates: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -142,19 +161,9 @@ impl OutputAdapter for WaybarAdapter {
                 AgentState::Closed => ("idle", "Agent Closed"),
             };
 
-            let (icon, color) = if let Some(theme) = &self.theme {
-                if let Some(state_theme) = theme.states.get(raw_state) {
-                    (state_theme.icon.clone(), state_theme.color.clone())
-                } else if raw_state == "stalled" {
-                    ("󱥁".to_string(), "#fab387".to_string())
-                } else {
-                    ("".to_string(), "#ffffff".to_string())
-                }
-            } else if raw_state == "stalled" {
-                ("󱥁".to_string(), "#fab387".to_string())
-            } else {
-                ("".to_string(), "#ffffff".to_string())
-            };
+            let fallback_icon = if raw_state == "stalled" { "󱥁" } else { "" };
+            let (icon, color) =
+                state_icon_color(self.theme.as_ref(), raw_state, fallback_icon, self.mode);
 
             let json_payload = serde_json::json!({
                 "text": icon,
@@ -376,6 +385,7 @@ pub struct TmuxAdapter {
     spinner_frames: Vec<String>,
     spinner_interval: u64,
     theme: Option<ThemeConfig>,
+    mode: Mode,
 }
 
 impl TmuxAdapter {
@@ -392,6 +402,7 @@ impl TmuxAdapter {
             spinner_frames: frames,
             spinner_interval: interval,
             theme,
+            mode: status_palette::detect_mode(),
         }
     }
 
@@ -467,56 +478,18 @@ impl TmuxAdapter {
             }
             Some(state) => {
                 self.stop_spinner(window_id).await;
-                let default_theme = AgentStateTheme {
-                    icon: "?".to_string(),
-                    color: "white".to_string(),
+                let (raw, fallback_icon) = match state {
+                    AgentState::Idle => ("idle", "?"),
+                    AgentState::AwaitingInput => ("question", "?"),
+                    AgentState::Permission => ("permission", "?"),
+                    AgentState::Stalled => ("stalled", "󱥁"),
+                    AgentState::Error => ("error", "?"),
+                    _ => ("", ""),
                 };
-                let (icon, color, raw) = match state {
-                    AgentState::Idle => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("idle"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "idle")
-                    }
-                    AgentState::AwaitingInput => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("question"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "question")
-                    }
-                    AgentState::Permission => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("permission"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "permission")
-                    }
-                    AgentState::Stalled => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("stalled"))
-                            .cloned()
-                            .unwrap_or(AgentStateTheme {
-                                icon: "󱥁".to_string(),
-                                color: "#fab387".to_string(),
-                            });
-                        (t.icon, t.color, "stalled")
-                    }
-                    AgentState::Error => {
-                        let t = self
-                            .theme
-                            .as_ref()
-                            .and_then(|th| th.states.get("error"))
-                            .unwrap_or(&default_theme);
-                        (t.icon.clone(), t.color.clone(), "error")
-                    }
-                    _ => ("".to_string(), "".to_string(), ""),
+                let (icon, color) = if raw.is_empty() {
+                    (String::new(), String::new())
+                } else {
+                    state_icon_color(self.theme.as_ref(), raw, fallback_icon, self.mode)
                 };
                 set_tmux_window_state(window_id, &icon, raw, &color).await;
             }
@@ -541,12 +514,7 @@ impl TmuxAdapter {
         let target_clone = target_id.clone();
         let frames = self.spinner_frames.clone();
         let interval = self.spinner_interval;
-        let (icon, color) = self
-            .theme
-            .as_ref()
-            .and_then(|t| t.states.get("busy"))
-            .map(|s| (s.icon.clone(), s.color.clone()))
-            .unwrap_or_else(|| ("󰑮".to_string(), "#f9e2af".to_string()));
+        let (icon, color) = state_icon_color(self.theme.as_ref(), "busy", "󰑮", self.mode);
 
         let task = tokio::spawn(async move {
             if frames.is_empty() {
@@ -768,9 +736,96 @@ impl OutputAdapter for TmuxAdapter {
 // ==========================================
 // SOUND ADAPTER
 // ==========================================
+
+/// A typing pause this long counts as a breakpoint for completion chimes: interruptions
+/// delivered at breakpoints cost less than immediate ones (Iqbal & Bailey, CHI 2008).
+const BREAKPOINT_IDLE_SECS: u64 = 2;
+/// Completion chimes never wait longer than this for a pause.
+const BREAKPOINT_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+
+async fn tmux_output(args: &[&str]) -> String {
+    match Command::new("tmux").args(args).output().await {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => String::new(),
+    }
+}
+
+/// `pane_info` is `<pane_active><window_active>\t<session>` for the pane; `clients` has one
+/// `<session>\t<flags>` line per client. True when the pane is what a focused client shows.
+fn in_focused_view(pane_info: &str, clients: &str) -> bool {
+    let Some((active, session)) = pane_info.trim_end().split_once('\t') else {
+        return false;
+    };
+    active == "11"
+        && clients.lines().any(|line| {
+            line.split_once('\t')
+                .is_some_and(|(s, flags)| s == session && flags.split(',').any(|f| f == "focused"))
+        })
+}
+
+/// True when no client has had input for `BREAKPOINT_IDLE_SECS` (or nobody is attached).
+/// `client_activity` has one epoch-seconds `#{client_activity}` per line.
+fn at_typing_pause(client_activity: &str, now_secs: u64) -> bool {
+    match client_activity
+        .lines()
+        .filter_map(|l| l.trim().parse::<u64>().ok())
+        .max()
+    {
+        Some(last_input) => now_secs.saturating_sub(last_input) >= BREAKPOINT_IDLE_SECS,
+        None => true,
+    }
+}
+
+async fn pane_in_focused_view(pane_id: &str) -> bool {
+    let pane_info = tmux_output(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane_id,
+        "#{pane_active}#{window_active}\t#{session_name}",
+    ])
+    .await;
+    let clients = tmux_output(&["list-clients", "-F", "#{client_session}\t#{client_flags}"]).await;
+    in_focused_view(&pane_info, &clients)
+}
+
+async fn wait_for_typing_pause() {
+    let start = tokio::time::Instant::now();
+    loop {
+        let activity = tmux_output(&["list-clients", "-F", "#{client_activity}"]).await;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if at_typing_pause(&activity, now) || start.elapsed() >= BREAKPOINT_MAX_WAIT {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+}
+
+async fn play_file(event_type: &'static str, player: String, sound_path: String) {
+    tracing::info!(
+        "SoundAdapter: Playing {} sound from '{}' via {}",
+        event_type,
+        sound_path,
+        player
+    );
+    let result = Command::new(&player).arg(&sound_path).output().await;
+
+    if let Err(e) = result {
+        tracing::warn!("SoundAdapter: Failed to execute player '{}': {}", player, e);
+        if player == "pw-play" {
+            let _ = Command::new("paplay").arg(&sound_path).output().await;
+        }
+    }
+}
+
 pub struct SoundAdapter {
     config: Option<SoundConfig>,
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,
+    /// Set while a deferred completion chime waits for a typing pause.
+    response_pending: Arc<AtomicBool>,
 }
 
 impl SoundAdapter {
@@ -778,6 +833,7 @@ impl SoundAdapter {
         Self {
             config,
             pane_states: Arc::new(Mutex::new(HashMap::new())),
+            response_pending: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -908,6 +964,7 @@ impl SoundAdapter {
             "/usr/share/sounds/freedesktop/stereo/complete.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/message.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/bell.oga".to_string(),
+            "/System/Library/Sounds/Glass.aiff".to_string(),
         ];
 
         for fb in &fallbacks {
@@ -919,45 +976,58 @@ impl SoundAdapter {
         None
     }
 
-    fn play(&self, event_type: &'static str) {
+    /// Player and sound file for an event, or None when sound is off or muted.
+    fn sound_for(&self, event_type: &'static str) -> Option<(String, String)> {
         if let Some(cfg) = &self.config
             && !cfg.enabled
         {
-            return;
+            return None;
         }
 
-        let sound_path = match self.resolve_sound_path(event_type) {
-            Some(p) => p,
-            None => {
-                tracing::warn!(
-                    "SoundAdapter: No sound file resolved for event '{}'",
-                    event_type
-                );
-                return;
-            }
+        let Some(sound_path) = self.resolve_sound_path(event_type) else {
+            tracing::warn!(
+                "SoundAdapter: No sound file resolved for event '{}'",
+                event_type
+            );
+            return None;
         };
 
         let player = self
             .config
             .as_ref()
             .and_then(|c| c.player.clone())
-            .unwrap_or_else(|| "pw-play".to_string());
+            .unwrap_or_else(crate::sys::default_sound_player);
+        Some((player, sound_path))
+    }
 
-        tokio::spawn(async move {
+    fn play(&self, event_type: &'static str) {
+        if let Some((player, sound_path)) = self.sound_for(event_type) {
+            tokio::spawn(play_file(event_type, player, sound_path));
+        }
+    }
+
+    /// Completion chimes are the most frequent and least urgent cue: skip them for the pane a
+    /// focused client is showing, otherwise wait for a typing pause. Agents finishing while a
+    /// chime waits share it.
+    async fn play_response(&self, pane_id: &str) {
+        if pane_in_focused_view(pane_id).await {
             tracing::info!(
-                "SoundAdapter: Playing {} sound from '{}' via {}",
-                event_type,
-                sound_path,
-                player
+                "SoundAdapter: pane {} is in view; skipping completion chime",
+                pane_id
             );
-            let result = Command::new(&player).arg(&sound_path).output().await;
-
-            if let Err(e) = result {
-                tracing::warn!("SoundAdapter: Failed to execute player '{}': {}", player, e);
-                if player == "pw-play" {
-                    let _ = Command::new("paplay").arg(&sound_path).output().await;
-                }
-            }
+            return;
+        }
+        let Some((player, sound_path)) = self.sound_for("response") else {
+            return;
+        };
+        if self.response_pending.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pending = Arc::clone(&self.response_pending);
+        tokio::spawn(async move {
+            wait_for_typing_pause().await;
+            pending.store(false, Ordering::SeqCst);
+            play_file("response", player, sound_path).await;
         });
     }
 }
@@ -982,7 +1052,7 @@ impl OutputAdapter for SoundAdapter {
             | (Some(AgentState::AwaitingInput), AgentState::Idle)
             | (Some(AgentState::Permission), AgentState::Idle)
             | (Some(AgentState::Stalled), AgentState::Idle) => {
-                self.play("response");
+                self.play_response(&update.pane_id).await;
             }
             // When agent transitions to AwaitingInput -> AI asking question / input
             (_, AgentState::AwaitingInput) if prev_state != Some(AgentState::AwaitingInput) => {
@@ -1010,8 +1080,58 @@ impl OutputAdapter for SoundAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ThemeConfig;
+    use crate::config::{AgentStateTheme, ThemeConfig};
     use std::collections::HashMap;
+
+    #[test]
+    fn test_state_icon_color_falls_back_to_semantic_palette() {
+        let mut states = HashMap::new();
+        states.insert(
+            "permission".to_string(),
+            AgentStateTheme {
+                icon: "󱅭".to_string(),
+                color: String::new(),
+            },
+        );
+        let theme = ThemeConfig {
+            active_spinner: "dot".to_string(),
+            states,
+        };
+        // Icon from config, color from the built-in palette when the config leaves it empty.
+        assert_eq!(
+            state_icon_color(Some(&theme), "permission", "?", Mode::Dark),
+            ("󱅭".to_string(), "#ff9e57".to_string())
+        );
+        // Missing state: fallback icon, semantic color.
+        assert_eq!(
+            state_icon_color(Some(&theme), "stalled", "󱥁", Mode::Light),
+            ("󱥁".to_string(), "#a21caf".to_string())
+        );
+    }
+
+    #[test]
+    fn test_in_focused_view_needs_visible_pane_and_focused_client() {
+        let clients = "nerdsight/main\tattached,focused,UTF-8\n_dotfiles/main\tattached,UTF-8\n";
+        assert!(in_focused_view("11\tnerdsight/main\n", clients));
+        // Visible pane, but its terminal is not focused.
+        assert!(!in_focused_view("11\t_dotfiles/main\n", clients));
+        // Focused session, but another pane or window is showing.
+        assert!(!in_focused_view("01\tnerdsight/main\n", clients));
+        assert!(!in_focused_view("10\tnerdsight/main\n", clients));
+        // Nobody attached, or the pane is gone.
+        assert!(!in_focused_view("11\tnerdsight/main\n", ""));
+        assert!(!in_focused_view("", clients));
+    }
+
+    #[test]
+    fn test_at_typing_pause_uses_most_recent_input() {
+        assert!(at_typing_pause("1000\n", 1002));
+        assert!(!at_typing_pause("1000\n", 1001));
+        // The most recent client input decides.
+        assert!(!at_typing_pause("900\n1000\n", 1001));
+        // No attached client: nobody is typing.
+        assert!(at_typing_pause("", 1001));
+    }
 
     #[tokio::test]
     async fn test_tmux_adapter_updates() {
