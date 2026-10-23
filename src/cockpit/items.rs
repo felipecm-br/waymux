@@ -139,14 +139,18 @@ struct GitMetadata {
 }
 
 fn parse_pr_cache_json(path: &Path) -> (String, String) {
-    let content = match fs::read_to_string(path) {
-        Ok(c) if !c.trim().is_empty() => c,
-        _ => return (String::new(), String::new()),
-    };
+    fs::read_to_string(path)
+        .map(|content| parse_pr_cache(&content))
+        .unwrap_or_default()
+}
+
+/// PR number and CI state from a cached `gh pr view` (or commit-status) JSON.
+fn parse_pr_cache(content: &str) -> (String, String) {
+    if content.trim().is_empty() {
+        return (String::new(), String::new());
+    }
     // Wrappers around `gh` (e.g. mise shims) can print a line before the JSON.
-    let json = content
-        .find('{')
-        .map_or(content.as_str(), |i| &content[i..]);
+    let json = content.find('{').map_or(content, |i| &content[i..]);
     let val: serde_json::Value = match serde_json::from_str(json) {
         Ok(v) => v,
         Err(_) => return (String::new(), String::new()),
@@ -201,6 +205,63 @@ fn parse_pr_cache_json(path: &Path) -> (String, String) {
     (pr_num, ci_state)
 }
 
+/// Reads the branch line of `git status --porcelain -b` into `meta` (branch, upstream,
+/// ahead/behind) and returns how many files are dirty.
+fn parse_porcelain_status(out: &str, meta: &mut GitMetadata) -> usize {
+    meta.is_repo = true;
+    let mut lines = out.lines();
+    if let Some(first_line) = lines.next() {
+        let br_part = first_line.strip_prefix("## ").unwrap_or(first_line);
+        if let Some((br, rest)) = br_part.split_once("...") {
+            meta.branch = br.trim().to_string();
+            meta.has_u = true;
+            let count_after = |label: &str| -> u32 {
+                rest.find(label)
+                    .map(|idx| {
+                        rest[idx + label.len()..]
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect::<String>()
+                    })
+                    .and_then(|n| n.parse().ok())
+                    .unwrap_or(0)
+            };
+            meta.ahead = count_after("ahead ");
+            meta.behind = count_after("behind ");
+        } else {
+            meta.branch = br_part.split_whitespace().next().unwrap_or("").to_string();
+        }
+    }
+    lines
+        .filter(|l| !l.is_empty() && !l.starts_with("## "))
+        .count()
+}
+
+/// `git diff --shortstat` as `+ins -del`, or `*<dirty files>` when it reports no line counts
+/// (e.g. only untracked files).
+fn parse_shortstat(shortstat: &str, dirty_files: usize) -> String {
+    let mut ds = String::new();
+    for part in shortstat.split(',') {
+        let p = part.trim();
+        let Some(n) = p.split_whitespace().next() else {
+            continue;
+        };
+        if p.contains("insertion") {
+            ds.push_str(&format!("+{}", n));
+        } else if p.contains("deletion") {
+            if !ds.is_empty() {
+                ds.push(' ');
+            }
+            ds.push_str(&format!("-{}", n));
+        }
+    }
+    if ds.is_empty() {
+        format!("*{}", dirty_files)
+    } else {
+        ds
+    }
+}
+
 fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     let mut meta = GitMetadata::default();
     let out = match Command::new("git")
@@ -225,34 +286,9 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
         return meta;
     }
 
-    meta.is_repo = true;
-    let mut lines = out.lines();
-    if let Some(first_line) = lines.next() {
-        let br_part = first_line.strip_prefix("## ").unwrap_or(first_line);
-        if let Some((br, rest)) = br_part.split_once("...") {
-            meta.branch = br.trim().to_string();
-            meta.has_u = true;
-            if let Some(idx) = rest.find("ahead ") {
-                let after = &rest[idx + 6..];
-                let num_s: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-                meta.ahead = num_s.parse().unwrap_or(0);
-            }
-            if let Some(idx) = rest.find("behind ") {
-                let after = &rest[idx + 7..];
-                let num_s: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-                meta.behind = num_s.parse().unwrap_or(0);
-            }
-        } else {
-            meta.branch = br_part.split_whitespace().next().unwrap_or("").to_string();
-        }
-    }
-
-    let dirty_files = lines
-        .filter(|l| !l.is_empty() && !l.starts_with("## "))
-        .count();
+    let dirty_files = parse_porcelain_status(&out, &mut meta);
     if dirty_files > 0 {
-        let mut ds = String::new();
-        if let Ok(dout) = Command::new("git")
+        let shortstat = Command::new("git")
             .args([
                 "-C",
                 ppath,
@@ -266,29 +302,11 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
             ])
             .stderr(Stdio::null())
             .output()
-            && dout.status.success()
-        {
-            let dstr = String::from_utf8_lossy(&dout.stdout);
-            for part in dstr.split(',') {
-                let p = part.trim();
-                if p.contains("insertion") {
-                    if let Some(n) = p.split_whitespace().next() {
-                        ds.push_str(&format!("+{}", n));
-                    }
-                } else if p.contains("deletion")
-                    && let Some(n) = p.split_whitespace().next()
-                {
-                    if !ds.is_empty() {
-                        ds.push(' ');
-                    }
-                    ds.push_str(&format!("-{}", n));
-                }
-            }
-        }
-        if ds.is_empty() {
-            ds = format!("*{}", dirty_files);
-        }
-        meta.diffstat = ds;
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default();
+        meta.diffstat = parse_shortstat(&shortstat, dirty_files);
     }
 
     let br = &meta.branch;
@@ -486,7 +504,6 @@ fn prefetch_git_metadata(list_out: &str, now_s: u64) -> HashMap<String, GitMetad
 }
 
 pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> String {
-    let theme = ThemePalette::load();
     let mut cur_session = orig_sess.to_string();
     let mut cur_window = orig_win.to_string();
 
@@ -526,12 +543,44 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let now_ms = now_s * 1000;
 
     let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
     let list_out = tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default();
 
     let git_cache = prefetch_git_metadata(&list_out, now_s);
+    let sources = PaneSources {
+        agent_states: &acpd_map,
+        sess_agent: &sess_agent,
+        sess_etimes: &sess_etimes,
+        git: &git_cache,
+    };
+    let rows = build_rows(
+        &list_out,
+        &sources,
+        Registry::global(),
+        now_s,
+        (&cur_session, &cur_window),
+    );
+    render_items(rows, &ThemePalette::load(), filter_agents, &cur_session)
+}
+
+/// Daemon, `/proc` and git data the rows are built from.
+struct PaneSources<'a> {
+    agent_states: &'a HashMap<String, rpc_client::AgentPaneEntry>,
+    sess_agent: &'a HashMap<String, String>,
+    sess_etimes: &'a HashMap<String, u64>,
+    git: &'a HashMap<String, GitMetadata>,
+}
+
+/// One row per pane of `tmux list-panes` (fields split by 0x1f), sorted waiting agents first.
+fn build_rows(
+    list_out: &str,
+    sources: &PaneSources,
+    reg: &Registry,
+    now_s: u64,
+    (cur_session, cur_window): (&str, &str),
+) -> Vec<RawPaneRow> {
+    let now_ms = now_s * 1000;
     let mut raw_rows: Vec<RawPaneRow> = Vec::new();
 
     for line in list_out.lines() {
@@ -556,9 +605,13 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         let raw_state = fields[8];
         let ai_title = fields[9];
 
-        let detected_agent = sess_agent.get(pane_os_pid).cloned().unwrap_or_default();
+        let detected_agent = sources
+            .sess_agent
+            .get(pane_os_pid)
+            .cloned()
+            .unwrap_or_default();
 
-        let (mut st, ts, reason, finished_at) = match acpd_map.get(pid) {
+        let (mut st, ts, reason, finished_at) = match sources.agent_states.get(pid) {
             Some(entry) => (
                 entry.state.clone(),
                 entry.last_timestamp,
@@ -586,14 +639,14 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
                 now_ms.saturating_sub(ts) / 1000
             }
         } else {
-            sess_etimes.get(pane_os_pid).copied().unwrap_or(0)
+            sources.sess_etimes.get(pane_os_pid).copied().unwrap_or(0)
         };
         let age_str = format_age(diff_s);
 
         let mut git_meta = GitMetadata::default();
         if let Some(repo_path) = repo_path_for(&ppath) {
             ppath = repo_path;
-            git_meta = git_cache.get(&ppath).cloned().unwrap_or_default();
+            git_meta = sources.git.get(&ppath).cloned().unwrap_or_default();
         }
 
         // Only a completion the daemon saw counts: after a restart idle panes are rehydrated
@@ -612,7 +665,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         }
 
         let (prio, ico) = state_prio_icon(
-            Registry::global(),
+            reg,
             &st,
             !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
         );
@@ -678,7 +731,17 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             .then_with(|| wait_order_key(a.prio, a.ts).cmp(&wait_order_key(b.prio, b.ts)))
             .then_with(|| a.idx_num.cmp(&b.idx_num))
     });
+    raw_rows
+}
 
+/// The Cockpit's 12-column TSV: a `#  <session>` header per session (most urgent first), then
+/// one row per window.
+fn render_items(
+    raw_rows: Vec<RawPaneRow>,
+    theme: &ThemePalette,
+    filter_agents: bool,
+    cur_session: &str,
+) -> String {
     let mut sess_prio: HashMap<String, u8> = HashMap::new();
     let mut sess_ts: HashMap<String, u64> = HashMap::new();
     let mut session_items: HashMap<String, String> = HashMap::new();
@@ -1060,5 +1123,162 @@ mod tests {
         mark_reviewed(&main);
         assert!(mtime_secs(&main.join(".git").join(REVIEW_MARKER)) > 0);
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_parse_porcelain_status() {
+        let mut meta = GitMetadata::default();
+        let dirty = parse_porcelain_status(
+            "## feat/x...origin/feat/x [ahead 2, behind 13]\n M src/a.rs\n?? notes.md\n",
+            &mut meta,
+        );
+        assert_eq!(dirty, 2);
+        assert!(meta.is_repo && meta.has_u);
+        assert_eq!(meta.branch, "feat/x");
+        assert_eq!((meta.ahead, meta.behind), (2, 13));
+
+        let mut meta = GitMetadata::default();
+        assert_eq!(parse_porcelain_status("## main\n", &mut meta), 0);
+        assert_eq!(meta.branch, "main");
+        assert!(!meta.has_u);
+
+        let mut meta = GitMetadata::default();
+        parse_porcelain_status("## HEAD (no branch)\n", &mut meta);
+        assert_eq!(meta.branch, "HEAD");
+    }
+
+    #[test]
+    fn test_parse_shortstat() {
+        assert_eq!(
+            parse_shortstat(" 2 files changed, 13 insertions(+), 4 deletions(-)\n", 2),
+            "+13 -4"
+        );
+        assert_eq!(parse_shortstat(" 1 file changed, 1 insertion(+)", 1), "+1");
+        assert_eq!(parse_shortstat(" 1 file changed, 3 deletions(-)", 1), "-3");
+        // Only untracked files: no line counts, so show how many files are dirty.
+        assert_eq!(parse_shortstat("", 3), "*3");
+    }
+
+    #[test]
+    fn test_parse_pr_cache_ci_states() {
+        let ci = |json: &str| parse_pr_cache(json).1;
+        assert_eq!(
+            ci(
+                r#"{"number":1,"statusCheckRollup":[{"conclusion":"SUCCESS"},{"conclusion":"FAILURE"}]}"#
+            ),
+            "failure"
+        );
+        assert_eq!(
+            ci(
+                r#"{"number":1,"statusCheckRollup":[{"conclusion":"SUCCESS"},{"status":"IN_PROGRESS","conclusion":null}]}"#
+            ),
+            "pending"
+        );
+        assert_eq!(ci(r#"{"commit_state":"success"}"#), "success");
+        assert_eq!(ci(r#"{"number":1,"statusCheckRollup":[]}"#), "none");
+        assert_eq!(parse_pr_cache(r#"{"number":"7"}"#).0, "7");
+        assert_eq!(parse_pr_cache("not json"), (String::new(), String::new()));
+        assert_eq!(parse_pr_cache("  "), (String::new(), String::new()));
+    }
+
+    /// `tmux list-panes` line in the Cockpit's 0x1f-separated format.
+    fn pane_line(sess: &str, idx: &str, wname: &str, pane: &str, cmd: &str, raw: &str) -> String {
+        [sess, idx, wname, pane, "0", "", cmd, "", raw, ""].join("\x1f")
+    }
+
+    fn entry(state: &str, ts: u64, message: Option<&str>) -> rpc_client::AgentPaneEntry {
+        rpc_client::AgentPaneEntry {
+            state: state.into(),
+            last_timestamp: ts,
+            message: message.map(str::to_string),
+            finished_at: 0,
+        }
+    }
+
+    fn fixture_rows() -> Vec<RawPaneRow> {
+        let now_s = 1_700_000_000;
+        let list_out = [
+            pane_line("dev", "1", "shell", "%1", "zsh", ""),
+            pane_line("dev", "2", "api", "%2", "claude", ""),
+            pane_line("dev", "3", "web", "%3", "claude", ""),
+            pane_line("ops", "1", "logs", "%4", "claude", ""),
+            pane_line("_popups", "1", "popup", "%5", "claude", "permission"),
+            "too\x1ffew\x1ffields".to_string(),
+        ]
+        .join("\n");
+        let agent_states = HashMap::from([
+            (
+                "%2".to_string(),
+                entry("working", now_s * 1000 - 5_000, None),
+            ),
+            (
+                "%3".to_string(),
+                entry(
+                    "permission",
+                    now_s * 1000 - 90_000,
+                    Some("Bash:\tcargo test"),
+                ),
+            ),
+            ("%4".to_string(), entry("question", now_s - 30, None)),
+        ]);
+        let empty = HashMap::new();
+        let sources = PaneSources {
+            agent_states: &agent_states,
+            sess_agent: &empty,
+            sess_etimes: &HashMap::new(),
+            git: &HashMap::new(),
+        };
+        build_rows(
+            &list_out,
+            &sources,
+            &Registry::builtin(),
+            now_s,
+            ("dev", "2"),
+        )
+    }
+
+    #[test]
+    fn test_build_rows_orders_waiting_agents_first() {
+        let rows = fixture_rows();
+        // _popups and the short line are dropped.
+        let panes: Vec<&str> = rows.iter().map(|r| r.pid.as_str()).collect();
+        assert_eq!(panes, ["%3", "%4", "%2", "%1"]);
+
+        let permission = &rows[0];
+        assert_eq!(permission.st, "permission");
+        assert_eq!(permission.age_str, "1m");
+        // A waiting row says why it waits, with whitespace collapsed.
+        assert_eq!(permission.agent_label, "Bash: cargo test");
+        assert!(permission.is_agent);
+
+        assert_eq!(rows[1].age_str, "30s", "second timestamps are aged too");
+        assert!(rows[2].is_cur, "dev:2 is the origin window");
+        assert_eq!(rows[3].st, "normal");
+        assert!(!rows[3].is_agent);
+    }
+
+    #[test]
+    fn test_render_items_groups_sessions_by_urgency() {
+        let theme = ThemePalette::default();
+        let out = render_items(fixture_rows(), &theme, false, "dev");
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "#  dev", "dev holds the permission prompt");
+        let ops_header = lines.iter().position(|l| *l == "#  ops").unwrap();
+        assert_eq!(ops_header, 4, "three dev windows, then ops");
+        for row in lines.iter().filter(|l| !l.starts_with('#')) {
+            assert_eq!(row.split('\t').count(), 12, "{row}");
+        }
+        let first: Vec<&str> = lines[1].split('\t').collect();
+        assert_eq!(&first[1..7], ["3", "web", "dev", "%3", "", "permission"]);
+
+        let agents_only = render_items(fixture_rows(), &theme, true, "dev");
+        assert!(
+            !agents_only.contains("\tshell\t"),
+            "plain shells are not agents"
+        );
+        assert!(agents_only.contains("\tapi\t"));
+
+        let none = render_items(Vec::new(), &theme, true, "dev");
+        assert!(none.starts_with("· (no active AI agents)\t0\t-\tdev\t"));
     }
 }
