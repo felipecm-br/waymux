@@ -30,8 +30,6 @@ pub fn read_token() -> Option<String> {
                 .join("token"),
         );
     }
-    candidates.push(PathBuf::from("/run/user/1001/waymux/token"));
-    candidates.push(PathBuf::from("/run/user/1001/acpd/token"));
 
     for path in candidates {
         if let Ok(tok) = fs::read_to_string(&path) {

@@ -36,8 +36,18 @@ fn write_token_file(token_path: &std::path::Path, token: &str) -> anyhow::Result
         fs::create_dir_all(parent)?;
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            // The /tmp fallback can be created by anyone first; a token in another user's
+            // directory would be readable by them.
+            let owner = fs::metadata(parent)?.uid();
+            if owner != nix::unistd::getuid().as_raw() {
+                anyhow::bail!(
+                    "{} is owned by uid {}, not by the current user",
+                    parent.display(),
+                    owner
+                );
+            }
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
         }
     }
 
@@ -100,5 +110,15 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(test_dir);
+    }
+
+    #[test]
+    fn test_refuses_directory_owned_by_another_user() {
+        if nix::unistd::getuid().is_root() {
+            return;
+        }
+        // "/" is root's, standing in for a /tmp/waymux-<uid> someone else created first.
+        let err = generate_and_save_token_to(std::path::Path::new("/waymux-token")).unwrap_err();
+        assert!(err.to_string().contains("not by the current user"), "{err}");
     }
 }
