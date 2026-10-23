@@ -38,4 +38,5 @@ codegen-units = 1
 strip = true
 
 [dev-dependencies]
+proptest = { version = "1.5", default-features = false, features = ["std"] }
 tower = { version = "0.5", features = ["util"] }

@@ -675,4 +675,36 @@ mod tests {
         assert_eq!(extract_session_title(&dir_ctx), None);
         let _ = fs::remove_dir_all(&dir);
     }
+
+    mod properties {
+        use super::*;
+        use crate::test_strategies::{arb_json, arb_text};
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Hook stdin comes from whatever agent is running: any JSON must be handled
+            /// without a panic, and the wait reason must stay within its bound.
+            #[test]
+            fn hook_input_never_panics(ctx in arb_json()) {
+                let _ = extract_session_title(&ctx);
+                let _ = classify_pre_tool_state(&ctx);
+                let _ = session_start_awaits_prompt(&ctx);
+                if let Some(summary) = tool_summary(&ctx) {
+                    prop_assert!(summary.chars().count() <= MAX_REASON_CHARS);
+                    prop_assert!(!summary.contains('\n'));
+                }
+            }
+
+            #[test]
+            fn titles_are_one_trimmed_line(prompt in arb_text()) {
+                let ctx = serde_json::json!({ "prompt": prompt });
+                if let Some(title) = extract_session_title(&ctx) {
+                    prop_assert!(!title.is_empty());
+                    prop_assert!(!title.contains("  "), "whitespace is collapsed");
+                    prop_assert_eq!(title.trim(), title.as_str());
+                    prop_assert!(!title.contains('\n'));
+                }
+            }
+        }
+    }
 }

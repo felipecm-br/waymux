@@ -566,4 +566,64 @@ mod tests {
         assert_eq!(alert_sound("stalled"), "10-arcade-blip.wav");
         assert_eq!(alert_sound("active"), "04-subtle-bell.wav");
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_state() -> impl Strategy<Value = String> {
+            prop::sample::select(vec![
+                "permission",
+                "question",
+                "awaiting_input",
+                "error",
+                "stalled",
+                "hanging",
+                "working",
+                "busy",
+                "idle",
+                "closed",
+                "",
+                "junk",
+            ])
+            .prop_map(str::to_string)
+        }
+
+        proptest! {
+            /// The queue holds exactly the urgent panes, in class order, each once.
+            #[test]
+            fn order_urgent_is_a_sorted_selection(
+                states in prop::collection::vec((arb_state(), any::<u64>()), 0..20),
+            ) {
+                // Pane ids are unique: the daemon keys its map by them.
+                let entries: Vec<(String, String, u64)> = states
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (st, ts))| (format!("%{i}"), st, ts))
+                    .collect();
+                let class_of: HashMap<&str, u8> = entries
+                    .iter()
+                    .filter_map(|(p, st, _)| Some((p.as_str(), service_class(st)?)))
+                    .collect();
+                let queue = order_urgent(entries.clone());
+                prop_assert_eq!(queue.len(), class_of.len());
+                let classes: Vec<u8> = queue.iter().map(|p| class_of[p.as_str()]).collect();
+                prop_assert!(classes.windows(2).all(|w| w[0] <= w[1]));
+            }
+
+            /// Jumping visits every queued pane once per cycle, wherever it starts.
+            #[test]
+            fn next_in_queue_cycles_through_everyone(len in 1usize..12, start in "%[0-9]{1,2}") {
+                let queue: Vec<String> = (0..len).map(|i| format!("%{i}")).collect();
+                let mut seen = std::collections::HashSet::new();
+                let mut cur = start;
+                for _ in 0..len {
+                    let next = next_in_queue(&queue, &cur).unwrap().clone();
+                    seen.insert(next.clone());
+                    cur = next;
+                }
+                prop_assert_eq!(seen.len(), len);
+            }
+        }
+    }
 }

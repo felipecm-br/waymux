@@ -220,4 +220,145 @@ mod tests {
         assert_eq!(batch[0]["id"], 1);
         assert_eq!(batch[1]["error"]["code"], -32601);
     }
+
+    mod properties {
+        use super::*;
+        use crate::test_strategies::{arb_json, arb_text};
+        use proptest::prelude::*;
+        use serde_json::Value;
+
+        /// Posts `body` to /rpc with a valid token on a fresh daemon state.
+        fn post(body: Vec<u8>) -> (axum::http::StatusCode, Vec<u8>) {
+            use tower::ServiceExt;
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                let router = api_router(ApiState::new(Vec::new(), 0), Arc::new("t".into()));
+                let req = axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("Authorization", "Bearer t")
+                    .body(axum::body::Body::from(body))
+                    .unwrap();
+                let res = router.oneshot(req).await.unwrap();
+                let status = res.status();
+                let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                (status, bytes.to_vec())
+            })
+        }
+
+        fn check_response(r: &Value) -> Result<(), TestCaseError> {
+            prop_assert_eq!(&r["jsonrpc"], "2.0");
+            let has_result = r.get("result").is_some();
+            let has_error = r.get("error").is_some();
+            prop_assert!(
+                has_result != has_error,
+                "exactly one of result/error: {}",
+                r
+            );
+            if has_error {
+                let code = r["error"]["code"].as_i64().unwrap();
+                prop_assert!(
+                    [-32700, -32600, -32601, -32602, -32000].contains(&code),
+                    "{}",
+                    r
+                );
+            }
+            Ok(())
+        }
+
+        /// Whatever arrives, /rpc answers 200 with JSON-RPC response objects or 204.
+        fn check(status: axum::http::StatusCode, body: &[u8]) -> Result<(), TestCaseError> {
+            use axum::http::StatusCode;
+            if status == StatusCode::NO_CONTENT {
+                prop_assert!(body.is_empty());
+                return Ok(());
+            }
+            prop_assert_eq!(status, StatusCode::OK);
+            let value: Value = serde_json::from_slice(body).unwrap();
+            match &value {
+                Value::Array(batch) => {
+                    prop_assert!(!batch.is_empty());
+                    for r in batch {
+                        check_response(r)?;
+                    }
+                }
+                single => check_response(single)?,
+            }
+            Ok(())
+        }
+
+        fn arb_request() -> impl Strategy<Value = Value> {
+            // Methods that return without blocking and without starting a tmux server.
+            let method = prop::sample::select(vec![
+                "agentState/update",
+                "agentState/list",
+                "agentState/dismiss",
+                "tmux.list_panes",
+                "tmux.capture_pane",
+                "nope",
+            ]);
+            (
+                prop::option::of(prop_oneof![Just("2.0".to_string()), arb_text()]),
+                prop::option::of(method),
+                arb_json(),
+                prop::option::of(arb_json()),
+            )
+                .prop_map(|(jsonrpc, method, params, id)| {
+                    let mut req = serde_json::Map::new();
+                    if let Some(v) = jsonrpc {
+                        req.insert("jsonrpc".into(), v.into());
+                    }
+                    if let Some(m) = method {
+                        req.insert("method".into(), m.into());
+                    }
+                    req.insert("params".into(), params);
+                    if let Some(id) = id {
+                        req.insert("id".into(), id);
+                    }
+                    Value::Object(req)
+                })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(128))]
+
+            #[test]
+            fn arbitrary_bytes_get_a_json_rpc_answer(body in prop::collection::vec(any::<u8>(), 0..256)) {
+                let (status, out) = post(body);
+                check(status, &out)?;
+            }
+
+            #[test]
+            fn arbitrary_json_gets_a_json_rpc_answer(body in arb_json()) {
+                let (status, out) = post(serde_json::to_vec(&body).unwrap());
+                check(status, &out)?;
+            }
+
+            #[test]
+            fn requests_and_batches_get_a_json_rpc_answer(
+                batch in prop::collection::vec(arb_request(), 1..4),
+                single in any::<bool>(),
+            ) {
+                let body = if single { batch[0].clone() } else { Value::Array(batch.clone()) };
+                let (status, out) = post(serde_json::to_vec(&body).unwrap());
+                check(status, &out)?;
+                // One response per request, except valid notifications (no id). An invalid
+                // request gets an error even without an id, as the spec requires.
+                let is_valid = |r: &Value| r["jsonrpc"] == "2.0" && r["method"].is_string();
+                let with_id = batch
+                    .iter()
+                    .filter(|r| r.get("id").is_some() || !is_valid(r))
+                    .count();
+                if !single && status == axum::http::StatusCode::OK {
+                    let replies: Value = serde_json::from_slice(&out).unwrap();
+                    prop_assert_eq!(replies.as_array().unwrap().len(), with_id);
+                }
+            }
+        }
+    }
 }

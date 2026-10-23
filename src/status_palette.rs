@@ -345,4 +345,21 @@ mod tests {
         assert!((contrast_ratio("#304860", "#16242d").unwrap() - 1.68).abs() < 0.01);
         assert!(contrast_ratio("nope", "#ffffff").is_none());
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Theme files are user-edited: any string is a color or falls back.
+            #[test]
+            fn color_parsers_never_panic(a in "\\PC{0,9}", b in "#?[0-9a-fA-F]{6}") {
+                let _ = relative_luminance(&a);
+                let _ = ensure_contrast(&a, &b, &b, 4.5);
+                let fixed = ensure_contrast(&b, "#000000", "#ffffff", 4.5);
+                prop_assert!(relative_luminance(&fixed).is_some(), "{}", fixed);
+                prop_assert!(crate::theme::hex_to_ansi_fg(&a).starts_with("\x1b[38;2;"));
+            }
+        }
+    }
 }

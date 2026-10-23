@@ -16,6 +16,8 @@ pub mod rpc_client;
 pub mod signals;
 pub mod status_palette;
 pub mod sys;
+#[cfg(test)]
+pub(crate) mod test_strategies;
 pub mod theme;
 pub mod tmux_cmd;
 pub mod triage;

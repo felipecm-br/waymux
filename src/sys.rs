@@ -51,4 +51,25 @@ mod tests {
         assert!(find_in_path("sh").is_some());
         assert!(find_in_path("waymux-definitely-not-installed").is_none());
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// Whatever the value, a real POSIX shell reads the quoted word back unchanged.
+            #[test]
+            fn shell_quote_round_trips_through_sh(s in "[^\\x00]{0,40}") {
+                let out = std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(format!("printf '%s' {}", shell_quote(&s)))
+                    .output()
+                    .unwrap();
+                prop_assert!(out.status.success());
+                prop_assert_eq!(String::from_utf8_lossy(&out.stdout), s);
+            }
+        }
+    }
 }

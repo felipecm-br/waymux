@@ -804,4 +804,46 @@ mod tests {
         assert_eq!(AgentState::from_tmux_raw("   "), None);
         assert_eq!(AgentState::from_tmux_raw("other_junk"), None);
     }
+
+    mod properties {
+        use super::*;
+        use proptest::prelude::*;
+
+        const STATES: [AgentState; 7] = [
+            AgentState::Idle,
+            AgentState::Working,
+            AgentState::AwaitingInput,
+            AgentState::Permission,
+            AgentState::Stalled,
+            AgentState::Error,
+            AgentState::Closed,
+        ];
+
+        #[test]
+        fn state_names_round_trip() {
+            for state in STATES {
+                assert_eq!(state.as_str().parse::<AgentState>(), Ok(state.clone()));
+                if state != AgentState::Closed {
+                    assert_eq!(AgentState::from_tmux_raw(state.as_str()), Some(state));
+                }
+            }
+        }
+
+        proptest! {
+            /// `@ai_agent_state_raw` can be set by anything; rehydration takes only valid
+            /// states and never panics.
+            #[test]
+            fn rehydration_accepts_any_listing(lines in "\\PC{0,200}", ts in any::<u64>()) {
+                let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+                rt.block_on(async {
+                    let state = ApiState::new(Vec::new(), 0);
+                    state.rehydrate_from_raw_lines(&lines, ts).await;
+                    for (pane, info) in state.pane_states.lock().await.iter() {
+                        assert!(!pane.is_empty());
+                        assert!(STATES.contains(&info.state));
+                    }
+                });
+            }
+        }
+    }
 }

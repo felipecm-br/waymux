@@ -1304,4 +1304,67 @@ mod tests {
         assert_eq!(row.split('\t').count(), 12);
         assert_eq!(row.split('\t').nth(5), Some("/tmp/a b"));
     }
+
+    mod properties {
+        use super::*;
+        use crate::test_strategies::arb_text;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// git, gh (through any wrapper) and tmux output is parsed, never trusted.
+            #[test]
+            fn tool_output_parsers_never_panic(text in arb_text()) {
+                let _ = parse_porcelain_status(&text, &mut GitMetadata::default());
+                let _ = parse_shortstat(&text, 1);
+                let _ = parse_pr_cache(&text);
+                let _ = format_age(text.len() as u64 * 7919);
+            }
+
+            #[test]
+            fn branch_line_round_trips(
+                branch in "[a-z][a-z0-9/_-]{0,20}",
+                ahead in 0u32..10_000,
+                behind in 0u32..10_000,
+            ) {
+                let line = format!("## {branch}...origin/{branch} [ahead {ahead}, behind {behind}]\n");
+                let mut meta = GitMetadata::default();
+                prop_assert_eq!(parse_porcelain_status(&line, &mut meta), 0);
+                prop_assert_eq!(meta.branch, branch);
+                prop_assert_eq!((meta.ahead, meta.behind), (ahead, behind));
+            }
+
+            #[test]
+            fn truncation_respects_the_column_width(s in any::<String>(), max in 0usize..30) {
+                let t = truncate_chars(&s, max);
+                prop_assert!(char_len(&t) <= max.max(1));
+                if char_len(&s) <= max {
+                    prop_assert_eq!(t, s);
+                }
+            }
+
+            /// Any pane listing renders as session headers plus 12-column rows.
+            #[test]
+            fn any_pane_listing_renders_twelve_columns(
+                panes in prop::collection::vec(prop::collection::vec(arb_text(), 10..12), 0..8),
+            ) {
+                let list_out = panes
+                    .iter()
+                    .map(|fields| fields.iter().map(|f| f.replace(['\n', '\x1f'], " ")).collect::<Vec<_>>().join("\x1f"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let empty_agents = HashMap::new();
+                let sources = PaneSources {
+                    agent_states: &empty_agents,
+                    sess_agent: &HashMap::new(),
+                    sess_etimes: &HashMap::new(),
+                    git: &HashMap::new(),
+                };
+                let rows = build_rows(&list_out, &sources, &Registry::builtin(), 1_700_000_000, ("", ""));
+                let out = render_items(rows, &ThemePalette::default(), false, "");
+                for line in out.lines().filter(|l| !l.starts_with("#  ")) {
+                    prop_assert_eq!(line.split('\t').count(), 12, "{:?}", line);
+                }
+            }
+        }
+    }
 }
