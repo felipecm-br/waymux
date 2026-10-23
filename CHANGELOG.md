@@ -29,6 +29,10 @@ All notable changes to **Waymux** are documented in this file.
 - **`tests/cli.rs`**: 8 end-to-end tests run the real binary against a sandboxed daemon (own port, `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR`): unknown commands, `--help`, a missing daemon, hook → list → dismiss, the PID guard, 401 without the token, `init --hooks` JSON and `doctor`.
 - **CI (`.github/workflows/ci.yml`)**: a second job runs the 8-step Docker sandbox suite on every push.
 
+### 󰸌 Gradient Cockpit Frame
+
+- **`@border_gradient` (`src/cockpit/mod.rs`)**: when this tmux option holds a Waymaker gradient palette (a preset such as `aurora`, or `#rrggbb,#rrggbb,...`), `waymux cockpit` opens its popup borderless and passes `WM_BORDER_GRADIENT` / `WM_BORDER_TITLE`, so Waymaker draws a multi-color frame carrying the Cockpit badge. Unset or empty keeps the single-color tmux border.
+
 ### 󰈈 Cockpit Says Why An Agent Waits
 
 - **Wait reasons (`src/hook.rs`, `src/rpc_client.rs`, `src/cockpit/items.rs`)**: the hook always sent `message: null`, so the Cockpit could show that an agent waited but not why. `PreToolUse` now sends a one-line tool summary (`Bash: cargo test -p auth`, `Edit: main.rs`, `AskUserQuestion: <question>`; bounded to 120 chars) and remembers it per pane in `$XDG_RUNTIME_DIR/waymux` (`0700`, since commands can hold secrets), so the permission `Notification` that follows carries it; without a preceding tool it falls back to the notification text. `agentState/list` already returned `message`; the client now reads it, and waiting rows show the reason in the title column instead of the task title.

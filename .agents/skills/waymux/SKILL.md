@@ -91,4 +91,4 @@ rpc '{"jsonrpc":"2.0","method":"agentState/wait","params":{"pane_id":"%12","targ
 | `daemon already running` | Another daemon holds the PID file | `systemctl --user restart waymux` |
 | PR badges empty | `gh` not authenticated, or a `gh` wrapper printing to stdout | `gh auth status`; wrappers must keep stdout clean |
 
-Config: `~/.config/waymux/config.toml` (reference: `config/default.toml` in the repo). Theme: `$WAYMUX_COLORS`, else `~/.config/waymux/colors.toml`, else Omarchy's theme, else built-in colors.
+Config: `~/.config/waymux/config.toml` (reference: `config/default.toml` in the repo). Theme: `$WAYMUX_COLORS`, else `~/.config/waymux/colors.toml`, else Omarchy's theme, else built-in colors. Gradient Cockpit frame: set the tmux option `@border_gradient` to a Waymaker palette (`aurora`, `#rrggbb,#rrggbb,...`); empty keeps the plain border.

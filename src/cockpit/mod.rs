@@ -169,6 +169,8 @@ fn find_lazygitrs_bin() -> String {
     "lazygitrs".to_string()
 }
 
+const COCKPIT_BADGE: &str = " 󱂬 ";
+
 pub fn run_cockpit(args: &[String]) -> i32 {
     let is_fullscreen = args.iter().any(|a| a == "--fullscreen");
     let exe_str = std::env::current_exe()
@@ -198,23 +200,29 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             shell_quote(&orig_win),
             shell_quote(&exe_str)
         );
-        let _ = tmux_status(&[
+        let border_fg = format!("fg={}", theme.orange);
+        let text_fg = format!("fg={}", text_col);
+        let mut popup_args = vec![
             "display-popup",
             "-S",
-            &format!("fg={}", theme.orange),
+            &border_fg,
             "-s",
-            &format!("fg={}", text_col),
+            &text_fg,
             "-b",
             "rounded",
             "-T",
-            " 󱂬 ",
-            "-w",
-            "85%",
-            "-h",
-            "75%",
-            "-E",
-            &popup_cmd,
-        ]);
+            COCKPIT_BADGE,
+        ];
+        // @border_gradient holds a Waymaker gradient palette: the popup opens
+        // borderless and Waymaker draws a gradient frame carrying the badge.
+        let gradient = tmux_get_global_opt("@border_gradient");
+        let gradient_env = format!("WM_BORDER_GRADIENT={}", gradient.trim());
+        let title_env = format!("WM_BORDER_TITLE={}", COCKPIT_BADGE);
+        if !gradient.trim().is_empty() {
+            popup_args.extend(["-B", "-e", &gradient_env, "-e", &title_env]);
+        }
+        popup_args.extend(["-w", "85%", "-h", "75%", "-E", &popup_cmd]);
+        let _ = tmux_status(&popup_args);
         return 0;
     }
 

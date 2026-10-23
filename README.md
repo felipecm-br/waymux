@@ -206,6 +206,7 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 | `WAYMUX_SHARE_DIR` | `~/.local/share/waymux` | Where `install.sh` puts the tmux plugin and `scripts/`, and where `wt` looks for bundled helpers |
 | `AWT_SWEEP_ROOTS` | `~/.dotfiles:~/dev/github` | Directories `awt sweep --all` scans (each a repository or a folder of repositories) |
 | `AWT_SWEEP_KEEP_BRANCHES` | your user name | Branches whose `target/` `awt sweep --clean-targets` never removes |
+| `@border_gradient` (tmux option) | unset | Waymaker gradient palette (preset such as `aurora` or `#rrggbb,#rrggbb,...`) for the Cockpit popup: it opens borderless and Waymaker draws a gradient frame |
 | `WAYMUX_SKIP_CHECKSUM` | `0` | `1` lets `install.sh` proceed without a published checksum |
 
 Helpers in `~/.config/waymaker/scripts/` override the bundled `awt-*.sh` scripts, so you can customize the worktree flow without forking.
