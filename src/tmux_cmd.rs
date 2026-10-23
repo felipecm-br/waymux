@@ -1,12 +1,31 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+/// Socket that unit tests run tmux against. No server ever listens on it, so a test that
+/// reaches tmux gets "no server running" instead of changing the developer's session.
+#[cfg(test)]
+pub const TEST_SOCKET: &str = "waymux-unit-test";
+
+/// A `tmux` command. Every call site builds tmux through here (or [`async_command`]).
+pub fn command() -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new("tmux");
+    #[cfg(test)]
+    cmd.args(["-L", TEST_SOCKET]);
+    cmd
+}
+
+/// Async counterpart of [`command`].
+pub fn async_command() -> tokio::process::Command {
+    #[allow(unused_mut)]
+    let mut cmd = tokio::process::Command::new("tmux");
+    #[cfg(test)]
+    cmd.args(["-L", TEST_SOCKET]);
+    cmd
+}
+
 pub fn tmux_out(args: &[&str]) -> Option<String> {
-    let output = Command::new("tmux")
-        .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let output = command().args(args).stderr(Stdio::null()).output().ok()?;
     if output.status.success() {
         Some(
             String::from_utf8_lossy(&output.stdout)
@@ -19,11 +38,7 @@ pub fn tmux_out(args: &[&str]) -> Option<String> {
 }
 
 pub fn tmux_out_raw(args: &[&str]) -> Option<String> {
-    let output = Command::new("tmux")
-        .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let output = command().args(args).stderr(Stdio::null()).output().ok()?;
     if output.status.success() {
         Some(String::from_utf8_lossy(&output.stdout).to_string())
     } else {
@@ -32,7 +47,7 @@ pub fn tmux_out_raw(args: &[&str]) -> Option<String> {
 }
 
 pub fn tmux_status(args: &[&str]) -> bool {
-    Command::new("tmux")
+    command()
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -74,7 +89,7 @@ pub fn tmux_load_and_paste_bracketed(
     }
     load_args.push("-");
 
-    let mut child = match Command::new("tmux")
+    let mut child = match command()
         .args(&load_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -107,5 +122,22 @@ pub fn tmux_load_and_paste_bracketed(
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_commands_use_private_socket_under_test() {
+        let sync_args: Vec<_> = command().get_args().map(|a| a.to_owned()).collect();
+        assert_eq!(sync_args, ["-L", TEST_SOCKET]);
+        let async_args: Vec<_> = async_command()
+            .as_std()
+            .get_args()
+            .map(|a| a.to_owned())
+            .collect();
+        assert_eq!(async_args, ["-L", TEST_SOCKET]);
     }
 }

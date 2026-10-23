@@ -57,7 +57,7 @@ impl ApiState {
             return;
         }
 
-        let output = match tokio::process::Command::new("tmux")
+        let output = match crate::tmux_cmd::async_command()
             .args(["list-panes", "-a", "-F", "#{pane_id}"])
             .output()
             .await
@@ -158,7 +158,7 @@ impl ApiState {
     }
 
     pub async fn rehydrate_from_tmux(&self) {
-        let output = match tokio::process::Command::new("tmux")
+        let output = match crate::tmux_cmd::async_command()
             .args([
                 "list-panes",
                 "-a",
@@ -205,7 +205,7 @@ impl ApiState {
         }
 
         for (pane_id, current_state) in target_panes {
-            let display_out = tokio::process::Command::new("tmux")
+            let display_out = crate::tmux_cmd::async_command()
                 .args([
                     "display-message",
                     "-p",
@@ -230,7 +230,7 @@ impl ApiState {
                 _ => continue,
             };
 
-            let capture_out = tokio::process::Command::new("tmux")
+            let capture_out = crate::tmux_cmd::async_command()
                 .args(["capture-pane", "-p", "-t", &pane_id, "-S", "-5"])
                 .output()
                 .await;
@@ -600,7 +600,7 @@ async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                     // restart it); rehydrate_from_tmux reads it back.
                     let pane = update.pane_id.clone();
                     tokio::spawn(async move {
-                        let _ = tokio::process::Command::new("tmux")
+                        let _ = crate::tmux_cmd::async_command()
                             .args([
                                 "set-option",
                                 "-p",
@@ -826,11 +826,11 @@ async fn handle_rpc(
                             )
                             .await;
 
-                            let _ = tokio::process::Command::new("tmux")
+                            let _ = crate::tmux_cmd::async_command()
                                 .args(["set", "-g", "@ai_agent_bell", ""])
                                 .output()
                                 .await;
-                            let _ = tokio::process::Command::new("tmux")
+                            let _ = crate::tmux_cmd::async_command()
                                 .args(["refresh-client", "-S"])
                                 .output()
                                 .await;
@@ -854,7 +854,7 @@ async fn handle_rpc(
                             id: payload.id,
                         }),
                         _ => {
-                            let _ = tokio::process::Command::new("tmux")
+                            let _ = crate::tmux_cmd::async_command()
                                 .args(["set", "-g", "@ai_agent_bell", ""])
                                 .output()
                                 .await;
@@ -1026,7 +1026,7 @@ async fn handle_rpc(
         "tmux.split_pane" => {
             match serde_json::from_value::<SplitPaneParams>(payload.params) {
                 Ok(params) => {
-                    let mut cmd = tokio::process::Command::new("tmux");
+                    let mut cmd = crate::tmux_cmd::async_command();
                     cmd.arg("split-window");
 
                     if params.vertical.unwrap_or(false) {
@@ -1057,7 +1057,7 @@ async fn handle_rpc(
         }
         "tmux.new_window" => match serde_json::from_value::<NewWindowParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("new-window");
                 if let Some(name) = params.name {
                     cmd.arg("-n").arg(name);
@@ -1074,7 +1074,7 @@ async fn handle_rpc(
         },
         "tmux.new_session" => match serde_json::from_value::<NewSessionParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("new-session").arg("-d").arg("-s").arg(params.name);
                 if let Some(dir) = params.directory {
                     cmd.arg("-c").arg(dir);
@@ -1088,7 +1088,7 @@ async fn handle_rpc(
         },
         "tmux.kill_pane" => match serde_json::from_value::<TargetParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("kill-pane").arg("-t").arg(params.target);
                 execute_tmux_cmd(cmd, payload.id, "pane killed").await
             }
@@ -1096,7 +1096,7 @@ async fn handle_rpc(
         },
         "tmux.kill_window" => match serde_json::from_value::<TargetParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("kill-window").arg("-t").arg(params.target);
                 execute_tmux_cmd(cmd, payload.id, "window killed").await
             }
@@ -1104,7 +1104,7 @@ async fn handle_rpc(
         },
         "tmux.kill_session" => match serde_json::from_value::<TargetParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("kill-session").arg("-t").arg(params.target);
                 execute_tmux_cmd(cmd, payload.id, "session killed").await
             }
@@ -1112,7 +1112,7 @@ async fn handle_rpc(
         },
         "tmux.capture_pane" => match parse_rpc_params::<CapturePaneParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("capture-pane").arg("-p");
                 if let Some(target) = params.target.or(params.target_pane) {
                     cmd.arg("-t").arg(target);
@@ -1160,7 +1160,7 @@ async fn handle_rpc(
         },
         "tmux.list_panes" => match parse_rpc_params::<ListPanesParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("list-panes");
                 cmd.arg("-F").arg(
                     "#{pane_id}\t#{pane_active}\t#{pane_width}\t#{pane_height}\t#{pane_current_path}\t#{pane_current_command}",
@@ -1222,7 +1222,7 @@ async fn handle_rpc(
         },
         "tmux.list_windows" => match parse_rpc_params::<ListWindowsParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("list-windows");
                 cmd.arg("-F").arg(
                     "#{window_id}\t#{window_name}\t#{window_index}\t#{window_active}\t#{window_panes}",
@@ -1280,7 +1280,7 @@ async fn handle_rpc(
         },
         "tmux.list_sessions" => match parse_rpc_params::<ListSessionsParams>(payload.params) {
             Ok(_) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("list-sessions");
                 cmd.arg("-F")
                     .arg("#{session_id}\t#{session_name}\t#{session_windows}\t#{session_attached}");
@@ -1333,7 +1333,7 @@ async fn handle_rpc(
         },
         "tmux.send_keys" => match serde_json::from_value::<SendKeysParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("send-keys");
                 if let Some(target) = params.target.or(params.target_pane) {
                     cmd.arg("-t").arg(target);
@@ -1350,7 +1350,7 @@ async fn handle_rpc(
         },
         "tmux.select_window" => match parse_rpc_params::<SelectWindowParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("select-window");
                 if let Some(target) = params.target {
                     cmd.arg("-t").arg(target);
@@ -1361,7 +1361,7 @@ async fn handle_rpc(
         },
         "tmux.select_pane" => match parse_rpc_params::<SelectPaneParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("select-pane");
                 if let Some(target) = params.target {
                     cmd.arg("-t").arg(target);
@@ -1373,7 +1373,7 @@ async fn handle_rpc(
         "tmux.display_message" => {
             match serde_json::from_value::<DisplayMessageParams>(payload.params) {
                 Ok(params) => {
-                    let mut cmd = tokio::process::Command::new("tmux");
+                    let mut cmd = crate::tmux_cmd::async_command();
                     cmd.arg("display-message");
                     if let Some(target) = params.target {
                         cmd.arg("-t").arg(target);
@@ -1386,7 +1386,7 @@ async fn handle_rpc(
         }
         "tmux.ring_bell" => match parse_rpc_params::<RingBellParams>(payload.params) {
             Ok(params) => {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = crate::tmux_cmd::async_command();
                 cmd.arg("send-keys");
                 if let Some(target) = params.target {
                     cmd.arg("-t").arg(target);
@@ -1399,7 +1399,7 @@ async fn handle_rpc(
         "tmux.select_layout" => {
             match serde_json::from_value::<SelectLayoutParams>(payload.params) {
                 Ok(params) => {
-                    let mut cmd = tokio::process::Command::new("tmux");
+                    let mut cmd = crate::tmux_cmd::async_command();
                     cmd.arg("select-layout");
                     if let Some(target) = params.target {
                         cmd.arg("-t").arg(target);

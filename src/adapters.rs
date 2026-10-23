@@ -201,7 +201,7 @@ impl OutputAdapter for WaybarAdapter {
 // TMUX ADAPTER
 // ==========================================
 async fn set_tmux_window_state(pane_id: &str, icon: &str, raw: &str, color: &str) {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args([
             "set-option",
             "-w",
@@ -240,7 +240,7 @@ async fn set_tmux_window_state(pane_id: &str, icon: &str, raw: &str, color: &str
 }
 
 async fn unset_tmux_window_state(pane_id: &str) {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args([
             "set-option",
             "-w",
@@ -279,7 +279,7 @@ async fn unset_tmux_window_state(pane_id: &str) {
 }
 
 async fn set_tmux_pane_state(pane_id: &str, raw: &str) {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args([
             "set-option",
             "-p",
@@ -301,7 +301,7 @@ async fn set_tmux_pane_state(pane_id: &str, raw: &str) {
 }
 
 async fn unset_tmux_pane_state(pane_id: &str) {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args([
             "set-option",
             "-p",
@@ -324,7 +324,7 @@ async fn unset_tmux_pane_state(pane_id: &str) {
 
 #[allow(dead_code)]
 async fn set_tmux_option(pane_id: &str, option: &str, value: &str) {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args(["set-option", "-w", "-t", pane_id, option, value])
         .output()
         .await;
@@ -341,7 +341,7 @@ async fn set_tmux_option(pane_id: &str, option: &str, value: &str) {
 
 #[allow(dead_code)]
 async fn unset_tmux_option(pane_id: &str, option: &str) {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args(["set-option", "-w", "-u", "-t", pane_id, option])
         .output()
         .await;
@@ -358,7 +358,7 @@ async fn unset_tmux_option(pane_id: &str, option: &str) {
 
 #[allow(dead_code)]
 async fn refresh_tmux_client() {
-    let out = Command::new("tmux")
+    let out = crate::tmux_cmd::async_command()
         .args(["refresh-client", "-S"])
         .output()
         .await;
@@ -408,7 +408,7 @@ impl TmuxAdapter {
                 return w.clone();
             }
         }
-        let out = Command::new("tmux")
+        let out = crate::tmux_cmd::async_command()
             .args(["display-message", "-t", pane_id, "-p", "#{window_id}"])
             .output()
             .await;
@@ -562,7 +562,7 @@ impl TmuxAdapter {
 
     async fn trigger_bell(&self, pane_id: &str, action: &str, force: bool) {
         // Fetch session and window properties for the pane
-        let output = Command::new("tmux")
+        let output = crate::tmux_cmd::async_command()
             .args([
                 "display-message",
                 "-t",
@@ -584,7 +584,7 @@ impl TmuxAdapter {
 
                 // Check attached clients: if user is actively focused on this window in the session, suppress bell.
                 // If the session/window is detached (no clients attached or looking elsewhere), notify must remain true!
-                let clients_out = Command::new("tmux")
+                let clients_out = crate::tmux_cmd::async_command()
                     .args(["list-clients", "-F", "#{client_session} #{window_id}"])
                     .output()
                     .await;
@@ -599,7 +599,7 @@ impl TmuxAdapter {
                 };
 
                 if notify {
-                    let _ = Command::new("tmux")
+                    let _ = crate::tmux_cmd::async_command()
                         .args(["set", "-g", "@ai_agent_last_bell", pane_id])
                         .output()
                         .await;
@@ -607,11 +607,11 @@ impl TmuxAdapter {
                         "  #[fg=cyan]{}:{} › {} #[fg=yellow](i)#[fg=default]",
                         window_idx, window_name, action
                     );
-                    let _ = Command::new("tmux")
+                    let _ = crate::tmux_cmd::async_command()
                         .args(["set", "-g", "@ai_agent_bell", &msg])
                         .output()
                         .await;
-                    let _ = Command::new("tmux")
+                    let _ = crate::tmux_cmd::async_command()
                         .args(["refresh-client", "-S"])
                         .output()
                         .await;
@@ -619,11 +619,11 @@ impl TmuxAdapter {
                     // Clear after 7 seconds
                     tokio::spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_secs(7)).await;
-                        let _ = Command::new("tmux")
+                        let _ = crate::tmux_cmd::async_command()
                             .args(["set", "-g", "@ai_agent_bell", ""])
                             .output()
                             .await;
-                        let _ = Command::new("tmux")
+                        let _ = crate::tmux_cmd::async_command()
                             .args(["refresh-client", "-S"])
                             .output()
                             .await;
@@ -741,7 +741,7 @@ const BREAKPOINT_IDLE_SECS: u64 = 2;
 const BREAKPOINT_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 async fn tmux_output(args: &[&str]) -> String {
-    match Command::new("tmux").args(args).output().await {
+    match crate::tmux_cmd::async_command().args(args).output().await {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
         _ => String::new(),
     }

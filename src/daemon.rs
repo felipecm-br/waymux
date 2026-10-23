@@ -27,7 +27,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         .as_ref()
         .and_then(|spinners| spinners.get(&active_spinner_name).cloned());
     tokio::spawn(async move {
-        let _ = tokio::process::Command::new("tmux")
+        let _ = crate::tmux_cmd::async_command()
             .args(["set", "-g", "@ai_agent_spinner", &active_spinner_name])
             .output()
             .await;
