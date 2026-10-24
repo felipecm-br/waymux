@@ -1,3 +1,4 @@
+use crate::sys::shell_quote;
 use crate::tmux_cmd::{tmux_out, tmux_status};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -147,6 +148,16 @@ pub(crate) fn find_waymaker_script(script_name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// Optional user extension scripts (`awt-popup.sh`, `session-picker.sh`,
+/// `flow-telemetry.py`): the helper dirs first, then the legacy `~/.config/tmux/`.
+pub(crate) fn find_user_script(script_name: &str) -> Option<PathBuf> {
+    find_waymaker_script(script_name).or_else(|| {
+        let home = std::env::var("HOME").ok()?;
+        let legacy = Path::new(&home).join(".config/tmux").join(script_name);
+        legacy.is_file().then_some(legacy)
+    })
+}
+
 fn find_wm_bin() -> String {
     if let Ok(home) = std::env::var("HOME") {
         let p = format!("{}/.local/bin/wm", home);
@@ -155,6 +166,18 @@ fn find_wm_bin() -> String {
         }
     }
     "wm".to_string()
+}
+
+/// The first command of a new session: signal `chan`, then become a login `shell`. tmux takes
+/// one command string, so the script is fixed and the shell and channel are positional
+/// arguments ($0, $1), each quoted as one word.
+fn ready_then_shell(shell: &str, chan: &str) -> String {
+    format!(
+        "sh -c {} {} {}",
+        shell_quote("tmux wait-for -S \"$1\"; exec \"$0\" -l"),
+        shell_quote(shell),
+        shell_quote(chan)
+    )
 }
 
 fn spawn_session_and_send(sess: &str, target_dir: &str, cmd: &str) {
@@ -167,8 +190,8 @@ fn spawn_session_and_send(sess: &str, target_dir: &str, cmd: &str) {
     } else if !cmd.is_empty() && cmd != "__FRESH__" {
         let pid = std::process::id();
         let chan = format!("awt_ready_{}", pid);
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-        let init_cmd = format!("sh -c 'tmux wait-for -S {}; exec {} -l'", chan, shell);
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let init_cmd = ready_then_shell(&shell, &chan);
         let _ = tmux_status(&["new-session", "-d", "-s", sess, "-c", target_dir, &init_cmd]);
         let _ = tmux_status(&["wait-for", &chan]);
         let spaced = format!(" {}", cmd);
@@ -302,22 +325,19 @@ pub fn run_cli(args: &[String]) -> i32 {
             return 0;
         }
         "popup" => {
-            if let Ok(home) = std::env::var("HOME") {
-                let popup = format!("{}/.config/tmux/awt-popup.sh", home);
-                if Path::new(&popup).is_file() {
-                    let cwd = std::env::current_dir()
-                        .ok()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| ".".to_string());
-                    return Command::new(&popup)
-                        .arg(&cwd)
-                        .status()
-                        .ok()
-                        .and_then(|s| s.code())
-                        .unwrap_or(0);
-                }
-            }
-            return 0;
+            let Some(popup) = find_user_script("awt-popup.sh") else {
+                return missing_script("awt-popup.sh");
+            };
+            let cwd = std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".to_string());
+            return Command::new(&popup)
+                .arg(&cwd)
+                .status()
+                .ok()
+                .and_then(|s| s.code())
+                .unwrap_or(0);
         }
         "clone" => {
             return Command::new("awtc")
@@ -702,6 +722,47 @@ pub fn run_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ready_then_shell_keeps_shell_and_channel_as_single_words() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("waymux-wt-quote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        // A fake tmux records the channel; a fake login shell records its arguments.
+        exe(
+            "tmux",
+            "#!/bin/sh\necho \"$3\" > \"$(dirname \"$0\")/chan\"\n",
+        );
+        let shell = exe(
+            "my shell",
+            "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/ran\"\n",
+        );
+        let path = format!("{}:/usr/bin:/bin", dir.display());
+        let run = |cmd: &str| {
+            std::process::Command::new("sh")
+                .args(["-c", cmd])
+                .env("PATH", &path)
+                .status()
+                .unwrap()
+        };
+
+        assert!(run(&ready_then_shell(&shell.to_string_lossy(), "awt ready; x")).success());
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+        assert_eq!(read("chan").trim(), "awt ready; x");
+        assert_eq!(read("ran").trim(), "-l");
+
+        let hostile = format!("/nonexistent; touch '{}'", dir.join("pwned").display());
+        run(&ready_then_shell(&hostile, "c"));
+        let pwned = dir.join("pwned").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!pwned, "a hostile $SHELL ran a command");
+    }
 
     #[test]
     fn test_slugify_prompt() {

@@ -240,3 +240,38 @@ fn with_changes_moves_uncommitted_work_into_the_new_worktree() {
         "the original tree is left clean"
     );
 }
+
+#[test]
+fn popup_uses_the_helper_dirs_then_the_legacy_tmux_dir_and_reports_a_missing_script() {
+    let env = Env::new();
+    env.init_repo();
+    let out = wt(&env, &["popup"]);
+    assert_eq!(out.status.code(), Some(127));
+    assert!(
+        stderr(&out).contains("awt-popup.sh not found"),
+        "{}",
+        stderr(&out)
+    );
+
+    fake_helper(&env.dir.join("home/.config/tmux"), "awt-popup.sh");
+    assert_eq!(wt(&env, &["popup"]).status.code(), Some(7));
+    let repo = env.repo();
+    assert_eq!(
+        calls(&env),
+        ["awt-popup.sh".to_string(), format!("[{}]", repo.display())]
+    );
+
+    std::fs::remove_file(env.dir.join("home/calls")).unwrap();
+    std::fs::write(
+        env.dir.join("home/.config/tmux/awt-popup.sh"),
+        "#!/bin/sh\necho legacy > \"$HOME/calls\"\n",
+    )
+    .unwrap();
+    fake_helper(&waymaker_scripts(&env), "awt-popup.sh");
+    wt(&env, &["popup"]);
+    assert_eq!(
+        calls(&env)[0],
+        "awt-popup.sh",
+        "the helper dir wins over the legacy one"
+    );
+}

@@ -1,5 +1,4 @@
 use crate::theme::{BOLD, DIM, RESET, ThemePalette};
-use std::path::Path;
 use std::process::Command;
 
 pub fn run_cli() -> i32 {
@@ -10,13 +9,12 @@ pub fn run_cli() -> i32 {
     let c_magenta = &theme.c_question;
     let c_blue = &theme.c_branch;
 
-    if let Ok(home) = std::env::var("HOME") {
-        let telemetry_py = format!("{}/.config/tmux/flow-telemetry.py", home);
-        if Path::new(&telemetry_py).is_file() {
-            let _ = Command::new("python3")
-                .args([&telemetry_py, "--hud"])
-                .status();
-        }
+    // Optional user HUD (e.g. stats from the flow_log_hook's log), printed above the keys.
+    if let Some(telemetry_py) = crate::wt::find_user_script("flow-telemetry.py") {
+        let _ = Command::new("python3")
+            .arg(&telemetry_py)
+            .arg("--hud")
+            .status();
     }
 
     println!(

@@ -18,6 +18,8 @@ All notable changes to **Waymux** are documented in this file.
 - **Dependabot (`.github/dependabot.yml`)**: weekly PRs for Cargo crates and GitHub Actions, minor and patch bumps grouped into one PR per ecosystem, majors one at a time.
 - **Signed releases and an SBOM (`.github/workflows/release.yml`, `install.sh`)**: every release archive gets a GitHub build-provenance attestation, checked with `gh attestation verify <archive> --repo felipecm-br/waymux` or by `install.sh` under `WAYMUX_VERIFY_ATTESTATION=1`; a CycloneDX SBOM (`waymux-<tag>.cdx.json`) is attached to each release.
 - **macOS CI (`.github/workflows/ci.yml`)**: Clippy and the full test suite run on `macos-latest`, matching the macOS binaries the release ships.
+- **`wt` no longer splices `$SHELL` into a shell string (`src/wt/mod.rs`)**: a new session's first command was built as `sh -c 'tmux wait-for -S <chan>; exec <shell> -l'`, so a `$SHELL` containing `'` or `;` broke it or ran extra commands. The shell and channel are now positional arguments, each quoted as one word (`ready_then_shell`, tested by running the string through `sh`).
+- **Extension scripts are found like the awt helpers (`src/wt/mod.rs`, `src/cockpit/`)**: `awt-popup.sh`, `session-picker.sh` and `flow-telemetry.py` were read only from `~/.config/tmux/`, and `wt popup` exited 0 silently without one. They are now searched in the awt helper dirs first, then `~/.config/tmux/`; `wt popup` exits 127 naming the searched dirs, and the Cockpit shows a tmux message.
 - **Declared MSRV (`Cargo.toml`, CI)**: `rust-version = "1.88"`, the first release with stable `let` chains (the README said 1.85, which fails with 65 errors). A CI job builds with exactly 1.88.
 
 ### 󰀏 Triage Covers Review, Cockpit Flags Shared Repositories

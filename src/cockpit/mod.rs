@@ -475,25 +475,23 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             return 0;
         } else if let Some(raw_item) = chosen.strip_prefix("__SWITCH_AWT__") {
             let target_path = resolve_target_path(raw_item, &orig_sess);
-            if let Ok(home) = std::env::var("HOME") {
-                let awt_popup = format!("{}/.config/tmux/awt-popup.sh", home);
-                if Path::new(&awt_popup).is_file() {
+            match crate::wt::find_user_script("awt-popup.sh") {
+                Some(awt_popup) => {
                     let _ = Command::new(&awt_popup).arg(&target_path).status();
-                    return 0;
                 }
+                None => tmux_display_msg("awt-popup.sh not found (see `waymux wt popup`)"),
             }
             return 0;
         } else if chosen == "__SWITCH_SESSION__" {
-            if let Ok(home) = std::env::var("HOME") {
-                let sp = format!("{}/.config/tmux/session-picker.sh", home);
-                if Path::new(&sp).is_file() {
+            match crate::wt::find_user_script("session-picker.sh") {
+                Some(sp) => {
                     let mut cmd = Command::new(&sp);
                     if is_fullscreen {
                         cmd.arg("--fullscreen");
                     }
                     let _ = cmd.status();
-                    return 0;
                 }
+                None => tmux_display_msg("session-picker.sh not found in the awt script dirs"),
             }
             return 0;
         } else {
