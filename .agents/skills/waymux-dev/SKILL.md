@@ -85,7 +85,7 @@ The daemon is always the first binary's, so a daemon-side change shows in both c
 Needs nightly and `cargo install cargo-fuzz`. From `fuzz/`:
 
 ```bash
-cargo +nightly fuzz run <hook_input|review_notes|config|rpc_body> corpus/<target> seeds/<target> -- -max_total_time=60
+cargo +nightly fuzz run [--target <host>] <hook_input|review_notes|config|rpc_body> corpus/<target> seeds/<target> -- -max_total_time=60
 ```
 
 `corpus/` (what libFuzzer learns) and `artifacts/` (crashes) are ignored; `seeds/` is committed. A new parser of outside input gets an entry point in `src/fuzzing.rs` and a target next to the others. The `rpc_body` target points `TMUX_TMPDIR` at an empty dir, so fuzzed `tmux.*` calls never reach your server.
