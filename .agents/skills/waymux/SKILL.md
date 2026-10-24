@@ -89,6 +89,8 @@ rpc '{"jsonrpc":"2.0","method":"agentState/wait","params":{"pane_id":"%12","targ
 | Status bar never changes | Hooks not wired, or daemon down | `waymux doctor`; while the agent works, `waymux list` should show its pane |
 | `waymux cockpit` does nothing | `wm` (Waymaker) not on PATH | `./install.sh --with-stack` |
 | `awt-*.sh not found` (exit 127) | Bundled helpers missing | Rerun `install.sh`; helpers in `~/.config/waymaker/scripts` take precedence |
+| Daemon restarted every 30s, `Failed with result 'watchdog'` in the journal | A newer unit (`WatchdogSec=`) runs an older binary without the heartbeat | Install the binary and unit together: `./install.sh`, or `waymux init --systemd` from the same version |
+| `doctor` warns the systemd unit is older | Installed unit lacks the watchdog or sandboxing settings | Run the fix it prints; customized values are kept as long as no setting is missing |
 | No sound | No player found, or sounds muted | `doctor` sound row; set `[sound] player` in `~/.config/waymux/config.toml` |
 | `daemon already running` | Another daemon holds the PID file | `systemctl --user restart waymux` |
 | PR badges empty | `gh` not authenticated, or a `gh` wrapper printing to stdout | `gh auth status`; wrappers must keep stdout clean |

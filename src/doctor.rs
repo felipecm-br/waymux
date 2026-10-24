@@ -193,6 +193,57 @@ fn check_claude_hooks() -> Check {
     }
 }
 
+/// Directive keys (`WatchdogSec`, `SystemCallFilter`, ...) of the shipped unit that `installed`
+/// lacks. Values are not compared, so a customized unit passes as long as no setting is missing.
+fn missing_unit_directives(installed: &str, shipped: &str) -> Vec<String> {
+    fn keys(unit: &str) -> Vec<&str> {
+        unit.lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with(['#', ';', '[']))
+            .filter_map(|l| l.split_once('=').map(|(k, _)| k.trim()))
+            .collect()
+    }
+    let have = keys(installed);
+    let mut missing: Vec<String> = keys(shipped)
+        .into_iter()
+        .filter(|k| !have.contains(k))
+        .map(str::to_string)
+        .collect();
+    missing.dedup();
+    missing
+}
+
+fn check_systemd_unit() -> Check {
+    let config = std::env::var("XDG_CONFIG_HOME")
+        .or_else(|_| std::env::var("HOME").map(|h| format!("{h}/.config")))
+        .unwrap_or_default();
+    let path = format!("{config}/systemd/user/waymux.service");
+    let fix = format!(
+        "waymux init --systemd > {path} && systemctl --user daemon-reload && systemctl --user restart waymux"
+    );
+    match std::fs::read_to_string(&path) {
+        Err(_) => Check {
+            level: Level::Ok,
+            name: "systemd unit",
+            detail: format!("not installed at {path}"),
+            fix: Some(format!("optional: {fix}")),
+        },
+        Ok(installed) => {
+            let missing = missing_unit_directives(&installed, crate::init::SYSTEMD_UNIT);
+            if missing.is_empty() {
+                Check::ok("systemd unit", path)
+            } else {
+                Check::problem(
+                    Level::Warn,
+                    "systemd unit",
+                    &format!("older than this release, missing {}", missing.join(", ")),
+                    &fix,
+                )
+            }
+        }
+    }
+}
+
 fn run_checks() -> Vec<Check> {
     let mut checks = vec![check_daemon(), check_token(), check_tmux()];
     checks.push(tool(
@@ -232,6 +283,9 @@ fn run_checks() -> Vec<Check> {
             "desktop notifications",
             "install libnotify",
         ));
+    }
+    if cfg!(target_os = "linux") {
+        checks.push(check_systemd_unit());
     }
     checks.push(check_sound_player());
     checks.push(check_wt_scripts());
@@ -273,6 +327,19 @@ pub fn run_cli() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_missing_unit_directives_ignores_values_and_comments() {
+        let shipped =
+            "[Service]\n# WatchdogSec=1s\nWatchdogSec=30s\nUMask=0077\nRestart=on-failure\n";
+        let custom = "[Service]\nRestart=always\nUMask=0022\n";
+        assert_eq!(missing_unit_directives(custom, shipped), ["WatchdogSec"]);
+        assert!(missing_unit_directives(shipped, shipped).is_empty());
+        assert!(
+            missing_unit_directives(crate::init::SYSTEMD_UNIT, crate::init::SYSTEMD_UNIT)
+                .is_empty()
+        );
+    }
 
     #[test]
     fn test_exit_code_fails_only_on_required_checks() {

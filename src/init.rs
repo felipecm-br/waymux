@@ -1,5 +1,5 @@
 /// The unit `install.sh` and `init --systemd` write; one file so the two cannot drift.
-const SYSTEMD_UNIT: &str = include_str!("../systemd/waymux.service");
+pub(crate) const SYSTEMD_UNIT: &str = include_str!("../systemd/waymux.service");
 
 const TMUX_SNIPPET: &str = "\
 # Waymux tmux integration. Easiest: load the plugin installed by install.sh,

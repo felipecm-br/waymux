@@ -62,7 +62,7 @@ cd waymux
 waymux doctor
 ```
 
-`doctor` checks the daemon, its token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, a sound player, the worktree helpers, your Claude Code hooks and the theme file, and prints a fix for each gap. It exits 1 only when something required (daemon, tmux, git) is missing.
+`doctor` checks the daemon, its token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, a sound player, the worktree helpers, your Claude Code hooks, the theme file and (on Linux) whether your installed `waymux.service` lacks settings the shipped unit has, and prints a fix for each gap. It exits 1 only when something required (daemon, tmux, git) is missing.
 
 ### Platform Support
 
