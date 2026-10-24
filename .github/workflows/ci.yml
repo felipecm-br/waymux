@@ -30,6 +30,9 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run Clippy Lints
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Install tmux
+        # tests/tmux.rs skips itself without tmux; CI must run it.
+        run: sudo apt-get update && sudo apt-get install -y tmux
       - name: Run Unit Test Suite
         run: cargo test --all-targets
 
@@ -81,6 +84,8 @@ jobs:
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-llvm-cov
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
       - name: Measure Coverage
         run: cargo llvm-cov --summary-only --fail-under-lines 62
 

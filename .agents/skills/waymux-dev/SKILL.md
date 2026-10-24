@@ -27,6 +27,7 @@ Read `AGENTS.md` first: it holds the module map and the engineering conventions.
 | --- | --- |
 | Pure logic (parsing, ordering, colors, classification) | `#[cfg(test)]` unit test in the same file |
 | CLI behavior, exit codes, anything that talks to the daemon | `tests/cli.rs`: use `Sandbox::new()` and `spawn_daemon()`; it isolates `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR` and the port |
+| Commands that drive tmux (`agent-action`, `window-*`, `triage`) | `tests/tmux.rs`: `Env::tmux(cmd)` starts a private server under the test's `TMUX_TMPDIR` (skipped without tmux); the cleared environment has no UTF-8 locale on purpose |
 | `waymux wt` subcommands and helper lookup | `tests/wt.rs`: `fake_helper()` writes an `awt-*.sh` that records its arguments to `$HOME/calls`; `Env::with_repo_at("proj/main")` makes session names predictable |
 | Cockpit render commands that read git (`cockpit-diff`, `cockpit-preview`, `review-notes`) | `tests/cockpit.rs`: `Env::new()` gives a temp git repo and a `PATH` with only `git`; spawned commands must keep `LLVM_PROFILE_FILE` or their coverage is lost |
 | tmux panes, popups, bracketed paste, Cockpit rendering | `docker/entrypoint.sh` step in the Docker sandbox |

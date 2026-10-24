@@ -35,7 +35,7 @@
 - `src/doctor.rs`: `waymux doctor` setup checks (daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, sound player, awt scripts, Claude Code hooks, theme, and on Linux an installed systemd unit missing directives the shipped one has) with a fix per gap; exits 1 on a required failure.
 - `src/sys.rs`: `find_in_path` (`command -v`), `shell_quote` (one POSIX word), and `default_sound_player` (`pw-play` → `paplay` → `aplay` → `afplay`).
 - `src/rpc_client.rs`: Zero-dependency synchronous TCP HTTP client for CLI subcommands (`status`, `list`, `dismiss`, `health`, `agentState/list`, `/api/status`).
-- `src/tmux_cmd.rs`: The one place tmux is spawned (`command()` / `async_command()`; unit tests get a private `-L waymux-unit-test` socket), synchronous helpers, and atomic bracketed-paste buffer injection (`load-buffer` + `paste-buffer -p`).
+- `src/tmux_cmd.rs`: The one place tmux is spawned (`command()` / `async_command()`, always with `-u` so tab-separated `-F` rows and glyphs survive a non-UTF-8 locale; unit tests get a private `-L waymux-unit-test` socket), synchronous helpers, and atomic bracketed-paste buffer injection (`load-buffer` + `paste-buffer -p`).
 - `src/theme.rs`: Theme `colors.toml` parser (path from `status_palette::theme_colors_path`: `$WAYMUX_COLORS`, `~/.config/waymux/colors.toml`, then Omarchy's active theme; built-in colors otherwise), TrueColor ANSI escape generator, and ANSI stripper.
 - `src/status_palette.rs`: Semantic agent-state colors (built-in light/dark palettes, `[theme.states.*].color` overrides) shared by the status bar, Waybar and the Cockpit.
 - `src/cockpit/`: Native Cockpit HUD engine:
@@ -55,6 +55,7 @@
 - `src/init.rs`: `waymux init {--tmux|--systemd|--hooks}`: plugin line, the shipped `systemd/waymux.service` (embedded with `include_str!`), and a Claude Code hooks block.
 - `src/test_strategies.rs`: test-only `proptest` strategies (agent/tmux/`gh`-shaped JSON and hostile strings) shared by the property tests; `proptest-regressions/` keeps shrunk failures so they replay on every run.
 - `tests/common/mod.rs`: the shared harness for the end-to-end tests below (`Env`: temp `HOME`, runtime and tmux dirs, a `PATH` with only `git`, repository helpers).
+- `tests/tmux.rs`: End-to-end tests of `agent-action`, `window-create`, `window-delete` and `triage --jump` against a private tmux server per test (`Env::tmux`), skipped without tmux.
 - `tests/wt.rs`: End-to-end tests of `waymux wt` with fake `awt-*.sh` helpers that record their arguments (lookup order, exit 127, forwarded arguments) and real `git worktree` creation (`-c`, `-W`, post-create hook).
 - `tests/cockpit.rs`: End-to-end tests of `cockpit-diff`, `cockpit-preview`, `cockpit-help` and `review-notes` against real temporary git repositories, with only `git` on `PATH` (no `delta`/`bat`, no tmux).
 - `tests/cli.rs`: End-to-end tests that start the built binary on a free port with its own `HOME`, `XDG_RUNTIME_DIR` and `TMUX_TMPDIR`, so they never touch the developer's tmux server, sounds or token.

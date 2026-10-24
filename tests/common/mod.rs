@@ -57,7 +57,9 @@ impl Env {
             .env("HOME", self.dir.join("home"))
             .env("XDG_RUNTIME_DIR", self.dir.join("run"))
             .env("TMUX_TMPDIR", self.dir.join("tmux"))
-            .env("COLUMNS", "100");
+            .env("COLUMNS", "100")
+            // Never the developer's daemon on 4040: a port nothing listens on.
+            .env("WAYMUX_PORT", unused_port().to_string());
         // Keep `cargo llvm-cov` counting the spawned binary.
         if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
             cmd.env("LLVM_PROFILE_FILE", profile);
@@ -121,6 +123,94 @@ impl Drop for Env {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+pub fn unused_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .map(|a| a.port())
+        .unwrap()
+}
+
+/// A private tmux server for one test, under the test's own `TMUX_TMPDIR`. Started only when
+/// tmux is installed; killed on drop.
+pub struct Tmux<'a> {
+    env: &'a Env,
+}
+
+impl Env {
+    /// Puts tmux on the test `PATH` and starts a server with one detached session `main`
+    /// whose first window runs `cmd`. None when tmux is not installed.
+    pub fn tmux(&self, cmd: &str) -> Option<Tmux<'_>> {
+        let tmux = std::env::split_paths(&std::env::var_os("PATH")?)
+            .map(|d| d.join("tmux"))
+            .find(|p| p.is_file())?;
+        let link = self.dir.join("bin/tmux");
+        if !link.exists() {
+            std::os::unix::fs::symlink(tmux, link).unwrap();
+        }
+        let t = Tmux { env: self };
+        let out = t.raw(&[
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            "main",
+            "-x",
+            "120",
+            "-y",
+            "30",
+            cmd,
+        ]);
+        assert!(out.status.success(), "tmux new-session: {out:?}");
+        Some(t)
+    }
+}
+
+impl Tmux<'_> {
+    fn raw(&self, args: &[&str]) -> std::process::Output {
+        Command::new(self.env.dir.join("bin/tmux"))
+            .args(args)
+            .env_clear()
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", self.env.dir.join("bin").display()),
+            )
+            .env("HOME", self.env.dir.join("home"))
+            .env("TMUX_TMPDIR", self.env.dir.join("tmux"))
+            .env("TERM", "xterm-256color")
+            .output()
+            .unwrap()
+    }
+
+    /// Runs a tmux command and returns its trimmed stdout.
+    pub fn run(&self, args: &[&str]) -> String {
+        let out = self.raw(args);
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    pub fn window_count(&self, session: &str) -> usize {
+        self.run(&["list-windows", "-t", session]).lines().count()
+    }
+}
+
+impl Drop for Tmux<'_> {
+    fn drop(&mut self) {
+        let _ = self.raw(&["kill-server"]);
+    }
+}
+
+/// Polls `f` for up to two seconds.
+pub fn eventually(f: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::time::Instant::now() < deadline {
+        if f() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    false
 }
 
 pub fn which(name: &str) -> PathBuf {
