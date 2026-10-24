@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **The one-line install verifies checksums again (`install.sh`)**: releases publish `<bin>-<tag>-<target>.sha256`, but the installer fetched `<archive>.tar.gz.sha256`, found nothing and stopped ("no checksum published"), so `curl … install.sh | bash` failed on v0.2.4. It now fetches the published name, keeping the old one as a fallback. `WAYMUX_VERIFY_ATTESTATION=1` says up front when `gh` is not logged in.
+
 ## [0.2.4] - 2026-10-24
 
 > **Upgrading:** install the binary and the systemd unit together (`install.sh`, or `waymux init --systemd` then `systemctl --user daemon-reload`): the new unit's watchdog restarts an older binary every 30s. The daemon no longer runs `~/.config/tmux/flow-log.sh` by itself; set `flow_log_hook = "~/.config/tmux/flow-log.sh"` in `config.toml` to keep it.

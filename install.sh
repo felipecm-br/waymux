@@ -121,6 +121,10 @@ verify_attestation() {
     echo "Error: WAYMUX_VERIFY_ATTESTATION=1 needs the GitHub CLI (gh)." >&2
     return 1
   fi
+  if ! gh auth status >/dev/null 2>&1; then
+    echo "Error: WAYMUX_VERIFY_ATTESTATION=1 needs an authenticated gh (run: gh auth login)." >&2
+    return 1
+  fi
   if ! gh attestation verify "$archive" --repo "$REPO" >/dev/null; then
     echo "Error: no valid build provenance for $(basename "$archive") from ${REPO}." >&2
     return 1
@@ -145,7 +149,10 @@ install_from_release() {
     archive="${bin_name}-${tag}-${target}.tar.gz"
     url="https://github.com/${REPO}/releases/download/${tag}/${archive}"
     if curl -fsSL "$url" -o "${tmp_dir}/${archive}" 2>/dev/null; then
-      curl -fsSL "${url}.sha256" -o "${tmp_dir}/${archive}.sha256" 2>/dev/null || true
+      # The release publishes <bin>-<tag>-<target>.sha256 (no .tar.gz); <archive>.sha256 is
+      # kept as a fallback for mirrors that name it after the archive.
+      curl -fsSL "${url%.tar.gz}.sha256" -o "${tmp_dir}/${archive}.sha256" 2>/dev/null ||
+        curl -fsSL "${url}.sha256" -o "${tmp_dir}/${archive}.sha256" 2>/dev/null || true
       verify_checksum "${tmp_dir}/${archive}" "${tmp_dir}/${archive}.sha256" || exit 1
       verify_attestation "${tmp_dir}/${archive}" || exit 1
       tar -xzf "${tmp_dir}/${archive}" -C "$tmp_dir"
