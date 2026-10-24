@@ -8,6 +8,7 @@
 **Sub-1.5ms CLI Fast-Path · Zero Status-Bar Polling · Biomechanical Keyboard Ergonomics ($H=0$)**
 
 [![Release](https://img.shields.io/github/v/release/felipecm-br/waymux?color=00f5d4&style=flat-square)](https://github.com/felipecm-br/waymux/releases)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/felipecm-br/waymux/badge?style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/felipecm-br/waymux)
 [![License: MIT](https://img.shields.io/badge/License-MIT-00b4d8?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20(partial)-7209b7?style=flat-square)](#platform-support)
 

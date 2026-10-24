@@ -15,8 +15,10 @@
 #   ./scripts/docker-sandbox.sh --from-source     # Full standalone multi-stage build
 # ==============================================================================
 
-ARG RUST_IMAGE=rust:latest
-ARG RUNTIME_IMAGE=debian:sid-slim
+# Pinned by digest (Dependabot bumps them); sid-slim provides glibc >= 2.43 so
+# host-mounted binaries built on rolling distributions run inside `runtime`.
+ARG RUST_IMAGE=rust:1.99-slim@sha256:aab42391a986424e22d6a3ec14f37bc6dd3dacff4d457ca7cccd781e02297cc6
+ARG RUNTIME_IMAGE=debian:sid-slim@sha256:fb75970a5ba2a81ca409ed0cabcf05d53e058086fd397f7a63943ded5bd15f84
 
 # ------------------------------------------------------------------------------
 # Stage 1: waymux from the local working tree

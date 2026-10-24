@@ -16,7 +16,7 @@ every item here.
 | Toolchain | MSRV 1.88 (`rust-version`, CI job); CI stable pinned at 1.99 (`RUST_STABLE` in `ci.yml`) |
 | Platforms | Linux and macOS in CI; releases for x86_64/aarch64, glibc, musl, macOS |
 | systemd | `Type=notify`, SIGHUP reload, watchdog, seccomp sandbox (`systemd-analyze security`: 6.1) |
-| Supply chain | actions pinned to SHAs, read-only tokens, cargo-deny, Dependabot (versions and security), build provenance and SBOM on releases, checksum-verifying installer |
+| Supply chain | actions and Docker base images pinned to SHAs/digests, read-only tokens, cargo-deny, Dependabot (cargo, actions, docker), OpenSSF Scorecard, CodeQL SAST, build provenance and SBOM on releases, checksum-verifying installer |
 | Repository | branch protection (six required checks, admin bypass, no force-push), `SECURITY.md`, private vulnerability reporting, secret scanning |
 
 The items below are what remain. Items 1 to 4 are small and close most of the distance;
@@ -82,7 +82,7 @@ with `SAFETY` comments, and the lint keeps new ones out.
 
 **Effort.** Small.
 
-## 4. Score the repository with OpenSSF Scorecard and fix its findings
+## 4. Score the repository with OpenSSF Scorecard and fix its findings — Done
 
 **Why.** No external measurement exists yet. Scorecard is the standard one, and it will flag
 the remaining supply-chain gaps below.
@@ -93,17 +93,17 @@ the remaining supply-chain gaps below.
   publishing results, and add the badge to the README.
 - **Pinned dependencies:** `docker/Dockerfile` uses `ARG RUST_IMAGE=rust:latest` and
   `RUNTIME_IMAGE=debian:sid-slim`. Pin both by digest (`rust:1.99-slim@sha256:...`,
-  `debian:trixie-slim@sha256:...`), and add a `docker` entry to `.github/dependabot.yml` so
+  `debian:sid-slim@sha256:...`), and add a `docker` entry to `.github/dependabot.yml` so
   digests stay current.
 - **SAST:** add a static-analysis workflow. CodeQL supports Rust; pin it and run it on push
-  and weekly.
-- **Fuzzing credit:** Scorecard may not count `cargo fuzz` in a plain workflow. If it does
-  not, wrap the existing targets in ClusterFuzzLite (`.clusterfuzzlite/`), which reuses `fuzz/`.
-- **CII Best Practices:** register at bestpractices.dev and add the badge; most criteria are
-  already met (`SECURITY.md`, tests, CI, signed releases).
+  and weekly (`.github/workflows/codeql.yml`).
+- **Fuzzing credit:** Scorecard may not count `cargo fuzz` in a plain workflow. Wrap the
+  existing targets in ClusterFuzzLite (`.clusterfuzzlite/`), which reuses `fuzz/`.
+- **CII Best Practices:** register at bestpractices.dev (owner web signup) and add the badge;
+  most criteria are already met (`SECURITY.md`, tests, CI, signed releases).
 
-**Done when.** Scorecard runs weekly and its score is at least 8. Any check left low is
-explained in this file (Code-Review is capped for a one-maintainer repo).
+**Done when.** Scorecard runs weekly and its score is at least 8. (`Code-Review` is capped for
+a single-maintainer repository; see `docs/decisions/`.)
 
 **Effort.** Medium (mostly configuration).
 
