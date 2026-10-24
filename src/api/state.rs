@@ -147,9 +147,8 @@ impl ApiState {
                 Some(id) if !id.trim().is_empty() => id.trim(),
                 _ => continue,
             };
-            let raw_state = match parts.next() {
-                Some(s) if !s.trim().is_empty() => s.trim(),
-                _ => continue,
+            let Some(raw_state) = parts.next() else {
+                continue;
             };
             // Completion time persisted on the pane by a previous daemon, if any.
             let finished_at = parts
@@ -424,6 +423,21 @@ pub(crate) struct IncomingUpdate {
     pub timestamp: Option<u64>,
 }
 
+fn flow_event_for_transition(prev: Option<&AgentState>, next: &AgentState) -> Option<&'static str> {
+    match (prev, next) {
+        (prev, next @ (AgentState::AwaitingInput | AgentState::Permission))
+            if prev != Some(next) =>
+        {
+            Some("agent_question")
+        }
+        (
+            Some(AgentState::AwaitingInput | AgentState::Permission),
+            AgentState::Working | AgentState::Idle,
+        ) => Some("human_reply"),
+        _ => None,
+    }
+}
+
 pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     let seq = state
         .next_seq
@@ -488,32 +502,8 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     let flow_log_hook = settings.flow_log_hook.clone();
 
     // Telemetry instrumentation: measure human response latency
-    match (&prev_state, &update.state) {
-        // Agent asks question / requests permission
-        (prev, AgentState::AwaitingInput) if prev != &Some(AgentState::AwaitingInput) => {
-            log_flow_event(
-                flow_log_hook.as_ref(),
-                "agent_question",
-                &update.pane_id,
-                "",
-            );
-        }
-        (prev, AgentState::Permission) if prev != &Some(AgentState::Permission) => {
-            log_flow_event(
-                flow_log_hook.as_ref(),
-                "agent_question",
-                &update.pane_id,
-                "",
-            );
-        }
-        // Human answered question (transitioned from question/permission to working or idle)
-        (
-            Some(AgentState::AwaitingInput | AgentState::Permission),
-            AgentState::Working | AgentState::Idle,
-        ) => {
-            log_flow_event(flow_log_hook.as_ref(), "human_reply", &update.pane_id, "");
-        }
-        _ => {}
+    if let Some(event) = flow_event_for_transition(prev_state.as_ref(), &update.state) {
+        log_flow_event(flow_log_hook.as_ref(), event, &update.pane_id, "");
     }
 
     if update.state == AgentState::Working {
@@ -550,9 +540,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
         let prev_state_for_idle = prev_state.clone();
 
         let task = tokio::spawn(async move {
-            if delay_ms > 0 {
-                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
-            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
             {
                 let states = pane_states.lock().await;
                 if states.get(&pane_id).is_some_and(|c| c.seq_id != seq) {
@@ -599,6 +587,38 @@ mod tests {
     use crate::api::test_support::TestAdapter;
     use std::sync::Mutex as StdMutex;
 
+    #[test]
+    fn test_flow_event_for_transition() {
+        assert_eq!(
+            flow_event_for_transition(None, &AgentState::AwaitingInput),
+            Some("agent_question")
+        );
+        assert_eq!(
+            flow_event_for_transition(Some(&AgentState::Working), &AgentState::Permission),
+            Some("agent_question")
+        );
+        assert_eq!(
+            flow_event_for_transition(Some(&AgentState::AwaitingInput), &AgentState::AwaitingInput),
+            None
+        );
+        assert_eq!(
+            flow_event_for_transition(Some(&AgentState::Permission), &AgentState::Permission),
+            None
+        );
+        assert_eq!(
+            flow_event_for_transition(Some(&AgentState::AwaitingInput), &AgentState::Working),
+            Some("human_reply")
+        );
+        assert_eq!(
+            flow_event_for_transition(Some(&AgentState::Permission), &AgentState::Idle),
+            Some("human_reply")
+        );
+        assert_eq!(
+            flow_event_for_transition(Some(&AgentState::Working), &AgentState::Idle),
+            None
+        );
+    }
+
     #[tokio::test]
     async fn test_flow_log_hook_gets_event_target_and_extra() {
         use std::os::unix::fs::PermissionsExt;
@@ -608,17 +628,38 @@ mod tests {
         let hook = dir.join("hook.sh");
         std::fs::write(
             &hook,
-            format!("#!/bin/sh\nprintf '%s|' \"$@\" > '{}'\n", out.display()),
+            format!("#!/bin/sh\nprintf '%s|' \"$@\" >> '{}'\n", out.display()),
         )
         .unwrap();
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        let hook: Arc<str> = Arc::from(hook.to_string_lossy().as_ref());
-        log_flow_event(Some(&hook), "agent_finished", "%3", "x y");
+        let hook_str = hook.to_string_lossy().to_string();
+        let state = ApiState::new(Vec::new(), 100);
+        let cfg = crate::config::Config {
+            idle_debounce_ms: Some(0),
+            flow_log_hook: Some(hook_str),
+            ..crate::config::Config::default()
+        };
+        state.reload(&cfg);
+        assert_eq!(state.settings().idle_debounce_ms, 0);
+
+        let update = |st: AgentState| IncomingUpdate {
+            pane_id: "%3".into(),
+            state: st,
+            message: None,
+            timestamp: None,
+        };
+        dispatch_update(&state, update(AgentState::Permission)).await;
+        dispatch_update(&state, update(AgentState::Idle)).await;
+        dispatch_update(&state, update(AgentState::Working)).await;
+        dispatch_update(&state, update(AgentState::Idle)).await;
+
         let mut got = String::new();
         for _ in 0..100 {
             if let Ok(s) = std::fs::read_to_string(&out)
-                && !s.is_empty()
+                && s.contains("agent_finished|%3||")
+                && s.contains("agent_question|%3||")
+                && s.contains("human_reply|%3||")
             {
                 got = s;
                 break;
@@ -626,7 +667,11 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(got, "agent_finished|%3|x y|");
+        assert_eq!(
+            got.matches("agent_finished|%3||").count(),
+            1,
+            "only Working -> Idle logs agent_finished: {got}"
+        );
     }
 
     #[tokio::test]
@@ -674,9 +719,9 @@ mod tests {
         let adapter = TestAdapter {
             updates: updates.clone(),
         };
-        let state = ApiState::new(vec![Box::new(adapter)], 100);
+        let state = ApiState::new(vec![Box::new(adapter)], 80);
 
-        // Idle update at t=1000 with 100ms debounce
+        // Idle update at t=1000 with 80ms debounce
         dispatch_update(
             &state,
             IncomingUpdate {
@@ -688,7 +733,11 @@ mod tests {
         )
         .await;
 
-        // Working update at t=1050 arrives before 100ms debounce finishes
+        // Yield so an un-debounced Idle (0ms) would already have fired before Working arrives.
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        assert!(updates.lock().unwrap().is_empty());
+
+        // Working update at t=1050 arrives before 80ms debounce finishes
         dispatch_update(
             &state,
             IncomingUpdate {
@@ -699,12 +748,45 @@ mod tests {
             },
         )
         .await;
+        assert!(state.stall_records.lock().await.contains_key("%1"));
 
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        let recorded = updates.lock().unwrap();
-        assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].state, AgentState::Working);
+        {
+            let recorded = updates.lock().unwrap();
+            assert_eq!(recorded.len(), 1);
+            assert_eq!(recorded[0].state, AgentState::Working);
+        }
+
+        // Stalled keeps the stall record; Idle clears it and delivers after debounce.
+        dispatch_update(
+            &state,
+            IncomingUpdate {
+                pane_id: "%1".into(),
+                state: AgentState::Stalled,
+                message: None,
+                timestamp: Some(1100),
+            },
+        )
+        .await;
+        assert!(state.stall_records.lock().await.contains_key("%1"));
+
+        dispatch_update(
+            &state,
+            IncomingUpdate {
+                pane_id: "%1".into(),
+                state: AgentState::Idle,
+                message: None,
+                timestamp: Some(1200),
+            },
+        )
+        .await;
+        assert!(!state.stall_records.lock().await.contains_key("%1"));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(
+            updates.lock().unwrap().last().unwrap().state,
+            AgentState::Idle
+        );
     }
 
     #[tokio::test]
@@ -760,8 +842,7 @@ mod tests {
         };
         let state = ApiState::new(vec![Box::new(adapter)], 0);
 
-        let sample_tmux_output =
-            "%4\tbusy\n%21\tidle\n%23\t\n%27\tquestion\n%30\tpermission\n%31\terror\n";
+        let sample_tmux_output = "\tbusy\n  \tidle\n%4\tbusy\n%21\tidle\n%23\t\n%27\tquestion\n%30\tpermission\n%31\terror\n";
         state
             .rehydrate_from_raw_lines(sample_tmux_output, 12345)
             .await;

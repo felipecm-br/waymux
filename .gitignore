@@ -5,3 +5,4 @@
 .DS_Store
 # LLVM coverage data from binaries a test spawns without LLVM_PROFILE_FILE
 *.profraw
+/mutants.out*

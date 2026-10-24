@@ -59,20 +59,13 @@ pub fn get_active_tmux_pane() -> String {
 
 fn resolve_window_icon<'a>(
     reg: &'a Registry,
-    pane: &str,
+    pane_cmd: Option<&str>,
     ctx: &serde_json::Value,
     agent_hint: Option<&str>,
 ) -> &'a str {
     // The agent running in the pane beats the hint: Devin imports ~/.claude/settings.json, so
     // Claude's hooks (hinted "claude") also fire inside Devin windows.
-    if !pane.is_empty()
-        && let Some(cmd) = tmux_out(&[
-            "display-message",
-            "-p",
-            "-t",
-            pane,
-            "#{pane_current_command}",
-        ])
+    if let Some(cmd) = pane_cmd
         && crate::cockpit::items::is_agent_binary_name(cmd.trim())
         && let Some(glyph) = reg.program(cmd.trim())
     {
@@ -173,14 +166,10 @@ pub fn extract_session_title(ctx: &serde_json::Value) -> Option<String> {
         && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&first_line)
         && let Some(raw_content) = parsed.get("content").and_then(|v| v.as_str())
     {
-        let mut raw = if let Some(start) = raw_content.find("<USER_REQUEST>")
-            && let Some(end) = raw_content.find("</USER_REQUEST>")
-            && start + 14 <= end
-        {
-            &raw_content[start + 14..end]
-        } else {
-            raw_content
-        };
+        let mut raw = raw_content
+            .split_once("<USER_REQUEST>")
+            .and_then(|(_, rest)| rest.split_once("</USER_REQUEST>"))
+            .map_or(raw_content, |(inner, _)| inner);
         raw = raw.trim();
         if let Some(rest) = raw.strip_prefix('/')
             && let Some(idx) = rest.find(char::is_whitespace)
@@ -293,37 +282,43 @@ pub fn tool_summary(ctx: &serde_json::Value) -> Option<String> {
 /// Per-pane memo of the last tool summary, so the permission prompt that follows a
 /// `PreToolUse` can say what it is about. Lives in the private runtime dir (0700): commands can
 /// contain secrets.
-fn pane_tool_memo(pane_id: &str) -> Option<std::path::PathBuf> {
-    let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
+fn pane_tool_memo_in(xdg: Option<&Path>, pane_id: &str) -> Option<std::path::PathBuf> {
+    let xdg = xdg?;
     let safe_pane: String = pane_id
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    Some(
-        std::path::PathBuf::from(xdg)
-            .join("waymux")
-            .join(format!("pane-tool-{safe_pane}")),
-    )
+    Some(xdg.join("waymux").join(format!("pane-tool-{safe_pane}")))
 }
 
-fn remember_pane_tool(pane_id: &str, summary: Option<&str>) {
-    let Some(path) = pane_tool_memo(pane_id) else {
+fn remember_pane_tool_in(xdg: Option<&Path>, pane_id: &str, summary: Option<&str>) {
+    let Some(path) = pane_tool_memo_in(xdg, pane_id) else {
         return;
     };
     match summary {
-        Some(s) if path.parent().is_some_and(std::path::Path::is_dir) => {
+        Some(s) => {
             let _ = fs::write(path, s);
         }
-        _ => {
+        None => {
             let _ = fs::remove_file(path);
         }
     }
 }
 
-fn recall_pane_tool(pane_id: &str) -> Option<String> {
-    pane_tool_memo(pane_id)
+fn recall_pane_tool_in(xdg: Option<&Path>, pane_id: &str) -> Option<String> {
+    pane_tool_memo_in(xdg, pane_id)
         .and_then(|p| fs::read_to_string(p).ok())
         .filter(|s| !s.trim().is_empty())
+}
+
+fn remember_pane_tool(pane_id: &str, summary: Option<&str>) {
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR");
+    remember_pane_tool_in(xdg.as_deref().map(Path::new), pane_id, summary);
+}
+
+fn recall_pane_tool(pane_id: &str) -> Option<String> {
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR");
+    recall_pane_tool_in(xdg.as_deref().map(Path::new), pane_id)
 }
 
 fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
@@ -361,7 +356,15 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
     match event_type {
         "SessionStart" | "PreInvocation" | "UserPromptSubmit" => {
             if !tmux_pane.is_empty() {
-                let icon = resolve_window_icon(Registry::global(), &tmux_pane, &ctx, agent_hint);
+                let pane_cmd = tmux_out(&[
+                    "display-message",
+                    "-p",
+                    "-t",
+                    &tmux_pane,
+                    "#{pane_current_command}",
+                ]);
+                let icon =
+                    resolve_window_icon(Registry::global(), pane_cmd.as_deref(), &ctx, agent_hint);
                 let _ = tmux_status(&["rename-window", "-t", &tmux_pane, icon]);
             }
             if let Some(title) = extract_session_title(&ctx) {
@@ -627,20 +630,41 @@ mod tests {
     fn test_resolve_window_icon() {
         let reg = Registry::builtin();
         let ctx = serde_json::json!({});
-        let icon = |agent| resolve_window_icon(&reg, "", &ctx, Some(agent));
+        let icon = |agent| resolve_window_icon(&reg, None, &ctx, Some(agent));
         assert_eq!(icon("claude"), "");
         assert_eq!(icon("codex"), "");
         assert_eq!(icon("agy"), "");
         assert_eq!(icon("devin"), "");
         assert_eq!(icon("opencode"), "󰅪");
+        assert_eq!(
+            resolve_window_icon(&reg, Some("opencode"), &ctx, Some("claude")),
+            "󰅪",
+            "live pane command beats agent hint"
+        );
+        assert_eq!(
+            resolve_window_icon(&reg, Some("zsh"), &ctx, Some("opencode")),
+            "󰅪",
+            "non-agent pane command falls back to hint"
+        );
         let hook_ctx = serde_json::json!({"hook_event_name": "SessionStart"});
-        assert_eq!(resolve_window_icon(&reg, "", &hook_ctx, Some("aider")), "󰚩");
+        assert_eq!(
+            resolve_window_icon(&reg, None, &hook_ctx, Some("aider")),
+            "󰚩"
+        );
     }
 
     #[test]
     fn test_classify_pre_tool_state() {
-        let q = serde_json::json!({"toolCall": {"name": "ask_question"}});
-        assert_eq!(classify_pre_tool_state(&q), "awaiting_input");
+        for tool in [
+            "ask",
+            "ask_user",
+            "confirm_ask",
+            "mcp_ask_tool",
+            "user_question",
+        ] {
+            let q = serde_json::json!({"toolCall": {"name": tool}});
+            assert_eq!(classify_pre_tool_state(&q), "awaiting_input", "{tool}");
+        }
 
         let p = serde_json::json!({"toolCall": {"name": "request_permission"}});
         assert_eq!(classify_pre_tool_state(&p), "permission");
@@ -657,7 +681,14 @@ mod tests {
             Some("Implement Waymux v0.2.0")
         );
 
+        let session_ctx = serde_json::json!({"sessionTitle": "  Triage queue  "});
+        assert_eq!(
+            extract_session_title(&session_ctx).as_deref(),
+            Some("Triage queue")
+        );
+
         let prompt_ctx = serde_json::json!({
+            "sessionTitle": "   ",
             "hook_event_name": "UserPromptSubmit",
             "prompt": "/plan   Refactor   the\n cockpit HUD  "
         });
@@ -665,6 +696,33 @@ mod tests {
             extract_session_title(&prompt_ctx).as_deref(),
             Some("Refactor the cockpit HUD")
         );
+    }
+
+    #[test]
+    fn test_remember_and_recall_pane_tool_in() {
+        assert_eq!(pane_tool_memo_in(None, "%1"), None);
+        let dir = std::env::temp_dir().join(format!("waymux-memo-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        // Missing waymux/ subdir is not created by remember_pane_tool_in.
+        remember_pane_tool_in(Some(&dir), "%1", Some("Bash: ls"));
+        assert_eq!(recall_pane_tool_in(Some(&dir), "%1"), None);
+
+        fs::create_dir_all(dir.join("waymux")).unwrap();
+        remember_pane_tool_in(Some(&dir), "%1", Some("Bash: ls"));
+        assert_eq!(
+            recall_pane_tool_in(Some(&dir), "%1").as_deref(),
+            Some("Bash: ls")
+        );
+
+        remember_pane_tool_in(Some(&dir), "%1", Some("   "));
+        assert_eq!(recall_pane_tool_in(Some(&dir), "%1"), None);
+
+        remember_pane_tool_in(Some(&dir), "%1", Some("Edit: main.rs"));
+        remember_pane_tool_in(Some(&dir), "%1", None);
+        assert_eq!(recall_pane_tool_in(Some(&dir), "%1"), None);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

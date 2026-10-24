@@ -491,6 +491,8 @@ mod tests {
     #[test]
     fn test_normalize_ts_handles_seconds_millis_and_unknown() {
         assert_eq!(normalize_ts(1_700_000_000), 1_700_000_000_000);
+        assert_eq!(normalize_ts(9_999_999_999), 9_999_999_999_000);
+        assert_eq!(normalize_ts(10_000_000_000), 10_000_000_000);
         assert_eq!(normalize_ts(1_700_000_000_000), 1_700_000_000_000);
         assert_eq!(normalize_ts(0), u64::MAX);
     }
@@ -625,7 +627,9 @@ mod tests {
     #[test]
     fn test_alert_sound_per_state() {
         assert_eq!(alert_sound("permission"), "06-cyber-pulse.wav");
-        assert_eq!(alert_sound("question"), alert_sound("awaiting_input"));
+        assert_eq!(alert_sound("question"), "02-gentle-ping.wav");
+        assert_eq!(alert_sound("awaiting_input"), "02-gentle-ping.wav");
+        assert_eq!(alert_sound("error"), "10-arcade-blip.wav");
         assert_eq!(alert_sound("stalled"), "10-arcade-blip.wav");
         assert_eq!(alert_sound("active"), "04-subtle-bell.wav");
     }

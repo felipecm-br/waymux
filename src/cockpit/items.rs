@@ -173,7 +173,6 @@ fn parse_pr_cache(content: &str) -> (String, String) {
 
     let ci_state = match val.get("statusCheckRollup").and_then(|v| v.as_array()) {
         None => commit_state.to_string(),
-        Some(arr) if arr.is_empty() => commit_state.to_string(),
         Some(arr) => {
             let has_fail = arr.iter().any(|item| {
                 matches!(
@@ -238,9 +237,7 @@ fn parse_porcelain_status(out: &str, meta: &mut GitMetadata) -> usize {
             meta.branch = br_part.split_whitespace().next().unwrap_or("").to_string();
         }
     }
-    lines
-        .filter(|l| !l.is_empty() && !l.starts_with("## "))
-        .count()
+    lines.filter(|l| !l.is_empty()).count()
 }
 
 /// `git diff --shortstat` as `+ins -del`, or `*<dirty files>` when it reports no line counts
@@ -491,31 +488,35 @@ fn mtime_secs(path: &Path) -> u64 {
 
 /// "Done, not reviewed": the agent finished after the last review and left something to look
 /// at, either uncommitted changes or a HEAD that moved since the review.
-fn needs_review(finished_at: u64, reviewed_at: u64, head_moved_at: u64, dirty: bool) -> bool {
-    finished_at > reviewed_at && (dirty || head_moved_at > reviewed_at)
+fn needs_review(
+    finished_at: u64,
+    reviewed_at: u64,
+    head_moved_at: u64,
+    is_dirty: impl FnOnce() -> bool,
+) -> bool {
+    finished_at > reviewed_at && (head_moved_at > reviewed_at || is_dirty())
+}
+
+fn worktree_needs_review(repo: &str, finished_at: u64, is_dirty: impl FnOnce() -> bool) -> bool {
+    if finished_at == 0 {
+        return false;
+    }
+    let Some(git_dir) = git_dir_of(Path::new(repo)) else {
+        return false;
+    };
+    needs_review(
+        crate::triage::normalize_ts(finished_at) / 1000,
+        mtime_secs(&git_dir.join(REVIEW_MARKER)),
+        mtime_secs(&git_dir.join("logs").join("HEAD")),
+        is_dirty,
+    )
 }
 
 /// The Cockpit's review rule for one pane, for callers without its git cache (triage).
 /// `git status` runs only when the work is newer than the last review and HEAD has not moved.
 pub fn pane_needs_review(ppath: &str, finished_at: u64) -> bool {
-    if finished_at == 0 {
-        return false;
-    }
-    let Some(repo) = repo_path_for(ppath) else {
-        return false;
-    };
-    let Some(git_dir) = git_dir_of(Path::new(&repo)) else {
-        return false;
-    };
-    let finished = crate::triage::normalize_ts(finished_at) / 1000;
-    let reviewed = mtime_secs(&git_dir.join(REVIEW_MARKER));
-    let head_moved = mtime_secs(&git_dir.join("logs").join("HEAD"));
-    needs_review(
-        finished,
-        reviewed,
-        head_moved,
-        finished > reviewed && head_moved <= reviewed && is_dirty(&repo),
-    )
+    repo_path_for(ppath)
+        .is_some_and(|repo| worktree_needs_review(&repo, finished_at, || is_dirty(&repo)))
 }
 
 fn is_dirty(repo: &str) -> bool {
@@ -555,7 +556,7 @@ struct RawPaneRow {
 /// `main/` worktree when the pane sits in a `.bare` container. None when not a directory.
 fn repo_path_for(ppath: &str) -> Option<String> {
     let p = Path::new(ppath);
-    if ppath.is_empty() || !p.is_dir() {
+    if !p.is_dir() {
         return None;
     }
     if !p.join(".git").exists() && p.join(".bare").is_dir() && p.join("main").is_dir() {
@@ -715,11 +716,7 @@ fn build_rows(
         }
 
         let diff_s = if ts > 0 {
-            if ts < 10_000_000_000 {
-                now_s.saturating_sub(ts)
-            } else {
-                now_millis.saturating_sub(ts) / 1000
-            }
+            now_millis.saturating_sub(crate::triage::normalize_ts(ts)) / 1000
         } else {
             sources.sess_etimes.get(pane_os_pid).copied().unwrap_or(0)
         };
@@ -734,14 +731,7 @@ fn build_rows(
         // Only a completion the daemon saw counts: after a restart idle panes are rehydrated
         // with a fresh timestamp but no finished_at.
         if st == "idle"
-            && finished_at > 0
-            && let Some(git_dir) = git_dir_of(Path::new(&ppath))
-            && needs_review(
-                crate::triage::normalize_ts(finished_at) / 1000,
-                mtime_secs(&git_dir.join(REVIEW_MARKER)),
-                mtime_secs(&git_dir.join("logs").join("HEAD")),
-                !git_meta.diffstat.is_empty(),
-            )
+            && worktree_needs_review(&ppath, finished_at, || !git_meta.diffstat.is_empty())
         {
             st = "review".to_string();
         }
@@ -749,13 +739,10 @@ fn build_rows(
         let (prio, ico) = state_prio_icon(
             reg,
             &st,
-            !detected_agent.is_empty() || is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
+            is_agent_binary_name(pcmd) || contains_agent_name(ptitle),
         );
 
-        let is_agent = !detected_agent.is_empty()
-            || is_agent_binary_name(pcmd)
-            || !ai_title.is_empty()
-            || (!st.is_empty() && st != "normal");
+        let is_agent = is_agent_binary_name(pcmd) || !ai_title.is_empty() || st != "normal";
 
         // Waiting rows say why the agent waits (e.g. the tool behind a permission prompt)
         // instead of the task title.
@@ -919,19 +906,19 @@ fn render_items(
             let mut sync_glyph = String::new();
             let mut sync_col_c = &theme.c_cyan;
             if row.has_u {
-                if row.u_ahead == 0 && row.u_behind == 0 {
+                if row.u_ahead > 0 {
+                    let _ = write!(sync_glyph, " ↑{}", row.u_ahead);
+                    sync_search.push_str(" ahead");
+                }
+                if row.u_behind > 0 {
+                    let _ = write!(sync_glyph, " ↓{}", row.u_behind);
+                    sync_col_c = &theme.c_error;
+                    sync_search.push_str(" behind");
+                }
+                if sync_glyph.is_empty() {
                     sync_glyph = " 󰄬".to_string();
                     sync_search = "synced".to_string();
                 } else {
-                    if row.u_ahead > 0 {
-                        let _ = write!(sync_glyph, " ↑{}", row.u_ahead);
-                        sync_search.push_str(" ahead");
-                    }
-                    if row.u_behind > 0 {
-                        let _ = write!(sync_glyph, " ↓{}", row.u_behind);
-                        sync_col_c = &theme.c_error;
-                        sync_search.push_str(" behind");
-                    }
                     sync_search = sync_search.trim().to_string();
                 }
             }
@@ -961,21 +948,21 @@ fn render_items(
         };
 
         // Col 5: Fixed-width Git Diffstat / PR Badge Column (11 visual chars)
-        let mut diff_badge = String::new();
-        if !row.diffstat_str.is_empty() {
-            for part in row.diffstat_str.split_whitespace() {
-                if !diff_badge.is_empty() {
-                    diff_badge.push(' ');
-                }
-                if part.starts_with('+') {
-                    let _ = write!(diff_badge, "{}{}{}", theme.c_diff_ins, part, RESET);
+        let diff_badge = row
+            .diffstat_str
+            .split_whitespace()
+            .map(|part| {
+                let color = if part.starts_with('+') {
+                    &theme.c_diff_ins
                 } else if part.starts_with('-') {
-                    let _ = write!(diff_badge, "{}{}{}", theme.c_diff_del, part, RESET);
+                    &theme.c_diff_del
                 } else {
-                    let _ = write!(diff_badge, "{}{}{}", theme.c_diff_dirty, part, RESET);
-                }
-            }
-        }
+                    &theme.c_diff_dirty
+                };
+                format!("{color}{part}{RESET}")
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
 
         let pr_search = if !row.pr_num.is_empty() {
             format!("PR:#{} ci:{}", row.pr_num, row.pr_ci)
@@ -1165,11 +1152,54 @@ mod tests {
     }
 
     #[test]
+    fn test_agent_name_predicates_and_repo_path_for() {
+        assert!(is_agent_binary_name("claude"));
+        assert!(!is_agent_binary_name("zsh"));
+        assert!(contains_agent_name("Running Claude Code"));
+        assert!(!contains_agent_name("vim main.rs"));
+
+        let base = std::env::temp_dir().join(format!("waymux-repopath-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        assert_eq!(repo_path_for(""), None);
+        assert_eq!(repo_path_for(base.to_str().unwrap()), None);
+
+        fs::create_dir_all(base.join(".bare")).unwrap();
+        assert_eq!(
+            repo_path_for(base.to_str().unwrap()),
+            Some(base.to_str().unwrap().to_string())
+        );
+
+        fs::create_dir_all(base.join("main")).unwrap();
+        assert_eq!(
+            repo_path_for(base.to_str().unwrap()),
+            Some(format!("{}/main", base.to_str().unwrap()))
+        );
+
+        fs::create_dir_all(base.join(".git")).unwrap();
+        assert_eq!(
+            repo_path_for(base.to_str().unwrap()),
+            Some(base.to_str().unwrap().to_string()),
+            ".git takes precedence over .bare"
+        );
+
+        let only_main = base.join("only_main");
+        fs::create_dir_all(only_main.join("main")).unwrap();
+        assert_eq!(
+            repo_path_for(only_main.to_str().unwrap()),
+            Some(only_main.to_str().unwrap().to_string())
+        );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn test_format_age() {
         assert_eq!(format_age(0), "");
         assert_eq!(format_age(45), "45s");
+        assert_eq!(format_age(60), "1m");
         assert_eq!(format_age(125), "2m");
+        assert_eq!(format_age(3600), "1h0m");
         assert_eq!(format_age(3720), "1h2m");
+        assert_eq!(format_age(86400), "1d");
         assert_eq!(format_age(90000), "1d");
     }
 
@@ -1183,13 +1213,15 @@ mod tests {
     fn test_cockpit_priority_matches_triage_order() {
         let reg = Registry::builtin();
         let prio = |st| state_prio_icon(&reg, st, true).0;
-        assert!(prio("permission") < prio("question"));
-        assert_eq!(prio("question"), prio("awaiting_input"));
-        assert!(prio("question") < prio("stalled"));
-        assert_eq!(prio("stalled"), prio("error"));
-        assert!(prio("error") < prio("review"));
-        assert!(prio("review") < prio("busy"));
-        assert!(prio("busy") < prio("idle"));
+        assert_eq!(prio("permission"), 1);
+        assert_eq!(prio("question"), 2);
+        assert_eq!(prio("awaiting_input"), 2);
+        assert_eq!(prio("stalled"), 3);
+        assert_eq!(prio("error"), 3);
+        assert_eq!(prio("review"), REVIEW_PRIO);
+        assert_eq!(state_prio_icon(&reg, "busy", true), (5, "@SPIN@"));
+        assert_eq!(state_prio_icon(&reg, "working", false), (5, "@SPIN@"));
+        assert_eq!(state_prio_icon(&reg, "idle", false), (6, "󰗡"));
         assert_eq!(state_prio_icon(&reg, "review", true), (REVIEW_PRIO, "󰷋"));
         assert_eq!(state_prio_icon(&reg, "normal", false), (7, "·"));
         assert_eq!(state_prio_icon(&reg, "normal", true), (6, "󰑮"));
@@ -1206,13 +1238,15 @@ mod tests {
     #[test]
     fn test_needs_review() {
         // Finished after the last review with uncommitted changes, or with new commits.
-        assert!(needs_review(200, 100, 0, true));
-        assert!(needs_review(200, 100, 150, false));
-        // Reviewed since it finished, or nothing to look at.
-        assert!(!needs_review(100, 200, 300, true));
-        assert!(!needs_review(200, 100, 50, false));
+        assert!(needs_review(200, 100, 0, || true));
+        assert!(needs_review(200, 100, 150, || false));
+        // Reviewed since (or at the same second) it finished, or nothing to look at.
+        assert!(!needs_review(100, 200, 300, || true));
+        assert!(!needs_review(100, 100, 300, || true));
+        assert!(!needs_review(200, 100, 100, || false));
+        assert!(!needs_review(200, 100, 50, || false));
         // Never reviewed: any finished work with changes counts.
-        assert!(needs_review(200, 0, 0, true));
+        assert!(needs_review(200, 0, 0, || true));
     }
 
     #[test]
@@ -1260,6 +1294,9 @@ mod tests {
         assert!(!pane_needs_review(path, 0), "no completion seen");
         mark_reviewed(&repo);
         assert!(!pane_needs_review(path, finished_ms));
+        let reviewed_s = mtime_secs(&repo.join(".git").join(REVIEW_MARKER));
+        // A later completion (in seconds, so normalize_ts(s) % 1000 == 0) needs review again.
+        assert!(pane_needs_review(path, reviewed_s + 10));
         let _ = fs::remove_dir_all(&repo);
     }
 
@@ -1336,7 +1373,13 @@ mod tests {
         );
         assert_eq!(
             ci(
-                r#"{"number":1,"statusCheckRollup":[{"conclusion":"SUCCESS"},{"status":"IN_PROGRESS","conclusion":null}]}"#
+                r#"{"number":1,"statusCheckRollup":[{"conclusion":"SUCCESS"},{"status":"QUEUED","conclusion":"NEUTRAL"}]}"#
+            ),
+            "pending"
+        );
+        assert_eq!(
+            ci(
+                r#"{"number":1,"statusCheckRollup":[{"conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":null}]}"#
             ),
             "pending"
         );
@@ -1416,21 +1459,185 @@ mod tests {
         // A waiting row says why it waits, with whitespace collapsed.
         assert_eq!(permission.agent_label, "Bash: cargo test");
         assert!(permission.is_agent);
+        assert!(!permission.is_cur);
 
         assert_eq!(rows[1].age_str, "30s", "second timestamps are aged too");
+        assert!(!rows[1].is_cur);
         assert!(rows[2].is_cur, "dev:2 is the origin window");
         assert_eq!(rows[3].st, "normal");
         assert!(!rows[3].is_agent);
+
+        // Exercise detected_agent, sess_etimes, ptitle agent detection, ai_title, and review upgrade.
+        let repo = std::env::temp_dir().join(format!("waymux-buildrows-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&repo);
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let repo_str = repo.to_str().unwrap();
+
+        let lines = [
+            // pane %10: detected_agent via sess_agent + sess_etimes, no daemon entry
+            ["dev", "1", "w1", "%10", "100", "", "zsh", "", "", ""].join("\x1f"),
+            // pane %11: ptitle contains agent name, ai_title set
+            [
+                "dev",
+                "2",
+                "w2",
+                "%11",
+                "101",
+                "",
+                "zsh",
+                "Claude session",
+                "",
+                "My task",
+            ]
+            .join("\x1f"),
+            // pane %12: raw_state="working" on a zsh pane, no ai_title
+            ["dev", "3", "w3", "%12", "102", "", "zsh", "", "working", ""].join("\x1f"),
+            // pane %13: permission state with empty reason falls back to ai_title
+            [
+                "dev",
+                "4",
+                "w4",
+                "%13",
+                "103",
+                "",
+                "claude",
+                "",
+                "",
+                "Fallback title",
+            ]
+            .join("\x1f"),
+            // pane %14: idle with finished_at and dirty git_meta -> upgrades to "review"
+            [
+                "dev", "5", "w5", "%14", "104", repo_str, "claude", "", "", "",
+            ]
+            .join("\x1f"),
+            // pane %15: working with finished_at and dirty git_meta -> stays "working"
+            [
+                "dev", "6", "w6", "%15", "105", repo_str, "claude", "", "", "",
+            ]
+            .join("\x1f"),
+            // pane %16: agent binary in pcmd with no daemon/proc state ("normal")
+            ["dev", "7", "w7", "%16", "106", "", "claude", "", "", ""].join("\x1f"),
+        ]
+        .join("\n");
+
+        let states = HashMap::from([
+            (
+                "%13".to_string(),
+                entry("permission", 1_700_000_000, Some("   ")),
+            ),
+            (
+                "%14".to_string(),
+                rpc_client::AgentPaneEntry {
+                    state: "idle".into(),
+                    last_timestamp: 1_700_000_000,
+                    message: None,
+                    finished_at: 1_700_000_000_000,
+                },
+            ),
+            (
+                "%15".to_string(),
+                rpc_client::AgentPaneEntry {
+                    state: "working".into(),
+                    last_timestamp: 1_700_000_000,
+                    message: None,
+                    finished_at: 1_700_000_000_000,
+                },
+            ),
+        ]);
+        let sess_agent = HashMap::from([("100".to_string(), "codex".to_string())]);
+        let sess_etimes = HashMap::from([("100".to_string(), 42u64)]);
+        let git = HashMap::from([(
+            repo_str.to_string(),
+            GitMetadata {
+                is_repo: true,
+                branch: "feat".into(),
+                diffstat: "+1".into(),
+                ..Default::default()
+            },
+        )]);
+        let sources = PaneSources {
+            agent_states: &states,
+            sess_agent: &sess_agent,
+            sess_etimes: &sess_etimes,
+            git: &git,
+        };
+        let built = build_rows(
+            &lines,
+            &sources,
+            &Registry::builtin(),
+            1_700_000_010,
+            ("other", "1"),
+        );
+        let by_pid: HashMap<&str, &RawPaneRow> =
+            built.iter().map(|r| (r.pid.as_str(), r)).collect();
+        assert_eq!(by_pid["%10"].st, "idle");
+        assert_eq!(by_pid["%10"].age_str, "42s");
+        assert_eq!(by_pid["%10"].agent_label, "codex");
+        assert!(by_pid["%10"].is_agent);
+        assert!(!by_pid["%10"].is_cur);
+
+        assert_eq!(by_pid["%11"].prio, 6, "ptitle agent gets prio 6");
+        assert_eq!(by_pid["%11"].agent_label, "My task");
+        assert!(by_pid["%11"].is_agent);
+
+        assert!(
+            by_pid["%12"].is_agent,
+            "raw_state != normal marks pane as agent"
+        );
+        assert_eq!(by_pid["%13"].agent_label, "Fallback title");
+        assert_eq!(by_pid["%14"].st, "review");
+        assert_eq!(by_pid["%15"].st, "working");
+        assert_eq!(by_pid["%16"].st, "normal");
+        assert_eq!(
+            by_pid["%16"].prio, 6,
+            "pcmd agent gets prio 6 even when normal"
+        );
+        assert!(by_pid["%16"].is_agent);
+        assert_eq!(by_pid["%16"].agent_label, "claude");
+        let _ = fs::remove_dir_all(&repo);
     }
 
     #[test]
     fn test_render_items_groups_sessions_by_urgency() {
         let theme = ThemePalette::default();
-        let out = render_items(fixture_rows(), &theme, false, "dev");
+        let mut rows = fixture_rows();
+        // Add a second, newer permission prompt in "dev" so "dev" has ts=1699999910000 and ts=1699999990000;
+        // if a third session "mid" has permission at ts=1699999950000, "dev" must still sort before "mid".
+        rows.push(RawPaneRow {
+            prio: 1,
+            ts: 1_699_999_990_000,
+            sess: "dev".into(),
+            idx: "9".into(),
+            idx_num: 9,
+            wname: "extra".into(),
+            pid: "%9".into(),
+            st: "permission".into(),
+            is_agent: true,
+            ..Default::default()
+        });
+        rows.push(RawPaneRow {
+            prio: 1,
+            ts: 1_699_999_950_000,
+            sess: "mid".into(),
+            idx: "1".into(),
+            idx_num: 1,
+            wname: "m".into(),
+            pid: "%8".into(),
+            st: "permission".into(),
+            is_agent: true,
+            ..Default::default()
+        });
+
+        let out = render_items(rows, &theme, false, "dev");
         let lines: Vec<&str> = out.lines().collect();
-        assert_eq!(lines[0], "#  dev", "dev holds the permission prompt");
+        assert_eq!(lines[0], "#  dev", "dev holds the oldest permission prompt");
+        let mid_header = lines.iter().position(|l| *l == "#  mid").unwrap();
         let ops_header = lines.iter().position(|l| *l == "#  ops").unwrap();
-        assert_eq!(ops_header, 4, "three dev windows, then ops");
+        assert!(
+            mid_header < ops_header,
+            "mid (prio 1) comes before ops (prio 2)"
+        );
         for row in lines.iter().filter(|l| !l.starts_with('#')) {
             assert_eq!(row.split('\t').count(), 12, "{row}");
         }
@@ -1446,6 +1653,144 @@ mod tests {
 
         let none = render_items(Vec::new(), &theme, true, "dev");
         assert!(none.starts_with("· (no active AI agents)\t0\t-\tdev\t"));
+    }
+
+    #[test]
+    fn test_render_items_states_sync_diff_and_padding() {
+        let theme = ThemePalette {
+            c_muted: "\x1b[38;2;1;0;0m".into(),
+            c_cur: "\x1b[38;2;2;0;0m".into(),
+            c_name: "\x1b[38;2;3;0;0m".into(),
+            c_branch: "\x1b[38;2;4;0;0m".into(),
+            c_cyan: "\x1b[38;2;5;0;0m".into(),
+            c_error: "\x1b[38;2;6;0;0m".into(),
+            c_diff_ins: "\x1b[38;2;7;0;0m".into(),
+            c_diff_del: "\x1b[38;2;8;0;0m".into(),
+            c_diff_dirty: "\x1b[38;2;9;0;0m".into(),
+            c_pr: "\x1b[38;2;10;0;0m".into(),
+            c_normal: "\x1b[38;2;11;0;0m".into(),
+            s_permission: "\x1b[38;2;12;0;0m".into(),
+            s_question: "\x1b[38;2;13;0;0m".into(),
+            s_stalled: "\x1b[38;2;14;0;0m".into(),
+            s_error: "\x1b[38;2;15;0;0m".into(),
+            s_busy: "\x1b[38;2;16;0;0m".into(),
+            s_idle: "\x1b[38;2;17;0;0m".into(),
+            s_review: "\x1b[38;2;18;0;0m".into(),
+            ..Default::default()
+        };
+
+        let make_row = |idx: &str, st: &str, prio: u8| RawPaneRow {
+            prio,
+            ts: 1_000,
+            sess: "s".into(),
+            idx: idx.into(),
+            idx_num: idx.parse().unwrap_or(0),
+            wname: "win".into(),
+            pid: format!("%{idx}"),
+            ppath: format!("/repo/{idx}"),
+            ico: "I".into(),
+            agent_label: "claude".into(),
+            age_str: "5m".into(),
+            branch: "main".into(),
+            is_cur: idx == "1",
+            st: st.into(),
+            is_agent: st != "normal",
+            has_u: true,
+            ..Default::default()
+        };
+
+        let mut r_perm = make_row("1", "permission", 1);
+        r_perm.diffstat_str = "+3 -1 *2".into();
+        r_perm.pr_num = "42".into();
+        r_perm.pr_ci = "success".into();
+
+        let mut r_ques = make_row("2", "question", 2);
+        r_ques.u_ahead = 2;
+        r_ques.pr_num = "7".into();
+        r_ques.pr_ci = "pending".into();
+
+        let mut r_stall = make_row("3", "stalled", 3);
+        r_stall.u_behind = 4;
+        r_stall.pr_ci = "failure".into();
+
+        let mut r_err = make_row("4", "error", 3);
+        r_err.u_ahead = 1;
+        r_err.u_behind = 2;
+        r_err.pr_ci = "none".into();
+
+        let mut r_rev = make_row("5", "review", 4);
+        r_rev.agent_label = "123456789012345678901234".into();
+        r_rev.ppath = "/shared".into();
+
+        let mut r_busy = make_row("6", "busy", 5);
+        r_busy.agent_label = "win".into(); // matches wname
+        r_busy.ppath = "/shared".into();
+
+        let mut r_idle = make_row("7", "idle", 6);
+        r_idle.agent_label = String::new();
+
+        let mut r_norm = make_row("10", "normal", 7);
+        r_norm.ppath = "/shared".into(); // non-agent in shared repo does not get warning glyph
+
+        let out = render_items(
+            vec![
+                r_perm, r_ques, r_stall, r_err, r_rev, r_busy, r_idle, r_norm,
+            ],
+            &theme,
+            false,
+            "s",
+        );
+
+        let rows: Vec<&str> = out.lines().skip(1).collect();
+        assert_eq!(rows.len(), 8);
+        for row in &rows {
+            let cols: Vec<&str> = row.split('\t').collect();
+            assert_eq!(cols.len(), 12);
+            let plain = crate::theme::strip_ansi(cols[11]);
+            assert_eq!(
+                char_len(&plain),
+                68,
+                "row visual width must be 68: {plain:?}"
+            );
+        }
+
+        assert!(
+            rows[0].contains(&theme.s_permission)
+                && rows[0].split('\t').nth(11).unwrap().contains("claude")
+                && rows[0].contains(&format!("{}+3", theme.c_diff_ins))
+                && rows[0].contains(&format!("{}-1", theme.c_diff_del))
+                && rows[0].contains(&format!("{}*2", theme.c_diff_dirty))
+        );
+        assert!(rows[0].contains("PR:#42 ci:success") && rows[0].contains("\tsynced\t"));
+        assert!(
+            rows[1].contains(&theme.s_question)
+                && rows[1].contains("󰏫#7")
+                && rows[1].contains("\tahead\t")
+        );
+        assert!(
+            rows[2].contains(&theme.s_stalled)
+                && rows[2].contains(&format!("{} ↓4", theme.c_error))
+                && rows[2].contains("ci:failure")
+                && rows[2].contains("\tbehind\t")
+        );
+        assert!(
+            rows[3].contains(&theme.s_error)
+                && !rows[3].contains("ci:none")
+                && rows[3].contains("\tahead behind\t")
+        );
+        assert!(
+            rows[4].contains(&theme.s_review) && rows[4].contains("󰀏") && rows[4].contains(BOLD)
+        );
+        assert!(
+            rows[5].contains(&theme.s_busy)
+                && !rows[5].contains(&format!("{}win", theme.s_busy))
+                && !rows[5].contains(BOLD)
+        );
+        assert!(rows[6].contains(&theme.s_idle));
+        assert!(
+            !rows[7].contains("󰀏"),
+            "non-agent row in /shared keeps normal branch glyph"
+        );
     }
 
     #[test]

@@ -1,0 +1,22 @@
+# Mutation testing scope (`cargo mutants`).
+# Targets the five core logic modules from docs/ROADMAP-TO-10.md item 6 and skips
+# thin subprocess/procfs/socket/CLI entry wrappers that are covered by tests/*.rs.
+
+examine_globs = [
+    "src/triage.rs",
+    "src/cockpit/items.rs",
+    "src/api/rpc.rs",
+    "src/api/state.rs",
+    "src/hook.rs",
+]
+
+exclude_re = [
+    # Subprocess / tmux / procfs / HTTP / CLI entry glue covered by e2e tests
+    "(in|replace) (pane_exists|review_panes|collect_notifying_panes|run_popup|run_jump|run_cli)\\b",
+    "(in|replace) (scan_running_agents|resolve_git_metadata|prefetch_git_metadata|generate_items|review_min_secs|review_snapshot|finish_review|is_dirty|mtime_secs)\\b",
+    "(in|replace) (clear_bell|kill|target|stdout|run|call)\\b",
+    "(in|replace) (log_flow_event|get_process_tree_cpu_ticks|(ApiState::)?(rehydrate_from_tmux|clean_stale_panes|check_pane_stalls))\\b",
+    "(in|replace) (is_stdin_tty|read_stdin_json|get_active_tmux_pane|set_ai_agent_title|set_lazygitrs_icon|write_pane_state_file|send_acp_state|print_hook_response|run_tmux_hook|run_lazygit_hook|remember_pane_tool|recall_pane_tool)\\b",
+]
+
+additional_cargo_test_args = ["--lib"]

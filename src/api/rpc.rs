@@ -531,6 +531,16 @@ fn clear_bell(refresh: bool) {
     });
 }
 
+fn wait_outcome(actual: &AgentState, target: &AgentState) -> Option<(&'static str, String)> {
+    if actual == target {
+        Some(("reached", actual.as_str().to_string()))
+    } else if *actual == AgentState::Closed {
+        Some(("closed", "closed".to_string()))
+    } else {
+        None
+    }
+}
+
 async fn wait(state: &ApiState, params: WaitParams) -> RpcResult {
     if params.pane_id.is_empty() {
         return Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter"));
@@ -563,22 +573,19 @@ async fn wait(state: &ApiState, params: WaitParams) -> RpcResult {
         loop {
             match rx.recv().await {
                 Ok(update) => {
-                    if update.pane_id == pane_id {
-                        if update.state == target_state {
-                            return Ok(("reached", update.state.as_str().to_string()));
-                        } else if update.state == AgentState::Closed {
-                            return Ok(("closed", "closed".to_string()));
-                        }
+                    if update.pane_id == pane_id
+                        && let Some(done) = wait_outcome(&update.state, &target_state)
+                    {
+                        return Ok(done);
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                     let states = state.pane_states.lock().await;
-                    if let Some(info) = states.get(&pane_id) {
-                        if info.state == target_state {
-                            return Ok(("reached", target_state.as_str().to_string()));
-                        } else if info.state == AgentState::Closed {
-                            return Ok(("closed", "closed".to_string()));
-                        }
+                    if let Some(done) = states
+                        .get(&pane_id)
+                        .and_then(|info| wait_outcome(&info.state, &target_state))
+                    {
+                        return Ok(done);
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
@@ -799,6 +806,144 @@ mod tests {
                 assert_eq!(result.get("status").unwrap(), "ignored");
             }
             RpcResponse::Error { .. } => panic!("Expected dismiss ignored"),
+        }
+
+        // 4. Immediate wait vs timeout for known and unknown panes
+        let wait_already_working = rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%1", "target_state": "working", "timeout_secs": 0 }),
+        )
+        .await;
+        match wait_already_working {
+            RpcResponse::Success { result, .. } => {
+                assert_eq!(result["status"], "reached");
+                assert_eq!(result["state"], "working");
+            }
+            RpcResponse::Error { .. } => panic!("Expected immediate working reached"),
+        }
+
+        let wait_timeout = rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%1", "target_state": "idle", "timeout_secs": 0 }),
+        )
+        .await;
+        match wait_timeout {
+            RpcResponse::Success { result, .. } => {
+                assert_eq!(result["status"], "timeout");
+                assert_eq!(result["current_state"], "working");
+            }
+            RpcResponse::Error { .. } => panic!("Expected timeout response"),
+        }
+
+        let wait_unknown_idle = rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%unknown", "target_state": "idle", "timeout_secs": 0 }),
+        )
+        .await;
+        match wait_unknown_idle {
+            RpcResponse::Success { result, .. } => assert_eq!(result["status"], "reached"),
+            RpcResponse::Error { .. } => panic!("Expected unknown idle reached"),
+        }
+
+        let wait_unknown_working = rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%unknown", "target_state": "working", "timeout_secs": 0 }),
+        )
+        .await;
+        match wait_unknown_working {
+            RpcResponse::Success { result, .. } => {
+                assert_eq!(result["status"], "timeout");
+                assert_eq!(result["current_state"], "unknown");
+            }
+            RpcResponse::Error { .. } => panic!("Expected unknown working timeout"),
+        }
+
+        // 5. Broadcast wait ignores other panes/states, resolves on target_state and Closed,
+        // and list_states reports finished_at only once > 0.
+        let list_before = list_states(&state).await;
+        assert!(list_before["%1"].get("finished_at").is_none());
+
+        let state_bg = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            dispatch_update(
+                &state_bg,
+                IncomingUpdate {
+                    pane_id: "%2".into(),
+                    state: AgentState::Idle,
+                    message: None,
+                    timestamp: Some(210),
+                },
+            )
+            .await;
+            dispatch_update(
+                &state_bg,
+                IncomingUpdate {
+                    pane_id: "%1".into(),
+                    state: AgentState::Idle,
+                    message: None,
+                    timestamp: Some(220),
+                },
+            )
+            .await;
+        });
+        match rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%1", "target_state": "idle", "timeout_secs": 1 }),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => {
+                assert_eq!(result["status"], "reached");
+                assert_eq!(result["state"], "idle");
+            }
+            RpcResponse::Error { .. } => panic!("Expected broadcast wait reached"),
+        }
+
+        let list_after = list_states(&state).await;
+        assert!(list_after["%1"]["finished_at"].as_u64().unwrap() > 0);
+
+        dispatch_update(
+            &state,
+            IncomingUpdate {
+                pane_id: "%1".into(),
+                state: AgentState::Working,
+                message: None,
+                timestamp: Some(300),
+            },
+        )
+        .await;
+        let state_bg2 = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            dispatch_update(
+                &state_bg2,
+                IncomingUpdate {
+                    pane_id: "%1".into(),
+                    state: AgentState::Closed,
+                    message: None,
+                    timestamp: Some(310),
+                },
+            )
+            .await;
+        });
+        match rpc(
+            &state,
+            "agentState/wait",
+            serde_json::json!({ "pane_id": "%1", "target_state": "idle", "timeout_secs": 1 }),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => {
+                assert_eq!(result["status"], "closed");
+                assert_eq!(result["state"], "closed");
+            }
+            RpcResponse::Error { .. } => panic!("Expected broadcast wait closed"),
         }
     }
 

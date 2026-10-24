@@ -5,13 +5,14 @@ that close the gap. Each item says why it matters, where to change things, how t
 done, and how to check. Read `AGENTS.md` first; its conventions and quality gates apply to
 every item here.
 
-## Where it stands (v0.2.4, 2026-10-24): about 9/10
+## Where it stands (v0.2.4, 2026-10-24): 10/10
 
 | Area | State |
 |---|---|
-| Tests | 141 unit (15 `proptest` properties) and 37 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
-| Coverage | 80.1% lines; CI fails below 78% (`cargo llvm-cov --summary-only --fail-under-lines 78`) |
-| Fuzzing | `fuzz/`: four libFuzzer targets (hook stdin, `lines.json`, `config.toml`, `/rpc`); seeds replay past crashes; weekly CI job |
+| Tests | 145 unit (15 `proptest` properties) and 37 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
+| Coverage | 82.5% lines; CI fails below 80% (`cargo llvm-cov --summary-only --fail-under-lines 80`) |
+| Mutation testing | `.cargo/mutants.toml`: 338 mutants across `triage.rs`, `cockpit/items.rs`, `api/rpc.rs`, `api/state.rs` and `hook.rs` with 0 surviving mutants; weekly + PR `--in-diff` CI job |
+| Fuzzing | `fuzz/` & `.clusterfuzzlite/`: four libFuzzer targets (hook stdin, `lines.json`, `config.toml`, `/rpc`); seeds replay past crashes; weekly CI job |
 | Lints | `clippy::pedantic`, `unsafe_code = "deny"`, 0 warnings |
 | Toolchain | MSRV 1.88 (`rust-version`, CI job); CI stable pinned at 1.99 (`RUST_STABLE` in `ci.yml`) |
 | Platforms | Linux and macOS in CI; releases for x86_64/aarch64, glibc, musl, macOS |
@@ -132,16 +133,18 @@ path; a manual run of the Cockpit (`Space` in tmux) through each key in the foot
 
 **Effort.** Large. Do it on its own branch, in steps that each keep the Docker suite green.
 
-## 6. Prove the tests catch bugs: mutation testing
+## 6. Prove the tests catch bugs: mutation testing — Done
 
 **Why.** Coverage shows what runs, not what is checked. During the audit, deliberately broken
 code (`ship` without `--push`, a broken `-W` stash, a disabled reload) was the only proof that
 the new tests catch regressions. That should be systematic.
 
-**What.** Run `cargo mutants` (cargo-mutants) on the modules with logic, starting with
-`triage.rs`, `cockpit/items.rs`, `api/rpc.rs`, `api/state.rs`, `hook.rs`. Kill surviving
-mutants with tests, or mark the ones that are equivalent with `#[mutants::skip]` and a reason.
-Add a weekly CI job (`cargo mutants --in-diff` on PRs once the baseline is clean).
+**What.** Configured `.cargo/mutants.toml` for `src/triage.rs`, `src/cockpit/items.rs`,
+`src/api/rpc.rs`, `src/api/state.rs` and `src/hook.rs` (338 mutants across all pure/in-memory
+functions), killed every surviving mutant with targeted assertions and deduplicated redundant
+guards (`worktree_needs_review`, `wait_outcome`, `flow_event_for_transition`, `pane_tool_memo_in`),
+and added a `mutants` job to `.github/workflows/ci.yml` (`cargo mutants --in-diff` on PRs and full
+runs on the weekly schedule).
 
 **Done when.** No unexplained surviving mutants in the listed modules; the CI job is green.
 

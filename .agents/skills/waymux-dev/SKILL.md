@@ -73,9 +73,11 @@ cargo build --release && ./scripts/bench.sh target/release/waymux /tmp/waymux-ol
 
 The daemon is always the first binary's, so a daemon-side change shows in both columns; compare against an earlier run of the old build instead. `--check` exits 1 over budget (`BENCH_SLACK=4` in CI). `cockpit-items` needs a live tmux session; time it with a 30-iteration `date +%s%N` loop.
 
-## Coverage
+## Coverage & Mutation Testing
 
-`cargo llvm-cov --summary-only` (CI fails below 78% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
+`cargo llvm-cov --summary-only` (CI fails below 80% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
+
+`cargo mutants` (configured in `.cargo/mutants.toml`) tests the pure/in-memory logic in `src/triage.rs`, `src/cockpit/items.rs`, `src/api/rpc.rs`, `src/api/state.rs` and `src/hook.rs`; CI runs `cargo mutants --in-diff` on PRs and a full run weekly.
 
 ## Dependencies
 
