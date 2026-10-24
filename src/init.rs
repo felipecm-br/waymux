@@ -40,6 +40,12 @@ const CLAUDE_HOOKS: &[(&str, Option<&str>, &[&str])] = &[
         Some("permission_prompt|elicitation_dialog"),
         &["waymux hook tmux Notification claude"],
     ),
+    // Held approvals (`[approvals] enabled = true`): the hook waits for the Cockpit's answer.
+    (
+        "PermissionRequest",
+        None,
+        &["waymux hook tmux PermissionRequest claude"],
+    ),
     ("Stop", None, &["waymux hook tmux Stop"]),
     (
         "SessionEnd",
@@ -62,7 +68,15 @@ fn claude_hooks_json() -> serde_json::Value {
             "hooks".into(),
             commands
                 .iter()
-                .map(|c| serde_json::json!({ "type": "command", "command": c }))
+                .map(|c| {
+                    let mut hook = serde_json::json!({ "type": "command", "command": c });
+                    // Longer than the longest hold (300 s), so Claude Code never kills a
+                    // hook that is still waiting for an answer.
+                    if *event == "PermissionRequest" {
+                        hook["timeout"] = 310.into();
+                    }
+                    hook
+                })
                 .collect(),
         );
         hooks.insert(
@@ -147,6 +161,7 @@ mod tests {
             hooks["Notification"][0]["matcher"],
             "permission_prompt|elicitation_dialog"
         );
+        assert_eq!(hooks["PermissionRequest"][0]["hooks"][0]["timeout"], 310);
     }
 
     #[test]

@@ -53,6 +53,23 @@ pub struct QueuePushParams {
     pub by: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ApprovalHoldParams {
+    pub pane_id: String,
+    pub tool: String,
+    pub line: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ApprovalAnswerParams {
+    pub pane_id: String,
+    pub id: u64,
+    pub decision: super::approvals::Decision,
+    pub line: String,
+    #[serde(default)]
+    pub risk_ack: Vec<String>,
+}
+
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct QueueListParams {
@@ -291,6 +308,26 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
         "agentState/dismiss" | "agent_state/dismiss" => dismiss(state, lenient(params)?).await,
         "agentState/wait" | "agent_state/wait" => wait(state, lenient(params)?).await,
         "queue/push" => queue_push(state, strict(params)?).await,
+        "approval/hold" => {
+            let p: ApprovalHoldParams = strict(params)?;
+            let (decision, reason) =
+                super::approvals::hold(state, &p.pane_id, &p.tool, &p.line).await;
+            Ok(json!({ "decision": decision, "reason": reason }))
+        }
+        "approval/get" => {
+            let p: QueueListParams = lenient(params)?;
+            match p.pane_id {
+                Some(pane) => Ok(super::approvals::get(state, &pane).await),
+                None => Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter")),
+            }
+        }
+        "approval/answer" => {
+            let p: ApprovalAnswerParams = strict(params)?;
+            super::approvals::answer(state, &p.pane_id, p.id, p.decision, &p.line, &p.risk_ack)
+                .await
+                .map(|()| json!({ "status": "answered" }))
+                .map_err(|e| RpcError::new(INVALID_PARAMS, e.code()))
+        }
         "agent/recap" => {
             let p: QueueListParams = lenient(params)?;
             let activity = state.activity.lock().await;
@@ -536,6 +573,8 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
     if pane_id.is_empty() {
         return Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter"));
     }
+    // Focusing the pane is choosing to answer there: a held prompt goes back to the harness.
+    super::approvals::release(state, &pane_id).await;
     // Focusing the pane is looking at it: its activity recap starts again.
     if let Some(a) = state.activity.lock().await.get_mut(&pane_id) {
         a.mark_seen(crate::sys::unix_ms());

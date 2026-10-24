@@ -41,25 +41,21 @@ fn default_sound_enabled() -> bool {
     true
 }
 
-fn default_hold_seconds() -> u64 {
-    120
-}
-
-#[derive(Debug, Deserialize, Clone)]
+/// `[approvals]`: let the Cockpit's `y`/`n` answer a permission prompt through the harness's
+/// `PermissionRequest` hook instead of keystrokes. Off by default; needs the hook registered
+/// (`waymux init --hooks`).
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ApprovalsConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_hold_seconds")]
-    pub hold_seconds: u64,
+    /// How long a prompt is held before the harness shows its own (10 to 300 s, default 120).
+    pub hold_seconds: Option<u64>,
 }
 
-impl Default for ApprovalsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            hold_seconds: default_hold_seconds(),
-        }
+impl ApprovalsConfig {
+    pub fn hold_secs(&self) -> u64 {
+        self.hold_seconds.unwrap_or(120).clamp(10, 300)
     }
 }
 

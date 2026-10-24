@@ -49,6 +49,8 @@ pub struct ApiState {
     pub stall_records: Arc<tokio::sync::Mutex<std::collections::HashMap<String, StallRecord>>>,
     /// Prompts held for each pane until its agent is at rest (see `super::queue`).
     pub queues: Arc<tokio::sync::Mutex<super::queue::Queues>>,
+    /// Permission prompts held off their pane, one per pane (see `super::approvals`).
+    pub approvals: Arc<tokio::sync::Mutex<super::approvals::Held>>,
     /// What each pane's agent did since its pane was last focused.
     pub activity:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, crate::activity::Activity>>>,
@@ -60,6 +62,8 @@ pub struct Settings {
     pub idle_debounce_ms: u64,
     /// Program run on agent flow events (`flow_log_hook` in the config).
     pub flow_log_hook: Option<Arc<str>>,
+    /// `[approvals]`; `None` holds nothing.
+    pub approvals: Option<crate::config::ApprovalsConfig>,
 }
 
 impl Settings {
@@ -70,6 +74,7 @@ impl Settings {
                 .flow_log_hook
                 .as_deref()
                 .map(|hook| Arc::from(crate::sys::expand_home(hook))),
+            approvals: config.approvals.clone().filter(|a| a.enabled),
         }
     }
 }
@@ -83,12 +88,14 @@ impl ApiState {
             settings: Arc::new(std::sync::RwLock::new(Settings {
                 idle_debounce_ms,
                 flow_log_hook: None,
+                approvals: None,
             })),
             pane_states: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             state_broadcast,
             stall_records: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             queues: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             activity: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_queue_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         }
@@ -528,6 +535,13 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     }
 
     super::queue::on_state(state, &update.pane_id, &update.state).await;
+    // The pane left its prompt (answered there, or the agent moved on): a held prompt is moot.
+    if matches!(
+        update.state,
+        AgentState::Working | AgentState::Idle | AgentState::Closed
+    ) {
+        super::approvals::release(state, &update.pane_id).await;
+    }
     {
         let now = crate::sys::unix_ms();
         let mut activity = state.activity.lock().await;

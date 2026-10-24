@@ -199,6 +199,7 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 
   Requests follow JSON-RPC 2.0: numeric or string `id`, notifications (no `id`, HTTP 204), batches, and spec error codes (`-32700` parse error, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32000` tmux failure).
 - **Delivery queue** (`queue/push`, `queue/list`, `queue/cancel`): see below.
+- **Held approvals** (`approval/hold`, `approval/get`, `approval/answer`): see [Held approvals](#held-approvals).
 - **`agent/recap`** (`{pane_id}`): what the agent did since its pane was last focused (see [Away recap](#away-recap)). `agentState/list` reports `queued` and `changed_at` (epoch ms the pane entered its state) per pane.
 - **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
 - **`GET /health` & `GET /ready`**: Liveness and readiness probes.
@@ -208,6 +209,15 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 `y` in the Cockpit allows a shell call matching a risk rule only on a second press within 3 s, for the same prompt; the first press says which rule matched, and the preview shows a red `󰳌 risky:` line. The rules (a speed bump, not a sandbox: the harness's permission system stays the boundary) are recursive delete (`rm` with `-r` and `-f` in any form), force push (`--force`, `-f`, `--force-with-lease`, `+refspec`), `git reset --hard`, `git clean -f`, discard changes (`git checkout .`, `git checkout -- .`, `git restore .`) and pipe to shell (`curl`/`wget` piped to a shell, an interpreter or `sudo`, or run through `bash <(curl …)`, `sh -c "$(curl …)"`, `eval`, `source`). Every command of the call is checked: it is split on `;`, `&&`, `||`, `|`, `&`, newlines and subshells, and followed into `$( )`, backticks, `<( )`, `sh -c` and `eval`, past `sudo`, `env`, `timeout`, `xargs` and `VAR=value`. The hook keeps the call's full command (`$XDG_RUNTIME_DIR/waymux/pane-cmd-*`, `0600`) so a command longer than the one-line reason is still checked.
 
 Answer keys: on Claude Code `y` sends `1` (approve once) and `n` sends `Esc`. `y` and `n` are not hotkeys there and its highlighted option is "1. Yes", so the former `n` + `Enter` approved the call (verified on Claude Code 2.1.310). Other harnesses get `y` + `Enter` and `Esc`.
+
+### Held approvals
+
+With `[approvals] enabled = true` in `config.toml` (`hold_seconds`, 10 to 300, default 120) and the `PermissionRequest` hook registered (`waymux init --hooks` prints it with `"timeout": 310`), Claude Code's permission prompt is also held by the daemon, and the Cockpit's `y`/`n` answer it through the hook's own decision output: no keystroke reaches the pane. Claude Code keeps showing its dialog meanwhile (verified on 2.1.310), and the first answer wins: answering in the pane moves it to `working`, which releases the hold.
+
+- Only calls whose whole effect fits one line are held: `Bash` (not with `dangerouslyDisableSandbox`), `Read`, `Glob`/`Grep` without `path`, `WebFetch`, `WebSearch`, on one line of at most 200 characters with no control or invisible characters and no doubled spaces. Everything else is answered in the pane.
+- An answer must name the held prompt (`id` and `line`), come at least 400 ms after it was held, and, to allow a call matching a [risk rule](#risk-rules), carry the rules it matched (`risk_ack`), which the Cockpit sends on the second `y`.
+- A hold ends with no decision, and the hook prints nothing, when the hold time passes, the pane is focused, leaves the prompt or closes, a newer prompt from the pane arrives, or the daemon stops. Any failure prints nothing, which Claude Code reads as "ask the user": a failure never approves.
+- Limit: any process running as you can read the daemon token, so an agent allowed to run `curl` or `waymux` unprompted could answer its own prompt, as it could already type into its pane with `tmux send-keys`. Claude Code's permission rules stay the boundary.
 
 ### Away recap
 

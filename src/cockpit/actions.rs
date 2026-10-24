@@ -89,26 +89,32 @@ fn one_line_excerpt(cmd: &str, max: usize) -> String {
     }
 }
 
-/// `true` when `y` may answer now. A risky call needs a second `y` within 3 s.
-fn risk_gate(pid: &str, entry: Option<&crate::rpc_client::AgentPaneEntry>, now_ms: u64) -> bool {
-    let Some(cmd) = pending_command(pid, entry.and_then(|e| e.message.as_deref())) else {
-        return true;
+/// The rules `y` acknowledges when it may answer now (empty for a call no rule matches), or
+/// `None` when this press only armed a risky call (or it cannot be confirmed here). A risky
+/// call needs a second `y` within 3 s for the same prompt (`prompt_key`).
+fn risk_gate(
+    pid: &str,
+    cmd: Option<&str>,
+    prompt_key: u64,
+    now_ms: u64,
+) -> Option<Vec<&'static str>> {
+    let Some(cmd) = cmd else {
+        return Some(Vec::new());
     };
-    let rules = crate::risk::risky_rules(&cmd);
+    let rules = crate::risk::risky_rules(cmd);
     if rules.is_empty() {
-        return true;
+        return Some(rules);
     }
     let Some(file) = risk_ack_file(pid) else {
         tmux_display_msg(&format!(
             "󰳌 risky ({}): answer it in the pane",
             rules.join(", ")
         ));
-        return false;
+        return None;
     };
-    let prompt_key = entry.map_or(0, |e| e.changed_at);
     if risk_ack_confirms(read_risk_ack(&file), prompt_key, now_ms) {
         let _ = std::fs::remove_file(&file);
-        return true;
+        return Some(rules);
     }
     let _ = std::fs::write(&file, format!("{prompt_key} {}", now_ms + RISK_ACK_MS));
     tmux_display_msg_timed(
@@ -116,10 +122,54 @@ fn risk_gate(pid: &str, entry: Option<&crate::rpc_client::AgentPaneEntry>, now_m
         &format!(
             "󰳌 risky ({}): press y again within 3s to allow {}",
             rules.join(", "),
-            one_line_excerpt(&cmd, 60)
+            one_line_excerpt(cmd, 60)
         ),
     );
-    false
+    None
+}
+
+/// What the user reads for a refused answer to a held prompt.
+pub fn held_refusal(code: &str) -> &'static str {
+    match code {
+        "too_soon" => "prompt just appeared: read it, then press again",
+        "risk_ack_required" => "is a risky call: press y twice",
+        _ => "prompt changed or ended: look again",
+    }
+}
+
+/// Answers a prompt the hook holds off the pane: no keystroke reaches the pane.
+fn answer_held(pid: &str, held: &serde_json::Value, approve: bool, now: u64) {
+    let (Some(id), Some(line)) = (held["id"].as_u64(), held["line"].as_str()) else {
+        return;
+    };
+    let mut risk_ack = Vec::new();
+    if approve {
+        let cmd = (held["tool"] == "Bash").then_some(line);
+        let key = held["created_at"].as_u64().unwrap_or(0);
+        match risk_gate(pid, cmd, key, now) {
+            Some(rules) => risk_ack = rules,
+            None => return,
+        }
+    }
+    let params = serde_json::json!({
+        "pane_id": pid,
+        "id": id,
+        "decision": if approve { "allow" } else { "deny" },
+        "line": line,
+        "risk_ack": risk_ack,
+    });
+    match crate::rpc_client::rpc_call("approval/answer", &params, 500) {
+        Ok(_) => {}
+        Err(crate::rpc_client::CallError::Rejected(code)) => {
+            tmux_display_msg(&format!(
+                "Action ignored: Pane {pid} {}",
+                held_refusal(&code)
+            ));
+        }
+        Err(crate::rpc_client::CallError::Unreachable) => {
+            tmux_display_msg("Action ignored: waymux daemon is not running");
+        }
+    }
 }
 
 fn answer(pid: &str, row_state: &str, approve: bool) {
@@ -134,8 +184,18 @@ fn answer(pid: &str, row_state: &str, approve: bool) {
         tmux_display_msg(&format!("Action ignored: Pane {pid} {why}"));
         return;
     }
-    if approve && !risk_gate(pid, entry, now) {
+    if let Ok(held) =
+        crate::rpc_client::rpc_call("approval/get", &serde_json::json!({ "pane_id": pid }), 150)
+        && !held.is_null()
+    {
+        answer_held(pid, &held, approve, now);
         return;
+    }
+    if approve {
+        let cmd = pending_command(pid, entry.and_then(|e| e.message.as_deref()));
+        if risk_gate(pid, cmd.as_deref(), entry.map_or(0, |e| e.changed_at), now).is_none() {
+            return;
+        }
     }
     let harness = tmux_out(&[
         "display-message",

@@ -405,6 +405,64 @@ fn session_start_awaits_prompt(ctx: &serde_json::Value) -> bool {
     ctx.get("source").and_then(|v| v.as_str()) != Some("compact")
 }
 
+/// The one line a held prompt shows: the argument that decides the call. `None` for calls
+/// the Cockpit cannot show whole (they are answered in the pane).
+pub fn held_line(ctx: &serde_json::Value) -> Option<(String, String)> {
+    let tool = ctx.get("tool_name")?.as_str()?;
+    let input = ctx.get("tool_input")?;
+    let field = |k: &str| input.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let line = match tool {
+        "Bash" => {
+            if input
+                .get("dangerouslyDisableSandbox")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+            {
+                return None;
+            }
+            field("command")?
+        }
+        "Read" => field("file_path")?,
+        // A path widens what the call reads beyond the one line shown.
+        "Glob" | "Grep" if input.get("path").is_none() => field("pattern")?,
+        "WebFetch" => field("url")?,
+        "WebSearch" => field("query")?,
+        _ => return None,
+    };
+    Some((tool.to_string(), line))
+}
+
+/// Claude Code's `PermissionRequest` decision output for an answer.
+pub fn decision_output(decision: &str) -> Option<String> {
+    let behavior = match decision {
+        "allow" => serde_json::json!({ "behavior": "allow" }),
+        "deny" => serde_json::json!({
+            "behavior": "deny",
+            "message": "The user denied this from the waymux Cockpit.",
+        }),
+        _ => return None,
+    };
+    Some(
+        serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": behavior,
+            }
+        })
+        .to_string(),
+    )
+}
+
+/// Asks the daemon to hold the prompt and waits for the Cockpit's answer. `None` (print
+/// nothing, so the harness asks in the pane) on every failure and when not held.
+fn held_decision(pane: &str, ctx: &serde_json::Value) -> Option<String> {
+    let (tool, line) = held_line(ctx)?;
+    let params = serde_json::json!({ "pane_id": pane, "tool": tool, "line": line });
+    // The daemon bounds the hold (at most 300 s); wait a little longer than that.
+    let res = crate::rpc_client::rpc_call("approval/hold", &params, 305_000).ok()?;
+    decision_output(res.get("decision")?.as_str()?)
+}
+
 fn print_hook_response(event_type: &str, ctx: &serde_json::Value) {
     if event_type == "PreToolUse" && ctx.get("hook_event_name").is_none() {
         println!("{{\"decision\":\"allow\"}}");
@@ -466,6 +524,13 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
                     .map(|m| m.chars().take(MAX_REASON_CHARS).collect())
             });
             send_acp_state(&tmux_pane, "permission", reason.as_deref());
+            if event_type == "PermissionRequest"
+                && !tmux_pane.is_empty()
+                && let Some(out) = held_decision(&tmux_pane, &ctx)
+            {
+                println!("{out}");
+                return 0;
+            }
         }
         "Stop" => {
             remember_pane_tool(&tmux_pane, None);
@@ -635,6 +700,58 @@ pub fn run_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_held_line_only_for_one_line_calls() {
+        let ctx = |tool: &str, input: serde_json::Value| serde_json::json!({ "tool_name": tool, "tool_input": input });
+        assert_eq!(
+            held_line(&ctx(
+                "Bash",
+                serde_json::json!({ "command": "go test ./..." })
+            )),
+            Some(("Bash".into(), "go test ./...".into()))
+        );
+        assert_eq!(
+            held_line(&ctx(
+                "Bash",
+                serde_json::json!({ "command": "ls", "dangerouslyDisableSandbox": true })
+            )),
+            None
+        );
+        assert_eq!(
+            held_line(&ctx(
+                "Grep",
+                serde_json::json!({ "pattern": "x", "path": "/" })
+            )),
+            None
+        );
+        assert_eq!(
+            held_line(&ctx(
+                "Read",
+                serde_json::json!({ "file_path": "/etc/hosts" })
+            )),
+            Some(("Read".into(), "/etc/hosts".into()))
+        );
+        assert_eq!(
+            held_line(&ctx("Edit", serde_json::json!({ "file_path": "a" }))),
+            None
+        );
+    }
+
+    #[test]
+    fn test_decision_output_shape() {
+        let allow: serde_json::Value =
+            serde_json::from_str(&decision_output("allow").unwrap()).unwrap();
+        assert_eq!(
+            allow["hookSpecificOutput"]["hookEventName"],
+            "PermissionRequest"
+        );
+        assert_eq!(allow["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        let deny: serde_json::Value =
+            serde_json::from_str(&decision_output("deny").unwrap()).unwrap();
+        assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        assert!(decision_output("maybe").is_none());
+    }
 
     #[test]
     fn test_session_start_awaits_prompt_except_compact() {
