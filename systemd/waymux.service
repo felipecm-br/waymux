@@ -10,6 +10,8 @@ ExecStart=%h/.local/bin/waymux daemon
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
+# The daemon pings every 15s while its state is responsive; a hang is restarted.
+WatchdogSec=30s
 
 # Security hardening
 NoNewPrivileges=yes

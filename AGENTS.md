@@ -24,7 +24,7 @@
 - `src/health.rs`: unauthenticated `/health` and `/ready` probes.
 - `src/config.rs`: `config.toml` model (`Config`, `ThemeConfig`, `SoundConfig`, `Spinner`) with built-in defaults.
 - `src/signals.rs` & `src/pid.rs`: SIGTERM/SIGINT listener feeding graceful shutdown, SIGHUP feeding the config reload in `daemon.rs` (`ApiState::reload` → `OutputAdapter::reload`), and the single-instance PID file.
-- `src/daemon.rs`: Background task supervisor, 30s stale pane reaper, and 5s proactive stall detector (20s zero-output + zero-CPU delta heuristic).
+- `src/daemon.rs`: Background task supervisor, SIGHUP config reload, systemd watchdog heartbeat (`WatchdogSec=30s`, pinged while the pane-state lock is acquirable), 30s stale pane reaper, and 5s proactive stall detector (20s zero-output + zero-CPU delta heuristic).
 - `src/adapters/`: Output sinks behind the `OutputAdapter` trait:
   - `mod.rs`: `AgentState`, `AgentUpdate`, `OutputAdapter`, and the urgency/icon helpers the sinks share.
   - `tmux.rs`: tmux window/pane options, multi-pane urgency aggregation, desktop notifications and the working spinner.

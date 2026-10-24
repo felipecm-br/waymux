@@ -75,6 +75,11 @@ pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<
         }
     });
 
+    if let Some(interval) = watchdog_interval() {
+        tracing::info!("systemd watchdog: heartbeat every {:?}", interval);
+        tokio::spawn(watchdog(adapters.clone(), interval, shutdown_rx.clone()));
+    }
+
     let token = Arc::new(crate::auth::generate_and_save_token()?);
 
     let app = axum::Router::new()
@@ -143,4 +148,35 @@ async fn reload(state: &crate::api::ApiState, config_path: Option<&str>, bound: 
         Err(e) => tracing::error!("config reload failed, keeping the running config: {e:#}"),
     }
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
+}
+
+/// Half of `WatchdogSec=`, or None when systemd is not watching this process.
+fn watchdog_interval() -> Option<std::time::Duration> {
+    let mut usec = 0;
+    // `false`: leave WATCHDOG_USEC alone; removing variables is unsound once threads run.
+    (sd_notify::watchdog_enabled(false, &mut usec) && usec > 0)
+        .then(|| std::time::Duration::from_micros(usec / 2))
+}
+
+/// Sends WATCHDOG=1 only while the pane-state lock every request takes can be acquired, so
+/// a deadlock there stops the heartbeat and systemd restarts the daemon.
+async fn watchdog(
+    state: crate::api::ApiState,
+    interval: std::time::Duration,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.changed() => break,
+            _ = ticker.tick() => {
+                if tokio::time::timeout(interval, state.pane_states.lock()).await.is_ok() {
+                    let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Watchdog]);
+                } else {
+                    tracing::error!("pane state lock held for {:?}; skipping watchdog ping", interval);
+                }
+            }
+        }
+    }
 }
