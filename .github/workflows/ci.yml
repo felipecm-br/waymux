@@ -82,7 +82,7 @@ jobs:
         with:
           tool: cargo-llvm-cov
       - name: Measure Coverage
-        run: cargo llvm-cov --summary-only --fail-under-lines 55
+        run: cargo llvm-cov --summary-only --fail-under-lines 62
 
   dependencies:
     # Advisories, licenses, duplicate crates and sources (deny.toml).

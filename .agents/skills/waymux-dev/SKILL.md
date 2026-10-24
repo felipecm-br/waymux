@@ -27,6 +27,7 @@ Read `AGENTS.md` first: it holds the module map and the engineering conventions.
 | --- | --- |
 | Pure logic (parsing, ordering, colors, classification) | `#[cfg(test)]` unit test in the same file |
 | CLI behavior, exit codes, anything that talks to the daemon | `tests/cli.rs`: use `Sandbox::new()` and `spawn_daemon()`; it isolates `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR` and the port |
+| Cockpit render commands that read git (`cockpit-diff`, `cockpit-preview`, `review-notes`) | `tests/cockpit.rs`: `Env::new()` gives a temp git repo and a `PATH` with only `git`; spawned commands must keep `LLVM_PROFILE_FILE` or their coverage is lost |
 | tmux panes, popups, bracketed paste, Cockpit rendering | `docker/entrypoint.sh` step in the Docker sandbox |
 | A parser of outside input (hook stdin, `/rpc` body, tmux/git/`gh` output, config) | A `proptest!` in the module's `tests::properties`, using `crate::test_strategies::{arb_json, arb_text}`; assert invariants (no panic, output shape), not examples. Commit any file proptest adds under `proptest-regressions/` |
 | Logic wrapped around tmux or daemon calls | Pass the calls in as closures or their output as `&str` (see `triage::select_notifying`, `cockpit::items::build_rows`) and test the pure part |
@@ -70,7 +71,7 @@ The daemon is always the first binary's, so a daemon-side change shows in both c
 
 ## Coverage
 
-`cargo llvm-cov --summary-only` (CI fails below 55% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
+`cargo llvm-cov --summary-only` (CI fails below 62% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
 
 ## Dependencies
 
