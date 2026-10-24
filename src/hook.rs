@@ -283,12 +283,14 @@ pub fn tool_summary(ctx: &serde_json::Value) -> Option<String> {
             .or_else(|| field("url"))
             .or_else(|| field("pattern"))
     });
-    let detail = detail
-        .map(|d| d.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|d| !d.is_empty());
+    // Both parts come from the agent: collapse every run of whitespace, newlines included,
+    // so the summary stays one line.
+    let one_line = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let name = one_line(name);
+    let detail = detail.map(|d| one_line(&d)).filter(|d| !d.is_empty());
     let summary = match detail {
-        Some(d) => format!("{}: {}", name.trim(), d),
-        None => name.trim().to_string(),
+        Some(d) => format!("{}: {}", name, d),
+        None => name,
     };
     Some(summary.chars().take(MAX_REASON_CHARS).collect())
 }
@@ -610,6 +612,9 @@ mod tests {
         assert_eq!(tool_summary(&agy).as_deref(), Some("view_file"));
 
         assert_eq!(tool_summary(&serde_json::json!({})), None);
+        // Found by fuzz/hook_input: a newline inside the tool name made a two-line reason.
+        let odd = serde_json::json!({"tool_name": "Bash\nrm  -rf", "tool_input": {"command": "x"}});
+        assert_eq!(tool_summary(&odd).as_deref(), Some("Bash rm -rf: x"));
     }
 
     #[test]
