@@ -17,6 +17,7 @@ Read `AGENTS.md` first: it holds the module map and the engineering conventions.
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    ```
+   The minimum Rust is `rust-version` in `Cargo.toml` (1.88), and CI builds with exactly that version. Before using a newer std API or syntax, either avoid it or raise `rust-version`, the CI `msrv` job and the README together.
 4. For anything touching tmux flows, also run the sandbox: `WAYMUX_BIN=$PWD/target/release/waymux ./scripts/docker-sandbox.sh test` (after `cargo build --release`). CI runs it too.
 5. Commit with a conventional subject (`fix(cockpit): ...`) and a body that says what was wrong and how it was checked. Add a CHANGELOG `[Unreleased]` entry for user-visible changes.
 
@@ -26,7 +27,11 @@ Read `AGENTS.md` first: it holds the module map and the engineering conventions.
 | --- | --- |
 | Pure logic (parsing, ordering, colors, classification) | `#[cfg(test)]` unit test in the same file |
 | CLI behavior, exit codes, anything that talks to the daemon | `tests/cli.rs`: use `Sandbox::new()` and `spawn_daemon()`; it isolates `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR` and the port |
+| Commands that drive tmux (`agent-action`, `window-*`, `triage`) | `tests/tmux.rs`: `Env::tmux(cmd)` starts a private server under the test's `TMUX_TMPDIR` (skipped without tmux); the cleared environment has no UTF-8 locale on purpose |
+| `waymux wt` subcommands and helper lookup | `tests/wt.rs`: `fake_helper()` writes an `awt-*.sh` that records its arguments to `$HOME/calls`; `Env::with_repo_at("proj/main")` makes session names predictable |
+| Cockpit render commands that read git (`cockpit-diff`, `cockpit-preview`, `review-notes`) | `tests/cockpit.rs`: `Env::new()` gives a temp git repo and a `PATH` with only `git`; spawned commands must keep `LLVM_PROFILE_FILE` or their coverage is lost |
 | tmux panes, popups, bracketed paste, Cockpit rendering | `docker/entrypoint.sh` step in the Docker sandbox |
+| A crash `cargo fuzz` found | Fix it with a unit test, and copy the crash input into `fuzz/seeds/<target>/` so every fuzz run replays it |
 | A parser of outside input (hook stdin, `/rpc` body, tmux/git/`gh` output, config) | A `proptest!` in the module's `tests::properties`, using `crate::test_strategies::{arb_json, arb_text}`; assert invariants (no panic, output shape), not examples. Commit any file proptest adds under `proptest-regressions/` |
 | Logic wrapped around tmux or daemon calls | Pass the calls in as closures or their output as `&str` (see `triage::select_notifying`, `cockpit::items::build_rows`) and test the pure part |
 | HTTP routes and auth | Unit test that sends requests through `api_router(...)` with `tower::ServiceExt::oneshot` |
@@ -69,14 +74,24 @@ The daemon is always the first binary's, so a daemon-side change shows in both c
 
 ## Coverage
 
-`cargo llvm-cov --summary-only` (CI fails below 55% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
+`cargo llvm-cov --summary-only` (CI fails below 70% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
 
 ## Dependencies
 
 `cargo deny check` (config in `deny.toml`) runs in CI on every push and weekly. When it flags an advisory, `cargo update -p <crate>` within semver, raise the minimum in `Cargo.toml`, and note the RUSTSEC id in the commit. Add a license to `allow` only if it is permissive.
 
+## Fuzzing
+
+Needs nightly and `cargo install cargo-fuzz`. From `fuzz/`:
+
+```bash
+cargo +nightly fuzz run <hook_input|review_notes|config|rpc_body> corpus/<target> seeds/<target> -- -max_total_time=60
+```
+
+`corpus/` (what libFuzzer learns) and `artifacts/` (crashes) are ignored; `seeds/` is committed. A new parser of outside input gets an entry point in `src/fuzzing.rs` and a target next to the others. The `rpc_body` target points `TMUX_TMPDIR` at an empty dir, so fuzzed `tmux.*` calls never reach your server.
+
 ## Release
 
 1. Bump `version` in `Cargo.toml`, move `[Unreleased]` in `CHANGELOG.md` under the new version with today's date, and commit `chore(release): bump version to X.Y.Z`.
-2. Tag `vX.Y.Z` and push the tag; `.github/workflows/release.yml` builds Linux (musl, gnu) and macOS archives, each with a `.sha256` that `install.sh` requires.
+2. Tag `vX.Y.Z` and push the tag; `.github/workflows/release.yml` builds Linux (musl, gnu) and macOS archives, each with a `.sha256` that `install.sh` requires and a build-provenance attestation, plus a CycloneDX SBOM. Afterwards confirm the release has assets (`gh release view vX.Y.Z --json assets`) and that `gh attestation verify <archive> --repo felipecm-br/waymux` passes for one of them: v0.2.0 to v0.2.3 were published with no archives because the upload jobs failed.
 3. Locally: `./scripts/update-daemon.sh` installs the binary and restarts `waymux.service`. Ask before running it, because it restarts the user's live daemon. Then `waymux doctor` and `cargo clean`.

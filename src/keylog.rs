@@ -54,8 +54,7 @@ pub fn record(context: &str, key: &str, state: &str, target: &str, origin: &str)
     };
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     if let Some(dir) = path.parent() {
         let _ = fs::create_dir_all(dir);
     }
@@ -66,7 +65,7 @@ pub fn record(context: &str, key: &str, state: &str, target: &str, origin: &str)
 
 /// `waymux keylog <context> <key> [state] [target] [origin]`; always exits 0.
 pub fn run_cli(args: &[String]) -> i32 {
-    let arg = |i: usize| args.get(i).map(String::as_str).unwrap_or("");
+    let arg = |i: usize| args.get(i).map_or("", String::as_str);
     record(arg(0), arg(1), arg(2), arg(3), arg(4));
     0
 }

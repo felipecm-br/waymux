@@ -1,3 +1,4 @@
+use crate::sys::shell_quote;
 use crate::tmux_cmd::{tmux_out, tmux_status};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -107,7 +108,7 @@ pub fn slugify_prompt(prompt: &str) -> String {
         slug = "worktree".to_string();
     }
 
-    format!("{}/{}", prefix, slug)
+    format!("{prefix}/{slug}")
 }
 
 /// Directories searched for `awt-*.sh` helpers, in priority order: the user's own
@@ -147,9 +148,19 @@ pub(crate) fn find_waymaker_script(script_name: &str) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// Optional user extension scripts (`awt-popup.sh`, `session-picker.sh`,
+/// `flow-telemetry.py`): the helper dirs first, then the legacy `~/.config/tmux/`.
+pub(crate) fn find_user_script(script_name: &str) -> Option<PathBuf> {
+    find_waymaker_script(script_name).or_else(|| {
+        let home = std::env::var("HOME").ok()?;
+        let legacy = Path::new(&home).join(".config/tmux").join(script_name);
+        legacy.is_file().then_some(legacy)
+    })
+}
+
 fn find_wm_bin() -> String {
     if let Ok(home) = std::env::var("HOME") {
-        let p = format!("{}/.local/bin/wm", home);
+        let p = format!("{home}/.local/bin/wm");
         if Path::new(&p).is_file() {
             return p;
         }
@@ -157,21 +168,33 @@ fn find_wm_bin() -> String {
     "wm".to_string()
 }
 
+/// The first command of a new session: signal `chan`, then become a login `shell`. tmux takes
+/// one command string, so the script is fixed and the shell and channel are positional
+/// arguments ($0, $1), each quoted as one word.
+fn ready_then_shell(shell: &str, chan: &str) -> String {
+    format!(
+        "sh -c {} {} {}",
+        shell_quote("tmux wait-for -S \"$1\"; exec \"$0\" -l"),
+        shell_quote(shell),
+        shell_quote(chan)
+    )
+}
+
 fn spawn_session_and_send(sess: &str, target_dir: &str, cmd: &str) {
-    let target_pane = format!("{}:0.0", sess);
+    let target_pane = format!("{sess}:0.0");
     if tmux_status(&["has-session", "-t", sess]) {
         if !cmd.is_empty() && cmd != "__FRESH__" {
-            let spaced = format!(" {}", cmd);
+            let spaced = format!(" {cmd}");
             let _ = tmux_status(&["send-keys", "-t", &target_pane, &spaced, "C-m"]);
         }
     } else if !cmd.is_empty() && cmd != "__FRESH__" {
         let pid = std::process::id();
-        let chan = format!("awt_ready_{}", pid);
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
-        let init_cmd = format!("sh -c 'tmux wait-for -S {}; exec {} -l'", chan, shell);
+        let chan = format!("awt_ready_{pid}");
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let init_cmd = ready_then_shell(&shell, &chan);
         let _ = tmux_status(&["new-session", "-d", "-s", sess, "-c", target_dir, &init_cmd]);
         let _ = tmux_status(&["wait-for", &chan]);
-        let spaced = format!(" {}", cmd);
+        let spaced = format!(" {cmd}");
         let _ = tmux_status(&["send-keys", "-t", &target_pane, &spaced, "C-m"]);
     } else {
         let _ = tmux_status(&["new-session", "-d", "-s", sess, "-c", target_dir]);
@@ -184,8 +207,7 @@ fn is_git_repo() -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
     if wt {
         return true;
     }
@@ -194,8 +216,7 @@ fn is_git_repo() -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 fn get_repo_root() -> String {
@@ -219,12 +240,11 @@ fn compute_session_name(repo_root: &str, folder: &str) -> String {
     let parent = Path::new(repo_root)
         .parent()
         .and_then(|p| p.file_name())
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| "repo".to_string());
+        .map_or_else(|| "repo".to_string(), |f| f.to_string_lossy().to_string());
     if parent == ".dotfiles" {
-        format!("_dotfiles/{}", folder)
+        format!("_dotfiles/{folder}")
     } else {
-        format!("{}/{}", parent, folder)
+        format!("{parent}/{folder}")
     }
 }
 
@@ -282,7 +302,7 @@ fn split_merge_args(args: &[String], is_ship: bool) -> (String, Vec<String>) {
                 flags.push(val.clone());
             }
         } else if target.is_empty() {
-            target = a.clone();
+            target.clone_from(a);
         } else {
             flags.push(a.clone());
         }
@@ -295,29 +315,25 @@ fn split_merge_args(args: &[String], is_ship: bool) -> (String, Vec<String>) {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let first = args.first().map(|s| s.as_str()).unwrap_or("");
+    let first = args.first().map_or("", std::string::String::as_str);
     match first {
         "-h" | "--help" | "help" => {
             show_help();
             return 0;
         }
         "popup" => {
-            if let Ok(home) = std::env::var("HOME") {
-                let popup = format!("{}/.config/tmux/awt-popup.sh", home);
-                if Path::new(&popup).is_file() {
-                    let cwd = std::env::current_dir()
-                        .ok()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| ".".to_string());
-                    return Command::new(&popup)
-                        .arg(&cwd)
-                        .status()
-                        .ok()
-                        .and_then(|s| s.code())
-                        .unwrap_or(0);
-                }
-            }
-            return 0;
+            let Some(popup) = find_user_script("awt-popup.sh") else {
+                return missing_script("awt-popup.sh");
+            };
+            let cwd = std::env::current_dir()
+                .ok()
+                .map_or_else(|| ".".to_string(), |p| p.to_string_lossy().to_string());
+            return Command::new(&popup)
+                .arg(&cwd)
+                .status()
+                .ok()
+                .and_then(|s| s.code())
+                .unwrap_or(0);
         }
         "clone" => {
             return Command::new("awtc")
@@ -342,7 +358,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 ) {
                     flags.push(arg.clone());
                 } else if branch.is_empty() {
-                    branch = arg.clone();
+                    branch.clone_from(arg);
                 } else {
                     flags.push(arg.clone());
                 }
@@ -355,7 +371,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
             let repo_root = get_repo_root();
             let branch_folder = branch.replace('/', "-");
-            let target_dir = format!("{}/../{}", repo_root, branch_folder);
+            let target_dir = format!("{repo_root}/../{branch_folder}");
             let session_name = compute_session_name(&repo_root, &branch_folder);
             if let Some(del_script) = find_waymaker_script("awt-delete.sh") {
                 let mut cmd = Command::new(del_script);
@@ -366,7 +382,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             return missing_script("awt-delete.sh");
         }
         "rebase" => {
-            let base = args.get(1).map(|s| s.as_str()).unwrap_or("");
+            let base = args.get(1).map_or("", std::string::String::as_str);
             let repo_root = get_repo_root();
             let cur_branch = Command::new("git")
                 .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -448,7 +464,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             .args(["-o", "awt"])
             .stdout(Stdio::piped())
             .spawn()
-            .and_then(|c| c.wait_with_output());
+            .and_then(std::process::Child::wait_with_output);
         if let Ok(o) = out {
             let chosen = String::from_utf8_lossy(&o.stdout)
                 .trim_end_matches(['\r', '\n'])
@@ -512,7 +528,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
             "--" => {
                 custom_ai_cmd = args[idx + 1..].join(" ");
-                extra_flags.push(format!("--ai={}", custom_ai_cmd));
+                extra_flags.push(format!("--ai={custom_ai_cmd}"));
                 break;
             }
             _ => {
@@ -526,9 +542,9 @@ pub fn run_cli(args: &[String]) -> i32 {
                     custom_ai_cmd = cmd.to_string();
                     extra_flags.push(a.clone());
                 } else if branch.is_empty() {
-                    branch = a.clone();
+                    branch.clone_from(a);
                 } else if base == "HEAD" {
-                    base = a.clone();
+                    base.clone_from(a);
                 }
             }
         }
@@ -561,7 +577,7 @@ pub fn run_cli(args: &[String]) -> i32 {
 
     let branch_clean = branch.replace('/', "-");
     let repo_root = get_repo_root();
-    let raw_target = format!("{}/../{}", repo_root, branch_clean);
+    let raw_target = format!("{repo_root}/../{branch_clean}");
     let target_dir = fs::canonicalize(&raw_target)
         .ok()
         .map(|p| p.to_string_lossy().to_string())
@@ -572,7 +588,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         if !custom_ai_cmd.is_empty() && custom_ai_cmd != "__FRESH__" {
             spawn_session_and_send(&sess, &target_dir, &custom_ai_cmd);
             if no_connect {
-                println!("✓ Dispatched '{}' in session '{}'", custom_ai_cmd, sess);
+                println!("✓ Dispatched '{custom_ai_cmd}' in session '{sess}'");
                 return 0;
             }
         }
@@ -597,8 +613,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             .stderr(Stdio::null())
             .output()
             .ok()
-            .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
-            .unwrap_or(false);
+            .is_some_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty());
         if dirty {
             stashed = Command::new("git")
                 .args([
@@ -608,12 +623,11 @@ pub fn run_cli(args: &[String]) -> i32 {
                     "push",
                     "--include-untracked",
                     "-m",
-                    &format!("awt-with-changes: {}", branch),
+                    &format!("awt-with-changes: {branch}"),
                 ])
                 .stdout(Stdio::null())
                 .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
+                .is_ok_and(|s| s.success());
         }
     }
 
@@ -621,17 +635,15 @@ pub fn run_cli(args: &[String]) -> i32 {
         .args(["worktree", "add", &target_dir, "-b", &branch, &base])
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
         || Command::new("git")
             .args(["worktree", "add", &target_dir, &branch])
             .stderr(Stdio::null())
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .is_ok_and(|s| s.success());
 
     if !created {
-        println!("awt: Failed to create worktree at {}", target_dir);
+        println!("awt: Failed to create worktree at {target_dir}");
         return 1;
     }
 
@@ -640,7 +652,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             "-C",
             &target_dir,
             "config",
-            &format!("branch.{}.base", branch),
+            &format!("branch.{branch}.base"),
             &base,
         ])
         .stderr(Stdio::null())
@@ -652,18 +664,16 @@ pub fn run_cli(args: &[String]) -> i32 {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+            .is_ok_and(|s| s.success());
         if !popped {
             eprintln!(
-                "⚠ Stash pop had conflicts in {}; your changes remain safe in 'git stash list'.",
-                target_dir
+                "⚠ Stash pop had conflicts in {target_dir}; your changes remain safe in 'git stash list'."
             );
         }
     }
 
     if let Ok(home) = std::env::var("HOME") {
-        let post_hook = format!("{}/.config/waymaker/hooks/post-create.sh", home);
+        let post_hook = format!("{home}/.config/waymaker/hooks/post-create.sh");
         if Path::new(&post_hook).is_file() {
             let _ = Command::new(&post_hook)
                 .args([&target_dir, &branch, &base])
@@ -672,15 +682,12 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
     }
 
-    println!("✓ Worktree ready at {}", target_dir);
+    println!("✓ Worktree ready at {target_dir}");
 
     if !custom_ai_cmd.is_empty() && custom_ai_cmd != "__FRESH__" {
         spawn_session_and_send(&sess, &target_dir, &custom_ai_cmd);
         if no_connect {
-            println!(
-                "✓ Dispatched '{}' in background session '{}'",
-                custom_ai_cmd, sess
-            );
+            println!("✓ Dispatched '{custom_ai_cmd}' in background session '{sess}'");
             return 0;
         }
     }
@@ -702,6 +709,47 @@ pub fn run_cli(args: &[String]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ready_then_shell_keeps_shell_and_channel_as_single_words() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("waymux-wt-quote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = |name: &str, body: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        };
+        // A fake tmux records the channel; a fake login shell records its arguments.
+        exe(
+            "tmux",
+            "#!/bin/sh\necho \"$3\" > \"$(dirname \"$0\")/chan\"\n",
+        );
+        let shell = exe(
+            "my shell",
+            "#!/bin/sh\necho \"$@\" > \"$(dirname \"$0\")/ran\"\n",
+        );
+        let path = format!("{}:/usr/bin:/bin", dir.display());
+        let run = |cmd: &str| {
+            std::process::Command::new("sh")
+                .args(["-c", cmd])
+                .env("PATH", &path)
+                .status()
+                .unwrap()
+        };
+
+        assert!(run(&ready_then_shell(&shell.to_string_lossy(), "awt ready; x")).success());
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+        assert_eq!(read("chan").trim(), "awt ready; x");
+        assert_eq!(read("ran").trim(), "-l");
+
+        let hostile = format!("/nonexistent; touch '{}'", dir.join("pwned").display());
+        run(&ready_then_shell(&hostile, "c"));
+        let pwned = dir.join("pwned").exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!pwned, "a hostile $SHELL ran a command");
+    }
 
     #[test]
     fn test_slugify_prompt() {
@@ -738,7 +786,7 @@ mod tests {
     fn test_split_merge_args_forwards_confirm_and_push() {
         let args: Vec<String> = ["ship", "feat/x", "--confirm"]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         let (target, flags) = split_merge_args(&args, true);
         assert_eq!(target, "feat/x");
@@ -746,7 +794,7 @@ mod tests {
 
         let args: Vec<String> = ["merge", "--into", "main", "feat/y", "--squash"]
             .iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         let (target, flags) = split_merge_args(&args, false);
         assert_eq!(target, "feat/y");

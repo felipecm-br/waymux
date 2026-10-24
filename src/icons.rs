@@ -5,6 +5,7 @@
 
 use crate::config::Config;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 /// Generic glyph for an agent whose name has no entry of its own.
@@ -91,8 +92,7 @@ impl Registry {
         REGISTRY.get_or_init(|| {
             Config::default_path()
                 .and_then(|p| Config::load(&p).ok())
-                .map(|c| Self::from_config(&c))
-                .unwrap_or_else(Self::builtin)
+                .map_or_else(Self::builtin, |c| Self::from_config(&c))
         })
     }
 
@@ -148,15 +148,12 @@ pub fn run_icons_cli(args: &[String]) -> i32 {
             return 2;
         }
     };
-    match render(Registry::global(), format) {
-        Some(out) => {
-            print!("{out}");
-            0
-        }
-        None => {
-            eprintln!("waymux icons: unknown format '{format}' (tsv, sh, tmux)");
-            2
-        }
+    if let Some(out) = render(Registry::global(), format) {
+        print!("{out}");
+        0
+    } else {
+        eprintln!("waymux icons: unknown format '{format}' (tsv, sh, tmux)");
+        2
     }
 }
 
@@ -165,25 +162,25 @@ fn render(reg: &Registry, format: &str) -> Option<String> {
     match format {
         "tsv" => {
             for (k, v) in &reg.programs {
-                out.push_str(&format!("program\t{k}\t{v}\n"));
+                let _ = writeln!(out, "program\t{k}\t{v}");
             }
             for (k, v) in &reg.states {
-                out.push_str(&format!("state\t{k}\t{v}\n"));
+                let _ = writeln!(out, "state\t{k}\t{v}");
             }
         }
         "sh" => {
             for (k, v) in &reg.programs {
-                out.push_str(&format!("ICON_{}={}\n", sh_name(k), sh_quote(v)));
+                let _ = writeln!(out, "ICON_{}={}", sh_name(k), sh_quote(v));
             }
             for (k, v) in &reg.states {
-                out.push_str(&format!("ICON_STATE_{}={}\n", sh_name(k), sh_quote(v)));
+                let _ = writeln!(out, "ICON_STATE_{}={}", sh_name(k), sh_quote(v));
             }
         }
         // The `icons:` section of tmux-nerd-font-window-name's YAML config.
         "tmux" => {
             out.push_str("icons:\n");
             for (k, v) in &reg.programs {
-                out.push_str(&format!("  {k}: \"{}\"\n", v.replace('"', "\\\"")));
+                let _ = writeln!(out, "  {k}: \"{}\"", v.replace('"', "\\\""));
             }
         }
         _ => return None,

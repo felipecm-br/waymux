@@ -8,7 +8,7 @@ pub fn runtime_dir() -> PathBuf {
         PathBuf::from(xdg).join("waymux")
     } else {
         let uid = nix::unistd::getuid();
-        PathBuf::from(format!("/tmp/waymux-{}", uid))
+        PathBuf::from(format!("/tmp/waymux-{uid}"))
     }
 }
 
@@ -57,8 +57,7 @@ pub fn materialize_cockpit_toml() -> PathBuf {
 
     let exe_path = std::env::current_exe()
         .ok()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "waymux".to_string());
+        .map_or_else(|| "waymux".to_string(), |p| p.to_string_lossy().to_string());
 
     let theme = crate::theme::ThemePalette::load();
     let rendered = render_cockpit_toml(&exe_path, &theme.muted, &theme.muted_line);

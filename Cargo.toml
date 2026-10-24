@@ -2,6 +2,8 @@
 name = "waymux"
 version = "0.2.3"
 edition = "2024"
+# let-chains (`if let .. && let ..`) need 1.88; CI builds with this exact version.
+rust-version = "1.88"
 default-run = "waymux"
 description = "Autonomous Terminal AI Cockpit, Orchestrator CLI & JSON-RPC Control Plane Daemon"
 license = "MIT"
@@ -19,6 +21,10 @@ path = "src/main.rs"
 name = "acpd"
 path = "src/bin/acpd.rs"
 
+[features]
+# Entry points for the fuzz targets in fuzz/ (`waymux::fuzzing`).
+fuzzing = ["dep:tower"]
+
 [dependencies]
 anyhow = "1.0.104"
 async-trait = "0.1.89"
@@ -29,8 +35,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.150"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "process", "signal", "sync", "time", "fs", "io-util"] }
 toml = "0.8"
+tower = { version = "0.5", features = ["util"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# The library only serves this crate's own binaries, so API-surface lints add noise:
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# The long CLI/render functions get split when they are next changed, not in a lint pass.
+too_many_lines = "allow"
 
 [profile.release]
 lto = "thin"

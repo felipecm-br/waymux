@@ -120,6 +120,7 @@ impl ThemePalette {
     }
 
     /// Resolves the agent-state colors from config overrides or the built-in palette.
+    #[must_use]
     pub fn with_state_colors(mut self, theme: Option<&ThemeConfig>, mode: Mode) -> Self {
         let color = |state| hex_to_ansi_fg(&status_palette::state_color(theme, state, mode));
         self.s_permission = color("permission");
@@ -213,7 +214,7 @@ pub fn hex_to_ansi_fg(hex: &str) -> String {
     let r = u8::from_str_radix(&clean[0..2], 16).unwrap_or(137);
     let g = u8::from_str_radix(&clean[2..4], 16).unwrap_or(180);
     let b = u8::from_str_radix(&clean[4..6], 16).unwrap_or(250);
-    format!("\x1b[38;2;{};{};{}m", r, g, b)
+    format!("\x1b[38;2;{r};{g};{b}m")
 }
 
 pub fn strip_ansi(input: &str) -> String {

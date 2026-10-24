@@ -4,7 +4,7 @@ mod rpc;
 mod state;
 
 pub use rpc::{RpcError, RpcRequest, RpcResponse};
-pub use state::{ApiState, PaneStateInfo, StallRecord};
+pub use state::{ApiState, PaneStateInfo, Settings, StallRecord};
 
 use crate::adapters::AgentState;
 use axum::{Json, Router, extract::State, routing::post};
@@ -14,7 +14,6 @@ use state::{IncomingUpdate, dispatch_update};
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct StatusRequest {
     pub agent: Option<String>,
     pub pane_id: String,

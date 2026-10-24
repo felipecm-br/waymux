@@ -67,8 +67,7 @@ async fn wait_for_typing_pause() {
         let activity = tmux_output(&["list-clients", "-F", "#{client_activity}"]).await;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         if at_typing_pause(&activity, now) || start.elapsed() >= BREAKPOINT_MAX_WAIT {
             return;
         }
@@ -94,7 +93,8 @@ async fn play_file(event_type: &'static str, player: String, sound_path: String)
 }
 
 pub struct SoundAdapter {
-    config: Option<SoundConfig>,
+    /// `[sound]` from the config, replaced on a config reload.
+    config: std::sync::RwLock<Option<SoundConfig>>,
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,
     /// Set while a deferred completion chime waits for a typing pause.
     response_pending: Arc<AtomicBool>,
@@ -103,19 +103,10 @@ pub struct SoundAdapter {
 impl SoundAdapter {
     pub fn new(config: Option<SoundConfig>) -> Self {
         Self {
-            config,
+            config: std::sync::RwLock::new(config),
             pane_states: Arc::new(Mutex::new(HashMap::new())),
             response_pending: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    fn expand_home(path: &str) -> String {
-        if path.starts_with("~/")
-            && let Ok(home) = std::env::var("HOME")
-        {
-            return format!("{}{}", home, &path[1..]);
-        }
-        path.to_string()
     }
 
     /// Per-user config directories searched for sound overrides, in priority order.
@@ -136,23 +127,17 @@ impl SoundAdapter {
         ];
 
         for dir in Self::SOUND_CONFIG_DIRS {
-            mute_markers.push(format!("{}/.config/{}/sounds/muted", home, dir));
-            state_pointers.push(format!(
-                "{}/.config/{}/sounds/{}.sound",
-                home, dir, event_type
-            ));
-            direct_files.push(format!(
-                "{}/.config/{}/sounds/{}.wav",
-                home, dir, event_type
-            ));
+            mute_markers.push(format!("{home}/.config/{dir}/sounds/muted"));
+            state_pointers.push(format!("{home}/.config/{dir}/sounds/{event_type}.sound"));
+            direct_files.push(format!("{home}/.config/{dir}/sounds/{event_type}.wav"));
         }
 
         if event_type == "response" {
-            state_pointers.push(format!("{}/.config/omarchy/sounds/ai-response.sound", home));
+            state_pointers.push(format!("{home}/.config/omarchy/sounds/ai-response.sound"));
             for dir in Self::SOUND_CONFIG_DIRS {
-                state_pointers.push(format!("{}/.config/{}/sounds/response.sound", home, dir));
+                state_pointers.push(format!("{home}/.config/{dir}/sounds/response.sound"));
             }
-            direct_files.push(format!("{}/.config/omarchy/sounds/ai-response.wav", home));
+            direct_files.push(format!("{home}/.config/omarchy/sounds/ai-response.wav"));
         }
 
         (mute_markers, state_pointers, direct_files)
@@ -160,8 +145,13 @@ impl SoundAdapter {
 
     fn resolve_sound_path(&self, event_type: &str) -> Option<String> {
         let home = std::env::var("HOME").ok()?;
+        self.resolve_sound_path_in(&home, event_type)
+    }
+
+    /// `resolve_sound_path` against an explicit home directory, so tests never touch `$HOME`.
+    fn resolve_sound_path_in(&self, home: &str, event_type: &str) -> Option<String> {
         let (mute_markers, state_pointers, direct_files) =
-            Self::sound_search_paths(&home, event_type);
+            Self::sound_search_paths(home, event_type);
 
         // Check explicit mute marker files
         for marker in &mute_markers {
@@ -183,7 +173,7 @@ impl SoundAdapter {
                     return None;
                 }
                 if !trimmed.is_empty() {
-                    let expanded = Self::expand_home(trimmed);
+                    let expanded = crate::sys::expand_home_in(home, trimmed);
                     if std::path::Path::new(&expanded).is_file() {
                         return Some(expanded);
                     }
@@ -199,7 +189,7 @@ impl SoundAdapter {
         }
 
         // 3. Check explicit config from toml
-        if let Some(sound_cfg) = &self.config {
+        if let Some(sound_cfg) = super::read(&self.config).as_ref() {
             let custom_path = match event_type {
                 "response" => sound_cfg.response.as_deref(),
                 "question" => sound_cfg
@@ -215,7 +205,7 @@ impl SoundAdapter {
             };
 
             if let Some(p) = custom_path {
-                let expanded = Self::expand_home(p);
+                let expanded = crate::sys::expand_home_in(home, p);
                 if std::path::Path::new(&expanded).is_file() {
                     return Some(expanded);
                 }
@@ -224,15 +214,15 @@ impl SoundAdapter {
 
         // 4. Fallback defaults
         let default_sound = match event_type {
-            "question" => format!("{}/.local/share/sounds/ai/02-gentle-ping.wav", home),
-            "permission" => format!("{}/.local/share/sounds/ai/06-cyber-pulse.wav", home),
-            "error" => format!("{}/.local/share/sounds/ai/10-arcade-blip.wav", home),
-            _ => format!("{}/.local/share/sounds/ai/01-crystal-chime.wav", home),
+            "question" => format!("{home}/.local/share/sounds/ai/02-gentle-ping.wav"),
+            "permission" => format!("{home}/.local/share/sounds/ai/06-cyber-pulse.wav"),
+            "error" => format!("{home}/.local/share/sounds/ai/10-arcade-blip.wav"),
+            _ => format!("{home}/.local/share/sounds/ai/01-crystal-chime.wav"),
         };
 
         let fallbacks = [
             default_sound,
-            format!("{}/.local/share/sounds/ai/01-crystal-chime.wav", home),
+            format!("{home}/.local/share/sounds/ai/01-crystal-chime.wav"),
             "/usr/share/sounds/freedesktop/stereo/complete.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/message.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/bell.oga".to_string(),
@@ -250,7 +240,8 @@ impl SoundAdapter {
 
     /// Player and sound file for an event, or None when sound is off or muted.
     fn sound_for(&self, event_type: &'static str) -> Option<(String, String)> {
-        if let Some(cfg) = &self.config
+        let config = super::read(&self.config).clone();
+        if let Some(cfg) = &config
             && !cfg.enabled
         {
             return None;
@@ -264,8 +255,7 @@ impl SoundAdapter {
             return None;
         };
 
-        let player = self
-            .config
+        let player = config
             .as_ref()
             .and_then(|c| c.player.clone())
             .unwrap_or_else(crate::sys::default_sound_player);
@@ -306,6 +296,10 @@ impl SoundAdapter {
 
 #[async_trait]
 impl OutputAdapter for SoundAdapter {
+    fn reload(&self, config: &crate::config::Config) {
+        super::write(&self.config, config.sound.clone());
+    }
+
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()> {
         let prev_state = {
             let mut states = self.pane_states.lock().await;
@@ -320,10 +314,15 @@ impl OutputAdapter for SoundAdapter {
 
         match (&prev_state, &update.state) {
             // When agent transitions from Working (or active state) to Idle -> AI response finished!
-            (Some(AgentState::Working), AgentState::Idle)
-            | (Some(AgentState::AwaitingInput), AgentState::Idle)
-            | (Some(AgentState::Permission), AgentState::Idle)
-            | (Some(AgentState::Stalled), AgentState::Idle) => {
+            (
+                Some(
+                    AgentState::Working
+                    | AgentState::AwaitingInput
+                    | AgentState::Permission
+                    | AgentState::Stalled,
+                ),
+                AgentState::Idle,
+            ) => {
                 self.play_response(&update.pane_id).await;
             }
             // When agent transitions to AwaitingInput -> AI asking question / input
@@ -430,11 +429,7 @@ mod tests {
         std::fs::write(&resp_file, b"resp").unwrap();
         std::fs::write(&quest_file, b"quest").unwrap();
 
-        let old_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", &temp_dir);
-        }
-
+        let home = temp_dir.to_string_lossy();
         let sound_cfg = SoundConfig {
             enabled: true,
             player: Some("pw-play".to_string()),
@@ -446,14 +441,8 @@ mod tests {
         let adapter = SoundAdapter::new(Some(sound_cfg));
 
         // When question is configured, it should resolve to quest_file, NOT fallback to response (resp_file)
-        let resolved_quest = adapter.resolve_sound_path("question");
-        let resolved_resp = adapter.resolve_sound_path("response");
-
-        if let Some(h) = old_home {
-            unsafe {
-                std::env::set_var("HOME", h);
-            }
-        }
+        let resolved_quest = adapter.resolve_sound_path_in(&home, "question");
+        let resolved_resp = adapter.resolve_sound_path_in(&home, "response");
 
         assert_eq!(
             resolved_quest,
@@ -462,6 +451,14 @@ mod tests {
         assert_eq!(resolved_resp, Some(resp_file.to_string_lossy().to_string()));
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_reload_can_turn_sound_off() {
+        let adapter = SoundAdapter::new(None);
+        let config: crate::config::Config = toml::from_str("[sound]\nenabled = false\n").unwrap();
+        adapter.reload(&config);
+        assert_eq!(adapter.sound_for("error"), None);
     }
 
     #[test]

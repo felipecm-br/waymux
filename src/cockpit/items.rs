@@ -3,6 +3,7 @@ use crate::rpc_client;
 use crate::theme::{BOLD, RESET, ThemePalette};
 use crate::tmux_cmd::tmux_out;
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -63,13 +64,18 @@ pub fn scan_running_agents() -> (HashMap<String, String>, HashMap<String, u64>) 
 
     let uptime_secs: u64 = fs::read_to_string("/proc/uptime")
         .ok()
-        .and_then(|s| s.split_whitespace().next()?.parse::<f64>().ok())
-        .map(|f| f as u64)
+        .and_then(|s| {
+            s.split_whitespace()
+                .next()?
+                .split('.')
+                .next()?
+                .parse::<u64>()
+                .ok()
+        })
         .unwrap_or(0);
 
-    let entries = match fs::read_dir("/proc") {
-        Ok(e) => e,
-        Err(_) => return (sess_agent, sess_etimes),
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return (sess_agent, sess_etimes);
     };
 
     for entry in entries.flatten() {
@@ -79,7 +85,7 @@ pub fn scan_running_agents() -> (HashMap<String, String>, HashMap<String, u64>) 
             _ => continue,
         };
 
-        let comm_path = format!("/proc/{}/comm", pid_str);
+        let comm_path = format!("/proc/{pid_str}/comm");
         let comm = match fs::read_to_string(&comm_path) {
             Ok(c) => c.trim().to_string(),
             Err(_) => continue,
@@ -89,7 +95,7 @@ pub fn scan_running_agents() -> (HashMap<String, String>, HashMap<String, u64>) 
             continue;
         }
 
-        let stat_path = format!("/proc/{}/stat", pid_str);
+        let stat_path = format!("/proc/{pid_str}/stat");
         if let Ok(stat_str) = fs::read_to_string(&stat_path)
             && let Some(rparen) = stat_str.rfind(')')
         {
@@ -100,8 +106,7 @@ pub fn scan_running_agents() -> (HashMap<String, String>, HashMap<String, u64>) 
                 let etimes = rest
                     .get(19)
                     .and_then(|st| st.parse::<u64>().ok())
-                    .map(|ticks| uptime_secs.saturating_sub(ticks / 100))
-                    .unwrap_or(0);
+                    .map_or(0, |ticks| uptime_secs.saturating_sub(ticks / 100));
 
                 sess_agent.insert(sess_id.to_string(), clean_agent);
                 sess_etimes.insert(sess_id.to_string(), etimes);
@@ -116,7 +121,7 @@ pub fn format_age(diff_s: u64) -> String {
     if diff_s == 0 {
         String::new()
     } else if diff_s < 60 {
-        format!("{}s", diff_s)
+        format!("{diff_s}s")
     } else if diff_s < 3600 {
         format!("{}m", diff_s / 60)
     } else if diff_s < 86400 {
@@ -151,9 +156,8 @@ fn parse_pr_cache(content: &str) -> (String, String) {
     }
     // Wrappers around `gh` (e.g. mise shims) can print a line before the JSON.
     let json = content.find('{').map_or(content, |i| &content[i..]);
-    let val: serde_json::Value = match serde_json::from_str(json) {
-        Ok(v) => v,
-        Err(_) => return (String::new(), String::new()),
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(json) else {
+        return (String::new(), String::new());
     };
 
     let pr_num = match val.get("number") {
@@ -181,7 +185,9 @@ fn parse_pr_cache(content: &str) -> (String, String) {
                 matches!(
                     item.get("status").and_then(|s| s.as_str()),
                     Some("IN_PROGRESS" | "QUEUED")
-                ) || item.get("conclusion").is_none_or(|c| c.is_null())
+                ) || item
+                    .get("conclusion")
+                    .is_none_or(serde_json::Value::is_null)
             });
             let has_success = arr.iter().any(|item| {
                 matches!(
@@ -220,7 +226,7 @@ fn parse_porcelain_status(out: &str, meta: &mut GitMetadata) -> usize {
                     .map(|idx| {
                         rest[idx + label.len()..]
                             .chars()
-                            .take_while(|c| c.is_ascii_digit())
+                            .take_while(char::is_ascii_digit)
                             .collect::<String>()
                     })
                     .and_then(|n| n.parse().ok())
@@ -247,16 +253,16 @@ fn parse_shortstat(shortstat: &str, dirty_files: usize) -> String {
             continue;
         };
         if p.contains("insertion") {
-            ds.push_str(&format!("+{}", n));
+            let _ = write!(ds, "+{n}");
         } else if p.contains("deletion") {
             if !ds.is_empty() {
                 ds.push(' ');
             }
-            ds.push_str(&format!("-{}", n));
+            let _ = write!(ds, "-{n}");
         }
     }
     if ds.is_empty() {
-        format!("*{}", dirty_files)
+        format!("*{dirty_files}")
     } else {
         ds
     }
@@ -319,7 +325,7 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
         };
         let _ = fs::create_dir_all(&cache_dir);
         let cache_file = cache_dir
-            .join(format!("{}.json", hash_key))
+            .join(format!("{hash_key}.json"))
             .to_string_lossy()
             .to_string();
         let cache_path = Path::new(&cache_file);
@@ -328,8 +334,7 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
             .and_then(|m| m.modified())
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| now_s.saturating_sub(d.as_secs()))
-            .unwrap_or(9999);
+            .map_or(9999, |d| now_s.saturating_sub(d.as_secs()));
 
         if cache_age > 60 {
             let _ = fs::OpenOptions::new()
@@ -370,7 +375,7 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
         return "…".to_string();
     }
     let prefix: String = s.chars().take(max_chars - 1).collect();
-    format!("{}…", prefix)
+    format!("{prefix}…")
 }
 
 /// Row priority and glyph. Urgent rows use `triage::service_class` + 1 so the Cockpit lists
@@ -481,8 +486,7 @@ fn mtime_secs(path: &Path) -> u64 {
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// "Done, not reviewed": the agent finished after the last review and left something to look
@@ -555,7 +559,7 @@ fn repo_path_for(ppath: &str) -> Option<String> {
         return None;
     }
     if !p.join(".git").exists() && p.join(".bare").is_dir() && p.join("main").is_dir() {
-        return Some(format!("{}/main", ppath));
+        return Some(format!("{ppath}/main"));
     }
     Some(ppath.to_string())
 }
@@ -620,8 +624,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
 
     let now_s = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
 
     let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
     let list_out = tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default();
@@ -659,7 +662,7 @@ fn build_rows(
     now_s: u64,
     (cur_session, cur_window): (&str, &str),
 ) -> Vec<RawPaneRow> {
-    let now_ms = now_s * 1000;
+    let now_millis = now_s * 1000;
     let mut raw_rows: Vec<RawPaneRow> = Vec::new();
 
     for line in list_out.lines() {
@@ -704,10 +707,10 @@ fn build_rows(
             st = raw_state.to_string();
         }
         if st.is_empty() {
-            if !detected_agent.is_empty() {
-                st = "idle".to_string();
-            } else {
+            if detected_agent.is_empty() {
                 st = "normal".to_string();
+            } else {
+                st = "idle".to_string();
             }
         }
 
@@ -715,7 +718,7 @@ fn build_rows(
             if ts < 10_000_000_000 {
                 now_s.saturating_sub(ts)
             } else {
-                now_ms.saturating_sub(ts) / 1000
+                now_millis.saturating_sub(ts) / 1000
             }
         } else {
             sources.sess_etimes.get(pane_os_pid).copied().unwrap_or(0)
@@ -904,12 +907,14 @@ fn render_items(
             let vis_len = char_len(&w_trunc);
             let pad_t = 24usize.saturating_sub(vis_len);
             let spaces = " ".repeat(pad_t);
-            format!("{}{}{}{}", c_wname, w_trunc, RESET, spaces)
+            format!("{c_wname}{w_trunc}{RESET}{spaces}")
         };
 
         // Col 4: Fixed-width Branch + Remote Sync Column (14 visual chars)
         let mut sync_search = String::new();
-        let branch_col = if !row.branch.is_empty() {
+        let branch_col = if row.branch.is_empty() {
+            format!("  {}-             {}", theme.c_muted, RESET)
+        } else {
             let br_trunc = truncate_chars(&row.branch, 8);
             let mut sync_glyph = String::new();
             let mut sync_col_c = &theme.c_cyan;
@@ -919,11 +924,11 @@ fn render_items(
                     sync_search = "synced".to_string();
                 } else {
                     if row.u_ahead > 0 {
-                        sync_glyph.push_str(&format!(" ↑{}", row.u_ahead));
+                        let _ = write!(sync_glyph, " ↑{}", row.u_ahead);
                         sync_search.push_str(" ahead");
                     }
                     if row.u_behind > 0 {
-                        sync_glyph.push_str(&format!(" ↓{}", row.u_behind));
+                        let _ = write!(sync_glyph, " ↓{}", row.u_behind);
                         sync_col_c = &theme.c_error;
                         sync_search.push_str(" behind");
                     }
@@ -953,8 +958,6 @@ fn render_items(
                 RESET,
                 br_spaces
             )
-        } else {
-            format!("  {}-             {}", theme.c_muted, RESET)
         };
 
         // Col 5: Fixed-width Git Diffstat / PR Badge Column (11 visual chars)
@@ -965,11 +968,11 @@ fn render_items(
                     diff_badge.push(' ');
                 }
                 if part.starts_with('+') {
-                    diff_badge.push_str(&format!("{}{}{}", theme.c_diff_ins, part, RESET));
+                    let _ = write!(diff_badge, "{}{}{}", theme.c_diff_ins, part, RESET);
                 } else if part.starts_with('-') {
-                    diff_badge.push_str(&format!("{}{}{}", theme.c_diff_del, part, RESET));
+                    let _ = write!(diff_badge, "{}{}{}", theme.c_diff_del, part, RESET);
                 } else {
-                    diff_badge.push_str(&format!("{}{}{}", theme.c_diff_dirty, part, RESET));
+                    let _ = write!(diff_badge, "{}{}{}", theme.c_diff_dirty, part, RESET);
                 }
             }
         }
@@ -995,7 +998,9 @@ fn render_items(
         };
 
         // Col 6: Right-aligned Elapsed Age Column (6 visual chars)
-        let age_col = if !row.age_str.is_empty() {
+        let age_col = if row.age_str.is_empty() {
+            format!(" {}     -{}", theme.c_muted, RESET)
+        } else {
             let pad_a = 6usize.saturating_sub(char_len(&row.age_str));
             let age_spaces = " ".repeat(pad_a);
             if row.prio <= REVIEW_PRIO {
@@ -1003,14 +1008,10 @@ fn render_items(
             } else {
                 format!(" {}{}{}{}", age_spaces, theme.c_muted, row.age_str, RESET)
             }
-        } else {
-            format!(" {}     -{}", theme.c_muted, RESET)
         };
 
-        let display_line = format!(
-            " {}{} {}{}{}{}  ",
-            ai_ico, idx_col, title_col, branch_col, diff_col, age_col
-        );
+        let display_line =
+            format!(" {ai_ico}{idx_col} {title_col}{branch_col}{diff_col}{age_col}  ");
 
         let search_title = format!(
             "{} {} {} {} {} {} {} {} {} {}",
@@ -1088,10 +1089,10 @@ fn render_items(
 
     let mut out = String::new();
     if filter_agents && agent_count == 0 {
-        out.push_str(&format!(
-            "· (no active AI agents)\t0\t-\t{}\t-\t-\t-\t-\t-\t-\t-\t \x1b[2m(no AI agents running — press a for Fleet view)\x1b[0m\n",
-            cur_session
-        ));
+        let _ = writeln!(
+            out,
+            "· (no active AI agents)\t0\t-\t{cur_session}\t-\t-\t-\t-\t-\t-\t-\t \x1b[2m(no AI agents running — press a for Fleet view)\x1b[0m"
+        );
     } else {
         let mut sessions_order: Vec<(u8, u64, String)> = sess_prio
             .iter()
@@ -1112,7 +1113,7 @@ fn render_items(
             if let Some(rows_str) = items
                 && !rows_str.is_empty()
             {
-                out.push_str(&format!("#  {}\n{}", sess, rows_str));
+                let _ = write!(out, "#  {sess}\n{rows_str}");
             }
         }
     }
@@ -1131,16 +1132,16 @@ pub fn run_cli(args: &[String]) -> i32 {
             "--fleet" | "fleet" => filter_agents = false,
             _ => {
                 if cur_session.is_empty() {
-                    cur_session = arg.clone();
+                    cur_session.clone_from(arg);
                 } else if cur_window.is_empty() {
-                    cur_window = arg.clone();
+                    cur_window.clone_from(arg);
                 }
             }
         }
     }
 
     let output = generate_items(filter_agents, &cur_session, &cur_window);
-    print!("{}", output);
+    print!("{output}");
     0
 }
 
@@ -1253,10 +1254,7 @@ mod tests {
         }
         fs::write(repo.join("change.txt"), "x").unwrap();
         let path = repo.to_str().unwrap();
-        let finished_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
+        let finished_ms = crate::sys::unix_ms();
 
         assert!(pane_needs_review(path, finished_ms));
         assert!(!pane_needs_review(path, 0), "no completion seen");

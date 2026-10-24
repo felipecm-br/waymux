@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
@@ -13,7 +14,7 @@ pub fn get_token_path() -> PathBuf {
             .join("token")
     } else {
         let uid = nix::unistd::getuid();
-        PathBuf::from(format!("/tmp/waymux-{}", uid)).join("token")
+        PathBuf::from(format!("/tmp/waymux-{uid}")).join("token")
     }
 }
 
@@ -27,7 +28,7 @@ pub fn get_legacy_token_path() -> PathBuf {
             .join("token")
     } else {
         let uid = nix::unistd::getuid();
-        PathBuf::from(format!("/tmp/acpd-{}", uid)).join("token")
+        PathBuf::from(format!("/tmp/acpd-{uid}")).join("token")
     }
 }
 
@@ -66,10 +67,10 @@ pub fn generate_and_save_token_to(token_path: &std::path::Path) -> anyhow::Resul
     let mut file = fs::File::open("/dev/urandom")?;
     file.read_exact(&mut bytes)?;
 
-    let token = bytes
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>();
+    let token = bytes.iter().fold(String::with_capacity(64), |mut hex, b| {
+        let _ = write!(hex, "{b:02x}");
+        hex
+    });
 
     write_token_file(token_path, &token)?;
     tracing::info!("Generated session token at {}", token_path.display());

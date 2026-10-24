@@ -19,7 +19,30 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Audio players in preference order: PipeWire, PulseAudio, ALSA, macOS.
+/// `path` with a leading `~/` replaced by `home`; anything else (`~user/`, absolute) is kept.
+pub fn expand_home_in(home: &str, path: &str) -> String {
+    match path.strip_prefix('~') {
+        Some(rest) if rest.starts_with('/') => format!("{home}{rest}"),
+        _ => path.to_string(),
+    }
+}
+
+/// [`expand_home_in`] with `$HOME`; the path is returned unchanged when `$HOME` is unset.
+pub fn expand_home(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) => expand_home_in(&home, path),
+        Err(_) => path.to_string(),
+    }
+}
+
+/// Milliseconds since the Unix epoch; 0 when the clock is before it.
+pub fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Audio players in preference order: `PipeWire`, `PulseAudio`, ALSA, macOS.
 const SOUND_PLAYERS: [&str; 4] = ["pw-play", "paplay", "aplay", "afplay"];
 
 /// The first installed audio player, or `pw-play` so the failure names a real tool.
@@ -34,6 +57,13 @@ pub fn default_sound_player() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_expand_home_in_only_rewrites_a_leading_tilde_slash() {
+        assert_eq!(expand_home_in("/h", "~/a.wav"), "/h/a.wav");
+        assert_eq!(expand_home_in("/h", "~user/a.wav"), "~user/a.wav");
+        assert_eq!(expand_home_in("/h", "/abs/a.wav"), "/abs/a.wav");
+    }
 
     #[test]
     fn test_shell_quote_survives_sh_round_trip() {

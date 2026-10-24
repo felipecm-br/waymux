@@ -1,0 +1,1 @@
+{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo test --all\nrm -rf x"},"transcript_path":"/tmp/t.jsonl"}

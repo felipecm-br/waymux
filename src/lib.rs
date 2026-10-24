@@ -24,6 +24,9 @@ pub mod tmux_cmd;
 pub mod triage;
 pub mod wt;
 
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
+
 use std::path::Path;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -225,13 +228,23 @@ fn is_daemon_invocation(first_arg: &str) -> bool {
 /// only print get the default disposition back and exit quietly. The daemon and the
 /// socket-writing hot paths (`hook`, `inject`, `dismiss`) keep EPIPE as an error.
 fn restore_default_sigpipe(command: &str) {
+    use nix::sys::signal::{SigHandler, Signal, signal};
     if is_daemon_invocation(command) || matches!(command, "hook" | "inject" | "dismiss") {
         return;
     }
-    use nix::sys::signal::{SigHandler, Signal, signal};
     // SAFETY: single-threaded at this point, and SIG_DFL installs no handler code.
     unsafe {
         let _ = signal(Signal::SIGPIPE, SigHandler::SigDfl);
+    }
+}
+
+/// Tracing filter for the daemon when `RUST_LOG` is unset. A bare level (`debug`) applies to
+/// Waymux and axum; anything with `=` or `,` is taken as a full `EnvFilter` directive.
+fn log_filter(log_level: Option<&str>) -> String {
+    match log_level.map(str::trim) {
+        Some(directive) if directive.contains(['=', ',']) => directive.to_string(),
+        Some(level) if !level.is_empty() => format!("waymux={level},acpd={level},axum={level}"),
+        _ => "waymux=info,acpd=info,axum=debug".to_string(),
     }
 }
 
@@ -240,8 +253,7 @@ pub fn entry() -> anyhow::Result<()> {
     let bin_name = args
         .first()
         .and_then(|s| Path::new(s).file_name())
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| "waymux".to_string());
+        .map_or_else(|| "waymux".to_string(), |f| f.to_string_lossy().to_string());
 
     if bin_name == "awt" {
         let code = wt::run_cli(&args[1..]);
@@ -251,7 +263,7 @@ pub fn entry() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let first_arg = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    let first_arg = args.get(1).map_or("", std::string::String::as_str);
     restore_default_sigpipe(first_arg);
 
     if let Some(spec) = find_command(first_arg)
@@ -316,62 +328,51 @@ pub fn entry() -> anyhow::Result<()> {
         .build()?;
 
     rt.block_on(async move {
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| "waymux=info,acpd=info,axum=debug".into()),
-            )
-            .with(tracing_subscriber::fmt::layer())
-            .init();
-
-        tracing::info!("Starting Waymux Daemon...");
-
         let mut config_path = None;
         let mut iter = args.iter().skip(1);
         while let Some(arg) = iter.next() {
-            if arg == "daemon" {
-                continue;
-            } else if arg == "--config" || arg == "-c" {
+            if arg == "--config" || arg == "-c" {
                 config_path = iter.next().cloned();
             } else if let Some(stripped) = arg.strip_prefix("--config=") {
                 config_path = Some(stripped.to_string());
             }
         }
 
-        let config = match config_path {
-            Some(path) => {
-                tracing::info!("Loading config from {}", path);
-                crate::config::Config::load(&path)?
-            }
-            None => {
-                if let Some(found) = crate::config::Config::default_path() {
-                    tracing::info!("Loading config from {}", found);
-                    crate::config::Config::load(&found)?
-                } else {
-                    tracing::info!("No external config file found, using built-in defaults");
-                    crate::config::Config::default()
-                }
-            }
-        };
+        // The config is read before tracing starts so that its `log_level` can set the filter.
+        let (config, loaded_from) = crate::config::Config::resolve(config_path.as_deref())?;
+
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| log_filter(config.log_level.as_deref()).into()),
+            )
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+
+        tracing::info!("Starting Waymux Daemon...");
+        if let Some(path) = &loaded_from {
+            tracing::info!("Loaded config from {}", path);
+        } else {
+            tracing::info!("No external config file found, using built-in defaults");
+        }
 
         // Default to the per-user runtime dir (systemd's RuntimeDirectory=waymux) so a second
         // daemon is refused even without a config file.
-        let pid_path = match config.pid_file.clone() {
-            Some(path) => path,
-            None => {
-                let dir = crate::presets::private_runtime_dir().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "{} is not a directory owned by you; set pid_file in the config",
-                        crate::presets::runtime_dir().display()
-                    )
-                })?;
-                dir.join("waymux.pid").to_string_lossy().to_string()
-            }
+        let pid_path = if let Some(path) = config.pid_file.clone() {
+            path
+        } else {
+            let dir = crate::presets::private_runtime_dir().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} is not a directory owned by you; set pid_file in the config",
+                    crate::presets::runtime_dir().display()
+                )
+            })?;
+            dir.join("waymux.pid").to_string_lossy().to_string()
         };
         tracing::info!("Creating PID file at {}", pid_path);
         let _pid_file = crate::pid::PidFile::create(&pid_path)?;
 
-        crate::daemon::run(config).await?;
+        crate::daemon::run(config, config_path).await?;
         Ok(())
     })
 }
@@ -379,6 +380,17 @@ pub fn entry() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_log_filter_from_config_level() {
+        assert_eq!(log_filter(None), "waymux=info,acpd=info,axum=debug");
+        assert_eq!(log_filter(Some("  ")), "waymux=info,acpd=info,axum=debug");
+        assert_eq!(
+            log_filter(Some("debug")),
+            "waymux=debug,acpd=debug,axum=debug"
+        );
+        assert_eq!(log_filter(Some("waymux=trace")), "waymux=trace");
+    }
 
     #[test]
     fn test_daemon_invocation_only_for_bare_daemon_or_config() {

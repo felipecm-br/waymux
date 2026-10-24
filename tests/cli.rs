@@ -4,6 +4,7 @@
 
 use std::cell::Cell;
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -152,7 +153,7 @@ struct Daemon {
 
 impl Daemon {
     fn stop(mut self) -> std::process::ExitStatus {
-        let pid = nix::unistd::Pid::from_raw(self.child.id() as i32);
+        let pid = nix::unistd::Pid::from_raw(i32::try_from(self.child.id()).unwrap());
         let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM);
         let status = self.child.wait().unwrap();
         std::mem::forget(self);
@@ -288,4 +289,67 @@ fn doctor_names_the_missing_daemon_and_fails() {
     assert_eq!(out.status.code(), Some(1));
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("[FAIL] daemon"), "{text}");
+}
+
+#[test]
+fn sighup_reloads_the_config_and_keeps_it_when_the_new_one_is_broken() {
+    let sb = Sandbox::new();
+    let daemon = sb.spawn_daemon();
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(daemon.child.id()).unwrap());
+    let hup = || nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGHUP).unwrap();
+
+    // flow_log_hook is the reloadable setting a client can observe: it runs on a question.
+    let events = sb.dir.join("events");
+    let hook = sb.dir.join("hook.sh");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\necho \"$1\" >> '{}'\n", events.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let config_path = sb.dir.join("config.toml");
+    let base = std::fs::read_to_string(&config_path).unwrap();
+    let with_hook = base.replacen(
+        "\n\n[sound]",
+        &format!("\nflow_log_hook = \"{}\"\n\n[sound]", hook.display()),
+        1,
+    );
+
+    // Toggle the pane between working and permission until the hook has logged a question.
+    let pane = [("TMUX_PANE", "%9002")];
+    let question_logged = || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            sb.run_with_stdin(&["hook", "tmux", "PreToolUse"], &pane, "{}");
+            sb.run_with_stdin(
+                &["hook", "tmux", "Notification", "claude"],
+                &pane,
+                r#"{"message":"Claude needs your permission to use Bash"}"#,
+            );
+            std::thread::sleep(Duration::from_millis(100));
+            if std::fs::read_to_string(&events).is_ok_and(|e| e.contains("agent_question")) {
+                return true;
+            }
+        }
+        false
+    };
+
+    std::fs::write(&config_path, &with_hook).unwrap();
+    hup();
+    assert!(question_logged(), "SIGHUP did not apply flow_log_hook");
+
+    std::fs::write(&config_path, "this is = not toml").unwrap();
+    hup();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        sb.run(&["health"]).status.success(),
+        "daemon died on a broken config"
+    );
+    std::fs::remove_file(&events).unwrap();
+    assert!(
+        question_logged(),
+        "a broken config replaced the running one"
+    );
+
+    assert!(daemon.stop().success());
 }

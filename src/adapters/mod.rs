@@ -64,8 +64,7 @@ impl std::str::FromStr for AgentState {
             "error" => Ok(AgentState::Error),
             "closed" => Ok(AgentState::Closed),
             invalid => Err(format!(
-                "Invalid params: Unknown agent state '{}'. Expected one of: working, idle, awaiting_input, permission, stalled, error, closed.",
-                invalid
+                "Invalid params: Unknown agent state '{invalid}'. Expected one of: working, idle, awaiting_input, permission, stalled, error, closed."
             )),
         }
     }
@@ -85,6 +84,21 @@ pub trait OutputAdapter: Send + Sync {
     async fn rehydrate(&self, _update: &AgentUpdate) -> anyhow::Result<()> {
         Ok(())
     }
+    /// Takes the theme, spinner or sound settings of a reloaded config (SIGHUP).
+    fn reload(&self, _config: &crate::config::Config) {}
+}
+
+/// Read a reloadable setting. A writer that panicked left a complete value behind (every
+/// write replaces the whole struct), so a poisoned lock is still safe to read.
+pub(crate) fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+pub(crate) fn write<T>(lock: &std::sync::RwLock<T>, value: T) {
+    *lock
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
 fn urgency_score(state: &AgentState) -> u8 {
@@ -100,7 +114,11 @@ fn urgency_score(state: &AgentState) -> u8 {
 }
 
 /// Icon from `[theme.states.<key>]` (else the registry's built-in) and the semantic state color.
-fn state_icon_color(theme: Option<&ThemeConfig>, key: &str, mode: Mode) -> (String, String) {
+pub(crate) fn state_icon_color(
+    theme: Option<&ThemeConfig>,
+    key: &str,
+    mode: Mode,
+) -> (String, String) {
     let icon = theme
         .and_then(|t| t.states.get(key))
         .map(|s| s.icon.as_str())

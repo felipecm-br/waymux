@@ -39,7 +39,7 @@ Running multiple autonomous AI coding agents (`agy`, `claude`, `codex`, `opencod
 curl -fsSL https://raw.githubusercontent.com/felipecm-br/waymux/main/install.sh | bash
 ```
 
-The installer downloads the pre-built binary to `~/.local/bin/waymux` (and symlinks `~/.local/bin/acpd`), verifies its SHA-256 checksum (the install stops if the checksum is missing or wrong; `WAYMUX_SKIP_CHECKSUM=1` overrides), installs the tmux plugin and the `awt-*.sh` worktree helpers under `~/.local/share/waymux/`, and enables the user-level systemd service (`waymux.service`).
+The installer downloads the pre-built binary to `~/.local/bin/waymux` (and symlinks `~/.local/bin/acpd`), verifies its SHA-256 checksum (the install stops if the checksum is missing or wrong; `WAYMUX_SKIP_CHECKSUM=1` overrides; `WAYMUX_VERIFY_ATTESTATION=1` also checks the signed build provenance with `gh attestation verify`), installs the tmux plugin and the `awt-*.sh` worktree helpers under `~/.local/share/waymux/`, and enables the user-level systemd service (`waymux.service`).
 
 | Flag | Effect |
 | :--- | :--- |
@@ -48,7 +48,7 @@ The installer downloads the pre-built binary to `~/.local/bin/waymux` (and symli
 | `--no-systemd` | Skip the systemd unit (start the daemon yourself with `waymux daemon`) |
 | `--prefix <dir>` | Install the binary somewhere other than `~/.local/bin` |
 
-### Build from Source (Rust 1.85+)
+### Build from Source (Rust 1.88+)
 
 ```bash
 git clone https://github.com/felipecm-br/waymux.git
@@ -62,7 +62,7 @@ cd waymux
 waymux doctor
 ```
 
-`doctor` checks the daemon, its token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, a sound player, the worktree helpers, your Claude Code hooks and the theme file, and prints a fix for each gap. It exits 1 only when something required (daemon, tmux, git) is missing.
+`doctor` checks the daemon, its token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, a sound player, the worktree helpers, your Claude Code hooks, the theme file and (on Linux) whether your installed `waymux.service` lacks settings the shipped unit has, and prints a fix for each gap. It exits 1 only when something required (daemon, tmux, git) is missing.
 
 ### Platform Support
 
@@ -207,6 +207,12 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 
 **Icon registry.** `[icons]` maps program/agent names to Nerd Font glyphs (`devin = ""`, `agent` is the generic fallback) and `[theme.states.<state>].icon` sets the state glyphs. Both merge over built-in defaults. waymux uses them for the window rename, the Cockpit, state badges and alert bells. `waymux icon` and `waymux icons` hand the same registry to shell scripts and tmux plugins, so an icon is defined once.
 
+**Reloading.** `systemctl --user reload waymux` (or `kill -HUP`) re-reads the config without dropping agent state: theme, spinner, sounds, `idle_debounce_ms` and `flow_log_hook` change at once (running spinners keep their frames until the window next starts one). A config that fails to parse is logged and the running one kept. `listen_addr`, `port`, `pid_file` and `log_level` need a restart.
+
+**Logging.** `log_level` sets the daemon's log filter: a level (`debug`) or a full `tracing` directive (`waymux=debug,axum=warn`). `RUST_LOG` overrides it.
+
+**Flow events.** `flow_log_hook = "~/bin/flow-log.sh"` runs that program as `<hook> <event> <pane> <extra>` whenever an agent asks a question (`agent_question`), you reply (`human_reply`) or a working agent finishes (`agent_finished`), e.g. to keep a focus or time-tracking log. Unset, nothing runs.
+
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
 | `WAYMUX_PORT` | `4040` | Port the client commands talk to (e.g. a sandboxed second daemon) |
@@ -218,8 +224,11 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 | `AWT_SWEEP_KEEP_BRANCHES` | your user name | Branches whose `target/` `awt sweep --clean-targets` never removes |
 | `@border_gradient` (tmux option) | unset | Waymaker gradient palette (preset such as `aurora` or `#rrggbb,#rrggbb,...`) for the Cockpit popup: it opens borderless and Waymaker draws a gradient frame |
 | `WAYMUX_SKIP_CHECKSUM` | `0` | `1` lets `install.sh` proceed without a published checksum |
+| `WAYMUX_VERIFY_ATTESTATION` | `0` | `1` makes `install.sh` also verify each archive's build provenance (needs `gh`; releases from v0.2.4 on) |
 
 Helpers in `~/.config/waymaker/scripts/` override the bundled `awt-*.sh` scripts, so you can customize the worktree flow without forking.
+
+Four optional extension scripts are not bundled and are looked up in the same helper directories, then in `~/.config/tmux/`: `awt-popup.sh` (`waymux wt popup` and the Cockpit's worktree switcher; `wt popup` exits 127 without it), `session-picker.sh` (the Cockpit's session switcher), `record-window-state.sh` (run as `--push <session:window>` before the Cockpit kills a window) and `flow-telemetry.py` (run with `--hud` above the Cockpit help).
 
 ## 🩺 Troubleshooting
 

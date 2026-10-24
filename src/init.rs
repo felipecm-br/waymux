@@ -1,5 +1,5 @@
 /// The unit `install.sh` and `init --systemd` write; one file so the two cannot drift.
-const SYSTEMD_UNIT: &str = include_str!("../systemd/waymux.service");
+pub(crate) const SYSTEMD_UNIT: &str = include_str!("../systemd/waymux.service");
 
 const TMUX_SNIPPET: &str = "\
 # Waymux tmux integration. Easiest: load the plugin installed by install.sh,
@@ -89,7 +89,7 @@ fn print_hooks() {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let flag = args.first().map(|s| s.as_str()).unwrap_or("--help");
+    let flag = args.first().map_or("--help", std::string::String::as_str);
     match flag {
         "--tmux" | "tmux" => {
             println!("{TMUX_SNIPPET}");

@@ -12,7 +12,7 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
         "…".to_string()
     } else {
         let prefix: String = s.chars().take(max_chars - 1).collect();
-        format!("{}…", prefix)
+        format!("{prefix}…")
     }
 }
 
@@ -82,15 +82,24 @@ fn render_diff_stream(raw_diff: &str, preview_w: usize) {
         return;
     }
 
-    print!("{}", raw_diff);
+    print!("{raw_diff}");
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let mut session = args.first().map(|s| s.as_str()).unwrap_or("").to_string();
-    let idx = args.get(1).map(|s| s.as_str()).unwrap_or("");
-    let mut ppath = args.get(3).map(|s| s.as_str()).unwrap_or("").to_string();
-    let agent_name = args.get(5).map(|s| s.as_str()).unwrap_or("");
-    let mut branch = args.get(7).map(|s| s.as_str()).unwrap_or("").to_string();
+    let mut session = args
+        .first()
+        .map_or("", std::string::String::as_str)
+        .to_string();
+    let idx = args.get(1).map_or("", std::string::String::as_str);
+    let mut ppath = args
+        .get(3)
+        .map_or("", std::string::String::as_str)
+        .to_string();
+    let agent_name = args.get(5).map_or("", std::string::String::as_str);
+    let mut branch = args
+        .get(7)
+        .map_or("", std::string::String::as_str)
+        .to_string();
 
     if (session.is_empty() || idx.is_empty() || idx == "-")
         && let Some(stripped) = session.strip_prefix('#')
@@ -100,7 +109,7 @@ pub fn run_cli(args: &[String]) -> i32 {
 
     if ppath.is_empty() || ppath == "-" {
         if !session.is_empty() && !idx.is_empty() && idx != "-" {
-            let target = format!("{}:{}", session, idx);
+            let target = format!("{session}:{idx}");
             ppath = tmux_out(&[
                 "display-message",
                 "-p",
@@ -110,7 +119,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             ])
             .unwrap_or_default();
         } else if !session.is_empty() {
-            let target = format!("{}:", session);
+            let target = format!("{session}:");
             ppath = tmux_out(&[
                 "display-message",
                 "-p",
@@ -124,8 +133,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     if ppath.is_empty() {
         ppath = std::env::current_dir()
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
+            .map_or_else(|| ".".to_string(), |p| p.to_string_lossy().to_string());
     }
 
     let theme = ThemePalette::load();
@@ -151,19 +159,17 @@ pub fn run_cli(args: &[String]) -> i32 {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .is_ok_and(|s| s.success());
 
     if !is_git {
-        println!("{}╭{}╮{}", c_gray, border_dashes, RESET);
+        println!("{c_gray}╭{border_dashes}╮{RESET}");
         print!(
             "{}",
             box_line(
                 c_gray,
                 w,
                 &format!(
-                    "{}󰈈 Mode:{}   {}{}󰊢 LIVE GIT DIFF (Side-by-Side){} {}[v toggles preview]{}",
-                    BOLD, RESET, c_cyan, BOLD, RESET, DIM, RESET
+                    "{BOLD}󰈈 Mode:{RESET}   {c_cyan}{BOLD}󰊢 LIVE GIT DIFF (Side-by-Side){RESET} {DIM}[v toggles preview]{RESET}"
                 )
             )
         );
@@ -172,10 +178,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             box_line(
                 c_gray,
                 w,
-                &format!(
-                    "{}󰅚 Target:{} {}Not a Git Repository{}",
-                    BOLD, RESET, c_red, RESET
-                )
+                &format!("{BOLD}󰅚 Target:{RESET} {c_red}Not a Git Repository{RESET}")
             )
         );
         let clean_path = truncate_str(&ppath, w.saturating_sub(14));
@@ -184,16 +187,12 @@ pub fn run_cli(args: &[String]) -> i32 {
             box_line(
                 c_gray,
                 w,
-                &format!(
-                    "{}󰉋 Path:{}   {}{}{}",
-                    BOLD, RESET, c_gray, clean_path, RESET
-                )
+                &format!("{BOLD}󰉋 Path:{RESET}   {c_gray}{clean_path}{RESET}")
             )
         );
-        print!("{}╰{}╯{}\n\n", c_gray, border_dashes, RESET);
+        print!("{c_gray}╰{border_dashes}╯{RESET}\n\n");
         println!(
-            "  {}(Press {}{}?{} for help, {}{}v{} to return to terminal snapshot){}",
-            c_gray, c_blue, BOLD, c_gray, c_cyan, BOLD, c_gray, RESET
+            "  {c_gray}(Press {c_blue}{BOLD}?{c_gray} for help, {c_cyan}{BOLD}v{c_gray} to return to terminal snapshot){RESET}"
         );
         return 0;
     }
@@ -224,34 +223,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     let untracked_count = untracked_files.len();
 
     let (diff_type, scope_desc, stat_summary, diff_stat, base_commit, card_border) =
-        if !porcelain.trim().is_empty() {
-            let mut summary = if modified_count > 0 {
-                let s = git_out(&ppath, &["diff", "HEAD", "--shortstat"]);
-                s.split_whitespace().collect::<Vec<_>>().join(" ")
-            } else {
-                String::new()
-            };
-            let dstat = if modified_count > 0 {
-                git_out(&ppath, &["diff", "HEAD", "--stat", "--color=always"])
-            } else {
-                String::new()
-            };
-            if untracked_count > 0 {
-                if !summary.is_empty() {
-                    summary = format!("{}, {} untracked", summary, untracked_count);
-                } else {
-                    summary = format!("{} untracked file(s)", untracked_count);
-                }
-            }
-            (
-                "uncommitted",
-                "Working Tree (Staged & Unstaged)".to_string(),
-                summary,
-                dstat,
-                String::new(),
-                c_orange,
-            )
-        } else {
+        if porcelain.trim().is_empty() {
             let def_branch = ["main", "master"]
                 .iter()
                 .find(|&&b| {
@@ -260,8 +232,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .status()
-                        .map(|s| s.success())
-                        .unwrap_or(false)
+                        .is_ok_and(|s| s.success())
                 })
                 .copied()
                 .unwrap_or("main");
@@ -276,8 +247,8 @@ pub fn run_cli(args: &[String]) -> i32 {
             let head_c = git_out(&ppath, &["rev-parse", "HEAD"]).trim().to_string();
 
             if !base_c.is_empty() && base_c != head_c {
-                let range_dots = format!("{}..HEAD", base_c);
-                let range_triple = format!("{}...HEAD", base_c);
+                let range_dots = format!("{base_c}..HEAD");
+                let range_triple = format!("{base_c}...HEAD");
                 let c_count = git_out(&ppath, &["rev-list", "--count", &range_dots])
                     .trim()
                     .to_string();
@@ -288,7 +259,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 let dstat = git_out(&ppath, &["diff", &range_triple, "--stat", "--color=always"]);
                 (
                     "branch_commits",
-                    format!("Branch Commits ({} ahead of {})", c_count, def_branch),
+                    format!("Branch Commits ({c_count} ahead of {def_branch})"),
                     summary,
                     dstat,
                     base_c,
@@ -308,24 +279,50 @@ pub fn run_cli(args: &[String]) -> i32 {
                 );
                 (
                     "latest_commit",
-                    format!("Latest Commit ({})", clog),
+                    format!("Latest Commit ({clog})"),
                     summary,
                     dstat,
                     String::new(),
                     c_cyan,
                 )
             }
+        } else {
+            let mut summary = if modified_count > 0 {
+                let s = git_out(&ppath, &["diff", "HEAD", "--shortstat"]);
+                s.split_whitespace().collect::<Vec<_>>().join(" ")
+            } else {
+                String::new()
+            };
+            let dstat = if modified_count > 0 {
+                git_out(&ppath, &["diff", "HEAD", "--stat", "--color=always"])
+            } else {
+                String::new()
+            };
+            if untracked_count > 0 {
+                if summary.is_empty() {
+                    summary = format!("{untracked_count} untracked file(s)");
+                } else {
+                    summary = format!("{summary}, {untracked_count} untracked");
+                }
+            }
+            (
+                "uncommitted",
+                "Working Tree (Staged & Unstaged)".to_string(),
+                summary,
+                dstat,
+                String::new(),
+                c_orange,
+            )
         };
 
-    println!("{}╭{}╮{}", card_border, border_dashes, RESET);
+    println!("{card_border}╭{border_dashes}╮{RESET}");
     print!(
         "{}",
         box_line(
             card_border,
             w,
             &format!(
-                "{}󰈈 Mode:{}   {}{}󰊢 LIVE GIT DIFF (Side-by-Side){} {}[v toggles preview]{}",
-                BOLD, RESET, c_cyan, BOLD, RESET, DIM, RESET
+                "{BOLD}󰈈 Mode:{RESET}   {c_cyan}{BOLD}󰊢 LIVE GIT DIFF (Side-by-Side){RESET} {DIM}[v toggles preview]{RESET}"
             )
         )
     );
@@ -335,10 +332,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             box_line(
                 card_border,
                 w,
-                &format!(
-                    "{}󰑮 Agent:{}  {}{}{}",
-                    BOLD, RESET, c_yellow, agent_name, RESET
-                )
+                &format!("{BOLD}󰑮 Agent:{RESET}  {c_yellow}{agent_name}{RESET}")
             )
         );
     }
@@ -348,10 +342,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         box_line(
             card_border,
             w,
-            &format!(
-                "{}󰜘 Scope:{}  {}{}{}",
-                BOLD, RESET, c_fg, clean_scope, RESET
-            )
+            &format!("{BOLD}󰜘 Scope:{RESET}  {c_fg}{clean_scope}{RESET}")
         )
     );
     let clean_branch = truncate_str(&branch, w.saturating_sub(14));
@@ -360,50 +351,41 @@ pub fn run_cli(args: &[String]) -> i32 {
         box_line(
             card_border,
             w,
-            &format!(
-                "{}󰊢 Branch:{} {}{}{}",
-                BOLD, RESET, c_blue, clean_branch, RESET
-            )
+            &format!("{BOLD}󰊢 Branch:{RESET} {c_blue}{clean_branch}{RESET}")
         )
     );
 
-    if !stat_summary.is_empty() {
+    if stat_summary.is_empty() {
+        print!(
+            "{}",
+            box_line(
+                card_border,
+                w,
+                &format!("{BOLD}󰄧 Churn:{RESET}  {c_cyan}Working tree clean{RESET}")
+            )
+        );
+    } else {
         let raw_stat = truncate_str(&stat_summary, w.saturating_sub(14));
         print!(
             "{}",
             box_line(
                 card_border,
                 w,
-                &format!("{}󰄧 Churn:{}  {}", BOLD, RESET, raw_stat)
-            )
-        );
-    } else {
-        print!(
-            "{}",
-            box_line(
-                card_border,
-                w,
-                &format!(
-                    "{}󰄧 Churn:{}  {}Working tree clean{}",
-                    BOLD, RESET, c_cyan, RESET
-                )
+                &format!("{BOLD}󰄧 Churn:{RESET}  {raw_stat}")
             )
         );
     }
-    print!("{}╰{}╯{}\n\n", card_border, border_dashes, RESET);
+    print!("{card_border}╰{border_dashes}╯{RESET}\n\n");
 
     let notes_section = notes::render_pending_notes(&ppath);
     if !notes_section.is_empty() {
-        print!("{}", notes_section);
+        print!("{notes_section}");
     }
 
     if !untracked_files.is_empty() {
-        println!(
-            "  {}{}󰄱 Untracked Files ({}):{}",
-            c_yellow, BOLD, untracked_count, RESET
-        );
+        println!("  {c_yellow}{BOLD}󰄱 Untracked Files ({untracked_count}):{RESET}");
         for ufile in untracked_files.iter().take(6) {
-            println!("    {}?{} {}{}{}", c_gray, RESET, c_yellow, ufile, RESET);
+            println!("    {c_gray}?{RESET} {c_yellow}{ufile}{RESET}");
         }
         if untracked_count > 6 {
             println!(
@@ -417,10 +399,10 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 
     if !diff_stat.trim().is_empty() {
-        println!("  {}{}󰄧 File Breakdown:{}", c_blue, BOLD, RESET);
+        println!("  {c_blue}{BOLD}󰄧 File Breakdown:{RESET}");
         let dlines: Vec<&str> = diff_stat.lines().collect();
         for dl in dlines.iter().take(12) {
-            println!("  {}", dl);
+            println!("  {dl}");
         }
         if dlines.len() > 12 {
             println!(
@@ -453,17 +435,15 @@ pub fn run_cli(args: &[String]) -> i32 {
             } else if untracked_count > 0 {
                 has_diff_content = true;
                 println!(
-                    "  {}All changes are newly created untracked files (listed above).{}",
-                    c_gray, RESET
+                    "  {c_gray}All changes are newly created untracked files (listed above).{RESET}"
                 );
                 println!(
-                    "  {}Stage files ({}git add{}) or open Lazygitrs ({}{}g{}) to inspect contents.{}",
-                    c_gray, c_fg, c_gray, c_magenta, BOLD, RESET, RESET
+                    "  {c_gray}Stage files ({c_fg}git add{c_gray}) or open Lazygitrs ({c_magenta}{BOLD}g{RESET}) to inspect contents.{RESET}"
                 );
             }
         }
         "branch_commits" => {
-            let range_triple = format!("{}...HEAD", base_commit);
+            let range_triple = format!("{base_commit}...HEAD");
             let raw_diff = git_out(&ppath, &["diff", &range_triple]);
             if !raw_diff.is_empty() {
                 has_diff_content = true;
@@ -481,17 +461,12 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 
     if !has_diff_content {
+        println!("  {c_cyan}󰄬 No diff changes to display (working tree clean).{RESET}\n");
         println!(
-            "  {}󰄬 No diff changes to display (working tree clean).{}\n",
-            c_cyan, RESET
+            "  {c_gray}• Press {c_magenta}{BOLD}g{RESET}{c_gray} to launch Lazygitrs (Dual-Diff){RESET}"
         );
         println!(
-            "  {}• Press {}{}g{}{} to launch Lazygitrs (Dual-Diff){}",
-            c_gray, c_magenta, BOLD, RESET, c_gray, RESET
-        );
-        println!(
-            "  {}• Press {}{}v{}{} to toggle back to live terminal snapshot{}",
-            c_gray, c_cyan, BOLD, RESET, c_gray, RESET
+            "  {c_gray}• Press {c_cyan}{BOLD}v{RESET}{c_gray} to toggle back to live terminal snapshot{RESET}"
         );
     }
 

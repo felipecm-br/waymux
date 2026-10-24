@@ -4,7 +4,7 @@ Thank you for contributing to **Waymux**! This guide covers development setup, q
 
 ## Development Setup
 
-Requires Rust 1.85+ (edition 2024) and Tmux 3.2+.
+Requires Rust 1.88+ (edition 2024) and Tmux 3.2+.
 
 ```bash
 # Clone the repository
