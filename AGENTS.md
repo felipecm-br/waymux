@@ -54,6 +54,8 @@
 - `scripts/awt/`: The bundled `awt-*.sh` helpers that `install.sh` copies to `~/.local/share/waymux/scripts`. Keep them free of author-specific paths (`AWT_SWEEP_ROOTS`, `AWT_SWEEP_KEEP_BRANCHES` hold the personal defaults).
 - `src/init.rs`: `waymux init {--tmux|--systemd|--hooks}`: plugin line, the shipped `systemd/waymux.service` (embedded with `include_str!`), and a Claude Code hooks block.
 - `src/test_strategies.rs`: test-only `proptest` strategies (agent/tmux/`gh`-shaped JSON and hostile strings) shared by the property tests; `proptest-regressions/` keeps shrunk failures so they replay on every run.
+- `tests/common/mod.rs`: the shared harness for the end-to-end tests below (`Env`: temp `HOME`, runtime and tmux dirs, a `PATH` with only `git`, repository helpers).
+- `tests/wt.rs`: End-to-end tests of `waymux wt` with fake `awt-*.sh` helpers that record their arguments (lookup order, exit 127, forwarded arguments) and real `git worktree` creation (`-c`, `-W`, post-create hook).
 - `tests/cockpit.rs`: End-to-end tests of `cockpit-diff`, `cockpit-preview`, `cockpit-help` and `review-notes` against real temporary git repositories, with only `git` on `PATH` (no `delta`/`bat`, no tmux).
 - `tests/cli.rs`: End-to-end tests that start the built binary on a free port with its own `HOME`, `XDG_RUNTIME_DIR` and `TMUX_TMPDIR`, so they never touch the developer's tmux server, sounds or token.
 
