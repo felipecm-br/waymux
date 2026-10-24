@@ -9,10 +9,10 @@ every item here.
 
 | Area | State |
 |---|---|
-| Tests | 131 unit (15 `proptest` properties) and 35 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
-| Coverage | 72.2% lines; CI fails below 70% (`cargo llvm-cov --summary-only --fail-under-lines 70`) |
+| Tests | 139 unit (15 `proptest` properties) and 36 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
+| Coverage | 77.3% lines; CI fails below 75% (`cargo llvm-cov --summary-only --fail-under-lines 75`) |
 | Fuzzing | `fuzz/`: four libFuzzer targets (hook stdin, `lines.json`, `config.toml`, `/rpc`); seeds replay past crashes; weekly CI job |
-| Lints | `clippy::pedantic`, 0 warnings, 5 `allow`s each with a reason |
+| Lints | `clippy::pedantic`, `unsafe_code = "deny"`, 0 warnings |
 | Toolchain | MSRV 1.88 (`rust-version`, CI job); CI stable pinned at 1.99 (`RUST_STABLE` in `ci.yml`) |
 | Platforms | Linux and macOS in CI; releases for x86_64/aarch64, glibc, musl, macOS |
 | systemd | `Type=notify`, SIGHUP reload, watchdog, seccomp sandbox (`systemd-analyze security`: 6.1) |
@@ -107,7 +107,7 @@ a single-maintainer repository; see `docs/decisions/`.)
 
 **Effort.** Medium (mostly configuration).
 
-## 5. Make the Cockpit loop testable (`src/cockpit/mod.rs`, 19% coverage)
+## 5. Make the Cockpit loop testable (`src/cockpit/mod.rs`, 84.3% coverage) — Done
 
 **Why.** `run_cockpit` is the largest untested code: a 400-line loop that spawns the `wm`
 picker, reads the chosen `__ACTION__` row, and dispatches on string prefixes. A regression in

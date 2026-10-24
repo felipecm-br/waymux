@@ -179,3 +179,45 @@ fn keylog_is_off_by_default_and_respects_config_and_env_override() {
     let after = std::fs::read_to_string(&keys_tsv).unwrap();
     assert_eq!(after, content, "WAYMUX_KEYLOG=0 must override config");
 }
+
+#[test]
+fn cockpit_popup_loop_runs_wm_reopens_and_exits_on_cancel() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = Env::new();
+    let local_bin = env.dir.join("home/.local/bin");
+    std::fs::create_dir_all(&local_bin).unwrap();
+    let state_file = env.dir.join("wm_calls");
+    let wm_script = local_bin.join("wm");
+    // Call 1 prints __OPEN_PR__ (which reopens the loop saving session:idx); call 2 prints nothing (Esc).
+    std::fs::write(
+        &wm_script,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\nif [ ! -f '{0}' ]; then\n  echo \"$*\" > '{0}'\n  printf '__OPEN_PR__t\\t2\\tname\\tapi\\t%%1\\t{1}\\treview\\t-\\t-\\t-\\t-\\t-\\n'\nelse\n  echo \"$*\" >> '{0}'\nfi\n",
+            state_file.display(),
+            env.repo().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wm_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = env
+        .command(&["cockpit"])
+        .env("TMUX_POPUP", "1")
+        .env("TMUX_ORIGIN_SESSION", "orig")
+        .env("TMUX_ORIGIN_WINDOW", "0")
+        .env("WAYMUX_KEYLOG", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(
+        env.dir.join("run/waymux/cockpit-picker.toml").is_file(),
+        "cockpit preset materialized in runtime dir"
+    );
+    let calls = std::fs::read_to_string(&state_file).unwrap();
+    assert_eq!(
+        calls.lines().count(),
+        2,
+        "expected 2 wm invocations: {calls}"
+    );
+}

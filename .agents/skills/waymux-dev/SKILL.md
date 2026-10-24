@@ -75,7 +75,7 @@ The daemon is always the first binary's, so a daemon-side change shows in both c
 
 ## Coverage
 
-`cargo llvm-cov --summary-only` (CI fails below 70% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
+`cargo llvm-cov --summary-only` (CI fails below 75% lines). Raise the floor in `.github/workflows/ci.yml` when coverage rises; never lower it to make a change pass.
 
 ## Dependencies
 
