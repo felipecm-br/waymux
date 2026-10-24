@@ -418,7 +418,7 @@ mod tests {
                 "{} usage must start with its name",
                 c.name
             );
-            assert!(!c.about.is_empty());
+            assert_ne!(c.about, "");
         }
     }
 

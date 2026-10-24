@@ -330,10 +330,13 @@ mod tests {
             "[Service]\n# WatchdogSec=1s\nWatchdogSec=30s\nUMask=0077\nRestart=on-failure\n";
         let custom = "[Service]\nRestart=always\nUMask=0022\n";
         assert_eq!(missing_unit_directives(custom, shipped), ["WatchdogSec"]);
-        assert!(missing_unit_directives(shipped, shipped).is_empty());
-        assert!(
-            missing_unit_directives(crate::init::SYSTEMD_UNIT, crate::init::SYSTEMD_UNIT)
-                .is_empty()
+        assert_eq!(
+            missing_unit_directives(shipped, shipped),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            missing_unit_directives(crate::init::SYSTEMD_UNIT, crate::init::SYSTEMD_UNIT),
+            Vec::<String>::new()
         );
     }
 

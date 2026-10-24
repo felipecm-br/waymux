@@ -616,7 +616,10 @@ mod tests {
         // Last resort: panes running an agent binary or titled after one.
         let commands = "%1\tzsh\tshell\n%2\tclaude\t-\n%3\tnode\tOpenCode session\n%4\tvim\n";
         assert_eq!(select(&none, "", "", commands), ["%2", "%3"]);
-        assert!(select(&none, "", "", "%1\tzsh\tshell\n").is_empty());
+        assert_eq!(
+            select(&none, "", "", "%1\tzsh\tshell\n"),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

@@ -217,7 +217,7 @@ mod tests {
         let theme = config.theme.unwrap();
         let permission = theme.states.get("permission").unwrap();
         assert_eq!(permission.icon, "󰳌");
-        assert!(permission.color.is_empty());
+        assert_eq!(permission.color, "");
     }
 
     #[test]

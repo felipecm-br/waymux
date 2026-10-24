@@ -895,7 +895,7 @@ mod tests {
                     let state = ApiState::new(Vec::new(), 0);
                     state.rehydrate_from_raw_lines(&lines, ts).await;
                     for (pane, info) in state.pane_states.lock().await.iter() {
-                        assert!(!pane.is_empty());
+                        assert_ne!(pane, "");
                         assert!(STATES.contains(&info.state));
                     }
                 });

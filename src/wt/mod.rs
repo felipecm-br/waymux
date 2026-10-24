@@ -612,8 +612,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             .args(["-C", &repo_root, "status", "--porcelain"])
             .stderr(Stdio::null())
             .output()
-            .ok()
-            .is_some_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty());
+            .is_ok_and(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty());
         if dirty {
             stashed = Command::new("git")
                 .args([
