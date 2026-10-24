@@ -272,6 +272,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
         .or_else(|| (!accent_opt.is_empty()).then_some(accent_opt))
         .unwrap_or_else(|| "214".to_string());
 
+    let origin = format!("{}:{}", orig_sess, orig_win);
     loop {
         let items_str = items::generate_items(false, &orig_sess, &orig_win);
         let start_idx =
@@ -291,6 +292,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
                 "--group-prefix",
                 "#",
             ])
+            .env(crate::keylog::ORIGIN_ENV, &origin)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -313,6 +315,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             .to_string();
 
         if chosen.is_empty() {
+            crate::keylog::record("cockpit", "esc", "", "", &origin);
             return 0;
         }
 
@@ -504,6 +507,14 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             let cols: Vec<&str> = first.split('\t').collect();
             let session = cols.get(3).copied().unwrap_or("");
             let idx = cols.get(1).copied().unwrap_or("");
+            let state = cols.get(6).copied().unwrap_or("");
+            crate::keylog::record(
+                "cockpit",
+                "enter",
+                state,
+                &format!("{}:{}", session, idx),
+                &origin,
+            );
             if !session.is_empty() && !idx.is_empty() && idx != "-" {
                 let current_target = format!("{}:{}", orig_sess, orig_win);
                 if current_target != ":" {

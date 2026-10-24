@@ -65,7 +65,7 @@ prompt = " "
 show = true
 
 [footer]
-content = " {cyan,bold:Enter} {__MUTED_TEXT__:Jump} {__MUTED_LINE__:│} {cyan,bold:y/n} {__MUTED_TEXT__:Ack} {__MUTED_LINE__:│} {cyan,bold:r} {__MUTED_TEXT__:Review} {__MUTED_LINE__:│} {cyan,bold:i} {__MUTED_TEXT__:Input} {__MUTED_LINE__:│} {cyan,bold:g} {__MUTED_TEXT__:Git} {__MUTED_LINE__:│} {cyan,bold:a} {__MUTED_TEXT__:Agents} {__MUTED_LINE__:│} {cyan,bold:Tab} {__MUTED_TEXT__:Worktrees} {__MUTED_LINE__:│} {cyan,bold:?} {__MUTED_TEXT__:Help} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:Exit}"
+content = " {cyan,bold:Enter} {__MUTED_TEXT__:Jump} {__MUTED_LINE__:│} {cyan,bold:y/n} {__MUTED_TEXT__:Ack} {__MUTED_LINE__:│} {cyan,bold:i} {__MUTED_TEXT__:Input} {__MUTED_LINE__:│} {cyan,bold:g} {__MUTED_TEXT__:Git} {__MUTED_LINE__:│} {cyan,bold:r} {__MUTED_TEXT__:Notes} {__MUTED_LINE__:│} {cyan,bold:?} {__MUTED_TEXT__:Help} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:Exit}"
 row_connection = "Full"
 match_indent = false
 separator = "light"
@@ -81,53 +81,53 @@ color = "black"
 hints = false
 
 [ui.nav.binds]
-"tab"           = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"shift-tab"     = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"backtab"       = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"shift-backtab" = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"backspace"     = ["Print(__JUMP_LAST_AGENT__)", "Quit"]
-"ctrl-h"        = ["Print(__JUMP_LAST_AGENT__)", "Quit"]
-"a"             = "@reloadnext"
-"A"             = "@reloadprev"
-"ctrl-a"        = "@reloadnext"
-"o"             = ["Print(__OPEN_PR__{=})", "Quit"]
-"O"             = ["Print(__OPEN_PR_CHECKS__{=})", "Quit"]
-"/"             = "FocusFilter"
-"s"             = ["Print(__SWITCH_SESSION__)", "Quit"]
-"S"             = ["Print(__SHIP_WORKTREE__{=})", "Quit"]
-"r"             = ["Execute(__WAYMUX_BIN__ review-notes send \"{=path}\" \"{=session}\" \"{=idx}\" \"{=pid}\")", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"w"             = ["Print(__NEW_WORKTREE__{=})", "Quit"]
-"W"             = ["Print(__SWEEP_WORKTREES__{=})", "Quit"]
-"R"             = ["Print(__REAP_AGENTS__{=})", "Quit"]
-"t"             = ["Print(__CREATE_WINDOW__{=})", "Quit"]
-"T"             = ["Print(__CREATE_WINDOW__{=})", "Quit"]
-"c"             = ["Print(__NEW_WORKTREE__{=})", "Quit"]
-"C"             = ["Print(__NEW_WORKTREE__{=})", "Quit"]
-"g"             = ["Print(__LAZYGIT__{=})", "Quit"]
-"gg"            = ["Print(__LAZYGIT__{=})", "Quit"]
-"G"             = ["Print(__LAZYGIT__{=})", "Quit"]
-"ctrl-g"        = ["Print(__LAZYGIT__{=})", "Quit"]
-"p"             = ["Print(__PATCH_MODE__{=})", "Quit"]
-"P"             = ["Print(__PATCH_MODE__{=})", "Quit"]
-"ctrl-p"        = ["Print(__PATCH_MODE__{=})", "Quit"]
-"?"             = "SwitchPreview(1)"
-"shift-?"       = "SwitchPreview(1)"
-"F1"            = "SwitchPreview(1)"
-"i"             = "LiveInput(tmux send-keys -t '{=pid}' {=keys})"
-"I"             = ["PromptInput(__WAYMUX_BIN__ agent-action prompt '{=state}' '{=pid}' {input})", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"y"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action approve '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"Y"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action approve '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"n"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"N"             = ["ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"d"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"ctrl-d"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"x"             = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"J"             = "PreviewDown(5)"
-"K"             = "PreviewUp(5)"
-"+"             = "ExpandPreview(5)"
-"="             = "ExpandPreview(5)"
-"-"             = "ShrinkPreview(5)"
-"ctrl-r"        = "Reload(__WAYMUX_BIN__ cockpit-items)"
+"tab"           = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'tab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"shift-tab"     = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'shift-tab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"backtab"       = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'backtab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"shift-backtab" = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'shift-backtab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"backspace"     = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'backspace' '{=state}' '{=session}:{=idx}')", "Print(__JUMP_LAST_AGENT__)", "Quit"]
+"ctrl-h"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-h' '{=state}' '{=session}:{=idx}')", "Print(__JUMP_LAST_AGENT__)", "Quit"]
+"a"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'a' '{=state}' '{=session}:{=idx}')", "@reloadnext"]
+"A"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'A' '{=state}' '{=session}:{=idx}')", "@reloadprev"]
+"ctrl-a"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-a' '{=state}' '{=session}:{=idx}')", "@reloadnext"]
+"o"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'o' '{=state}' '{=session}:{=idx}')", "Print(__OPEN_PR__{=})", "Quit"]
+"O"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'O' '{=state}' '{=session}:{=idx}')", "Print(__OPEN_PR_CHECKS__{=})", "Quit"]
+"/"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit '/' '{=state}' '{=session}:{=idx}')", "FocusFilter"]
+"s"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 's' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_SESSION__)", "Quit"]
+"S"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'S' '{=state}' '{=session}:{=idx}')", "Print(__SHIP_WORKTREE__{=})", "Quit"]
+"r"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'r' '{=state}' '{=session}:{=idx}')", "Execute(__WAYMUX_BIN__ review-notes send \"{=path}\" \"{=session}\" \"{=idx}\" \"{=pid}\")", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"w"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'w' '{=state}' '{=session}:{=idx}')", "Print(__NEW_WORKTREE__{=})", "Quit"]
+"W"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'W' '{=state}' '{=session}:{=idx}')", "Print(__SWEEP_WORKTREES__{=})", "Quit"]
+"R"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'R' '{=state}' '{=session}:{=idx}')", "Print(__REAP_AGENTS__{=})", "Quit"]
+"t"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 't' '{=state}' '{=session}:{=idx}')", "Print(__CREATE_WINDOW__{=})", "Quit"]
+"T"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'T' '{=state}' '{=session}:{=idx}')", "Print(__CREATE_WINDOW__{=})", "Quit"]
+"c"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'c' '{=state}' '{=session}:{=idx}')", "Print(__NEW_WORKTREE__{=})", "Quit"]
+"C"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'C' '{=state}' '{=session}:{=idx}')", "Print(__NEW_WORKTREE__{=})", "Quit"]
+"g"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'g' '{=state}' '{=session}:{=idx}')", "Print(__LAZYGIT__{=})", "Quit"]
+"gg"            = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'gg' '{=state}' '{=session}:{=idx}')", "Print(__LAZYGIT__{=})", "Quit"]
+"G"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'G' '{=state}' '{=session}:{=idx}')", "Print(__LAZYGIT__{=})", "Quit"]
+"ctrl-g"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-g' '{=state}' '{=session}:{=idx}')", "Print(__LAZYGIT__{=})", "Quit"]
+"p"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'p' '{=state}' '{=session}:{=idx}')", "Print(__PATCH_MODE__{=})", "Quit"]
+"P"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'P' '{=state}' '{=session}:{=idx}')", "Print(__PATCH_MODE__{=})", "Quit"]
+"ctrl-p"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-p' '{=state}' '{=session}:{=idx}')", "Print(__PATCH_MODE__{=})", "Quit"]
+"?"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit '?' '{=state}' '{=session}:{=idx}')", "SwitchPreview(1)"]
+"shift-?"       = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'shift-?' '{=state}' '{=session}:{=idx}')", "SwitchPreview(1)"]
+"F1"            = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'F1' '{=state}' '{=session}:{=idx}')", "SwitchPreview(1)"]
+"i"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'i' '{=state}' '{=session}:{=idx}')", "LiveInput(tmux send-keys -t '{=pid}' {=keys})"]
+"I"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'I' '{=state}' '{=session}:{=idx}')", "PromptInput(__WAYMUX_BIN__ agent-action prompt '{=state}' '{=pid}' {input})", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"y"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'y' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(__WAYMUX_BIN__ agent-action approve '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"Y"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'Y' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(__WAYMUX_BIN__ agent-action approve '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"n"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'n' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"N"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'N' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(__WAYMUX_BIN__ agent-action deny '{=state}' '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"d"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'd' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"ctrl-d"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-d' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"x"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'x' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"J"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'J' '{=state}' '{=session}:{=idx}')", "PreviewDown(5)"]
+"K"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'K' '{=state}' '{=session}:{=idx}')", "PreviewUp(5)"]
+"+"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit '+' '{=state}' '{=session}:{=idx}')", "ExpandPreview(5)"]
+"="             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit '=' '{=state}' '{=session}:{=idx}')", "ExpandPreview(5)"]
+"-"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit '-' '{=state}' '{=session}:{=idx}')", "ShrinkPreview(5)"]
+"ctrl-r"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-r' '{=state}' '{=session}:{=idx}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 ","             = []
 
 [ui.border]
@@ -171,25 +171,25 @@ Start    = [
     "ToggleColumn(state)", "ToggleColumn(agent)", "ToggleColumn(age)",
     "ToggleColumn(branch)", "ToggleColumn(sync)"
 ]
-"tab"           = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"shift-tab"     = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"backtab"       = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"shift-backtab" = ["Print(__SWITCH_AWT__{=})", "Quit"]
-"backspace"     = ["Print(__JUMP_LAST_AGENT__)", "Quit"]
-"ctrl-h"        = ["Print(__JUMP_LAST_AGENT__)", "Quit"]
-"a"             = "@reloadnext"
-"A"             = "@reloadprev"
-"ctrl-a"        = "@reloadnext"
-"o"             = ["Print(__OPEN_PR__{=})", "Quit"]
-"O"             = ["Print(__OPEN_PR_CHECKS__{=})", "Quit"]
-"ctrl-s"        = ["Print(__SWITCH_SESSION__)", "Quit"]
-"ctrl-g"        = ["Print(__LAZYGIT__{=})", "Quit"]
-"ctrl-p"        = ["Print(__PATCH_MODE__{=})", "Quit"]
-"ctrl-t"        = ["Print(__CREATE_WINDOW__{=})", "Quit"]
-"ctrl-d"        = ["ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
-"ctrl-r"        = "Reload(__WAYMUX_BIN__ cockpit-items)"
-"?"             = "SwitchPreview(1)"
-"shift-?"       = "SwitchPreview(1)"
-"F1"            = "SwitchPreview(1)"
+"tab"           = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'tab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"shift-tab"     = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'shift-tab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"backtab"       = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'backtab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"shift-backtab" = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'shift-backtab' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_AWT__{=})", "Quit"]
+"backspace"     = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'backspace' '{=state}' '{=session}:{=idx}')", "Print(__JUMP_LAST_AGENT__)", "Quit"]
+"ctrl-h"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-h' '{=state}' '{=session}:{=idx}')", "Print(__JUMP_LAST_AGENT__)", "Quit"]
+"a"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'a' '{=state}' '{=session}:{=idx}')", "@reloadnext"]
+"A"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'A' '{=state}' '{=session}:{=idx}')", "@reloadprev"]
+"ctrl-a"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-a' '{=state}' '{=session}:{=idx}')", "@reloadnext"]
+"o"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'o' '{=state}' '{=session}:{=idx}')", "Print(__OPEN_PR__{=})", "Quit"]
+"O"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'O' '{=state}' '{=session}:{=idx}')", "Print(__OPEN_PR_CHECKS__{=})", "Quit"]
+"ctrl-s"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-s' '{=state}' '{=session}:{=idx}')", "Print(__SWITCH_SESSION__)", "Quit"]
+"ctrl-g"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-g' '{=state}' '{=session}:{=idx}')", "Print(__LAZYGIT__{=})", "Quit"]
+"ctrl-p"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-p' '{=state}' '{=session}:{=idx}')", "Print(__PATCH_MODE__{=})", "Quit"]
+"ctrl-t"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-t' '{=state}' '{=session}:{=idx}')", "Print(__CREATE_WINDOW__{=})", "Quit"]
+"ctrl-d"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-d' '{=state}' '{=session}:{=idx}')", "ExecuteAsync(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete; sleep 0.05)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"ctrl-r"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'ctrl-r' '{=state}' '{=session}:{=idx}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"?"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter '?' '{=state}' '{=session}:{=idx}')", "SwitchPreview(1)"]
+"shift-?"       = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'shift-?' '{=state}' '{=session}:{=idx}')", "SwitchPreview(1)"]
+"F1"            = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit-filter 'F1' '{=state}' '{=session}:{=idx}')", "SwitchPreview(1)"]
 ","             = []
 "@reload"       = "Reload(__WAYMUX_BIN__ cockpit-items)"

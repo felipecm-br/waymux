@@ -10,6 +10,7 @@ pub mod hook;
 pub mod icons;
 pub mod init;
 pub mod inject;
+pub mod keylog;
 pub mod pid;
 pub mod presets;
 pub mod rpc_client;
@@ -162,6 +163,12 @@ const COMMANDS: &[CommandSpec] = &[
         plumbing: true,
     },
     CommandSpec {
+        name: "keylog",
+        usage: "keylog <context> <key> [state] [target] [origin]",
+        about: "Append a key press to the key telemetry log (keys.tsv)",
+        plumbing: true,
+    },
+    CommandSpec {
         name: "window-delete",
         usage: "window-delete",
         about: "Close the Cockpit selection, guarding working agents",
@@ -284,6 +291,7 @@ pub fn entry() -> anyhow::Result<()> {
         "wt" | "awt" => Some(wt::run_cli(&args[2..])),
         "icon" => Some(icons::run_icon_cli(&args[2..])),
         "icons" => Some(icons::run_icons_cli(&args[2..])),
+        "keylog" => Some(keylog::run_cli(&args[2..])),
         "init" => Some(init::run_cli(&args[2..])),
         "doctor" => Some(doctor::run_cli()),
         other if !is_daemon_invocation(other) => {

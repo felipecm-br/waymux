@@ -211,6 +211,7 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 | :--- | :--- | :--- |
 | `WAYMUX_PORT` | `4040` | Port the client commands talk to (e.g. a sandboxed second daemon) |
 | `WAYMUX_COLORS` | unset | Theme `colors.toml`; else `~/.config/waymux/colors.toml`, then Omarchy's active theme, then built-in colors |
+| `WAYMUX_KEYLOG` | `1` | `0` stops `waymux keylog` (Cockpit and wrapped tmux keys) from appending presses to `$XDG_STATE_HOME/flow/keys.tsv` |
 | `WAYMUX_REVIEW_MIN_SECS` | `20` | Seconds in lazygitrs (Cockpit `g`) that clear the done-not-reviewed state when nothing was staged, committed or discarded |
 | `WAYMUX_SHARE_DIR` | `~/.local/share/waymux` | Where `install.sh` puts the tmux plugin and `scripts/`, and where `wt` looks for bundled helpers |
 | `AWT_SWEEP_ROOTS` | `~/.dotfiles:~/dev/github` | Directories `awt sweep --all` scans (each a repository or a folder of repositories) |

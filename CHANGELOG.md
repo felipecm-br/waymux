@@ -4,6 +4,13 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### 󰌌 Key Telemetry, A 7-Item Cockpit Footer
+
+- **`waymux keylog` (`src/keylog.rs`, `src/presets/cockpit-picker.toml`, `src/cockpit/mod.rs`)**: nothing showed which shortcuts were used and which were never pressed. `keylog <context> <key> [state] [target] [origin]` appends one TSV line to `$XDG_STATE_HOME/flow/keys.tsv` and always exits 0; `WAYMUX_KEYLOG=0` turns it off. Every Cockpit key starts with an `ExecuteAsync` keylog call carrying the row's state and `session:window`; `Enter` and `Esc` are logged by the Cockpit, and the picker gets the origin window in `WAYMUX_KEYLOG_ORIGIN`, so a report can tell when a shorter path existed (e.g. `Enter` on a waiting agent, `g` on the window the Cockpit came from).
+- **Footer (`src/presets/cockpit-picker.toml`)**: 9 key-action pairs, over the 7-item chunk cap, and `r Review` named something other than the review state (`r` sends lazygitrs notes; `g` clears `󰷋`). The footer is `Enter Jump │ y/n Ack │ i Input │ g Git │ r Notes │ ? Help │ Esc Exit`; `a` and `Tab` still work and stay in the `?` help.
+- **State glyph defaults (`src/icons.rs`, `config/default.toml`)**: idle `󰗡`, stalled `󰔟`, permission `󰳌` and error `` (codicon chat-sparkle-error) by default, matching the per-state silhouettes the author's config already set; idle and stalled no longer differ only by fill.
+- **Flaky daemon tests (`tests/cli.rs`)**: `spawn_daemon` waited 10 s when the daemon died at once (the free port found at setup was taken before it bound) and piped stderr nobody read. A daemon that exits is retried on a fresh port, stderr goes to a file, and the file is quoted when no port works.
+
 ### 󰀏 Triage Covers Review, Cockpit Flags Shared Repositories
 
 - **Triage visits unreviewed work (`src/triage.rs`, `src/cockpit/items.rs`)**: `triage --jump` and `--popup` served only waiting agents, so finished work marked `󰷋` waited for a Cockpit visit. After the waiting agents, the queue now holds idle agents whose work nobody has reviewed, oldest completion first, the order the Cockpit sorts them in; the jump labels them `review │ Ctrl+G reviews`. `pane_needs_review` applies the Cockpit's rule per pane and runs `git status` only when the work is newer than the last review and HEAD has not moved.
