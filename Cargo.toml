@@ -2,6 +2,8 @@
 name = "waymux"
 version = "0.2.3"
 edition = "2024"
+# let-chains (`if let .. && let ..`) need 1.88; CI builds with this exact version.
+rust-version = "1.88"
 default-run = "waymux"
 description = "Autonomous Terminal AI Cockpit, Orchestrator CLI & JSON-RPC Control Plane Daemon"
 license = "MIT"

@@ -17,6 +17,7 @@ Read `AGENTS.md` first: it holds the module map and the engineering conventions.
    cargo clippy --all-targets --all-features -- -D warnings
    cargo test
    ```
+   The minimum Rust is `rust-version` in `Cargo.toml` (1.88), and CI builds with exactly that version. Before using a newer std API or syntax, either avoid it or raise `rust-version`, the CI `msrv` job and the README together.
 4. For anything touching tmux flows, also run the sandbox: `WAYMUX_BIN=$PWD/target/release/waymux ./scripts/docker-sandbox.sh test` (after `cargo build --release`). CI runs it too.
 5. Commit with a conventional subject (`fix(cockpit): ...`) and a body that says what was wrong and how it was checked. Add a CHANGELOG `[Unreleased]` entry for user-visible changes.
 

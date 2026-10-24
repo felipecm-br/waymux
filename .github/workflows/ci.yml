@@ -25,6 +25,16 @@ jobs:
       - name: Run Unit Test Suite
         run: cargo test --all-targets
 
+  msrv:
+    # Builds with the oldest supported compiler (`rust-version` in Cargo.toml).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@1.88
+      - name: Check on the MSRV
+        run: cargo check --all-targets --locked
+
   coverage:
     # Line coverage of the unit + integration tests; the floor keeps it from sliding back.
     # The Docker suite (tmux popups, delta, wt scripts) is not counted.

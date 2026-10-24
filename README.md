@@ -48,7 +48,7 @@ The installer downloads the pre-built binary to `~/.local/bin/waymux` (and symli
 | `--no-systemd` | Skip the systemd unit (start the daemon yourself with `waymux daemon`) |
 | `--prefix <dir>` | Install the binary somewhere other than `~/.local/bin` |
 
-### Build from Source (Rust 1.85+)
+### Build from Source (Rust 1.88+)
 
 ```bash
 git clone https://github.com/felipecm-br/waymux.git
