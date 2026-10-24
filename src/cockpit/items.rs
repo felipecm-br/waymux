@@ -430,10 +430,49 @@ pub fn git_dir_of(worktree: &Path) -> Option<std::path::PathBuf> {
     })
 }
 
-/// Records that the worktree was just opened for review (lazygitrs from the Cockpit or Ctrl+G).
+/// Records that the worktree was just reviewed in lazygitrs (from the Cockpit or Ctrl+G).
 pub fn mark_reviewed(worktree: &Path) {
     if let Some(dir) = git_dir_of(worktree) {
         let _ = fs::write(dir.join(REVIEW_MARKER), b"");
+    }
+}
+
+/// Seconds in lazygitrs that count as a review when nothing was staged, committed or discarded.
+/// `WAYMUX_REVIEW_MIN_SECS` overrides; `lazygitrs-popup.sh` reads the same variable.
+const REVIEW_MIN_SECS: u64 = 20;
+
+fn review_min_secs() -> u64 {
+    std::env::var("WAYMUX_REVIEW_MIN_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(REVIEW_MIN_SECS)
+}
+
+/// HEAD plus the porcelain status: any stage, commit or discard during the review changes it.
+pub fn review_snapshot(worktree: &Path) -> String {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(worktree)
+            .args(args)
+            .stderr(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    git(&["rev-parse", "HEAD"]) + &git(&["status", "--porcelain"])
+}
+
+/// A glance does not clear "done, not reviewed": the session has to last, or act on the tree.
+fn counts_as_review(elapsed_secs: u64, min_secs: u64, tree_changed: bool) -> bool {
+    tree_changed || elapsed_secs >= min_secs
+}
+
+/// Marks the worktree reviewed once lazygitrs closes, if the session counts as a review.
+pub fn finish_review(worktree: &Path, before: &str, elapsed: std::time::Duration) {
+    let changed = review_snapshot(worktree) != before;
+    if counts_as_review(elapsed.as_secs(), review_min_secs(), changed) {
+        mark_reviewed(worktree);
     }
 }
 
@@ -1111,6 +1150,13 @@ mod tests {
         assert!(!needs_review(200, 100, 50, false));
         // Never reviewed: any finished work with changes counts.
         assert!(needs_review(200, 0, 0, true));
+    }
+
+    #[test]
+    fn test_counts_as_review() {
+        assert!(!counts_as_review(10, 20, false));
+        assert!(counts_as_review(20, 20, false));
+        assert!(counts_as_review(3, 20, true));
     }
 
     #[test]

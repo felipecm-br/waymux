@@ -446,7 +446,8 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 
             saved_sess = target_sess;
             saved_idx = target_idx;
-            items::mark_reviewed(Path::new(&target_path));
+            let review_before = items::review_snapshot(Path::new(&target_path));
+            let review_started = std::time::Instant::now();
 
             let lzg_bin = find_lazygitrs_bin();
             let mut lzg_args = vec!["-d", "-c", "popup"];
@@ -462,6 +463,11 @@ pub fn run_cockpit(args: &[String]) -> i32 {
                 .ok()
                 .and_then(|s| s.code())
                 .unwrap_or(0);
+            items::finish_review(
+                Path::new(&target_path),
+                &review_before,
+                review_started.elapsed(),
+            );
 
             if rc == 10 {
                 continue;
