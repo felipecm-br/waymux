@@ -1,11 +1,11 @@
-use crate::cockpit::items::{contains_agent_name, is_agent_binary_name};
+use crate::cockpit::items::{contains_agent_name, is_agent_binary_name, pane_needs_review};
 use crate::rpc_client::{self, AgentPaneEntry};
 use crate::theme::ThemePalette;
 use crate::tmux_cmd::{
     tmux_display_msg_timed, tmux_get_global_opt, tmux_out, tmux_set_global_opt, tmux_status,
     tmux_unset_global_opt,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -56,9 +56,43 @@ pub fn next_in_queue<'a>(queue: &'a [String], current: &str) -> Option<&'a Strin
     }
 }
 
-pub fn collect_notifying_panes() -> Vec<String> {
-    select_notifying(
-        &rpc_client::fetch_agent_states(),
+/// Idle panes whose finished work nobody has reviewed (the Cockpit's `review` rows), oldest
+/// completion first. tmux is asked for pane paths only when some idle pane has a completion.
+fn review_panes(daemon: &HashMap<String, AgentPaneEntry>) -> Vec<String> {
+    let mut done: Vec<(u64, &String)> = daemon
+        .iter()
+        .filter(|(_, v)| v.state == "idle" && v.finished_at > 0)
+        .map(|(p, v)| (normalize_ts(v.finished_at), p))
+        .collect();
+    if done.is_empty() {
+        return Vec::new();
+    }
+    let listing = tmux_out(&["list-panes", "-a", "-F", "#{pane_id}\t#{pane_current_path}"])
+        .unwrap_or_default();
+    let paths: HashMap<&str, &str> = listing.lines().filter_map(|l| l.split_once('\t')).collect();
+    done.sort();
+    done.into_iter()
+        .filter(|(_, p)| {
+            paths
+                .get(p.as_str())
+                .is_some_and(|path| pane_needs_review(path, daemon[*p].finished_at))
+        })
+        .map(|(_, p)| p.clone())
+        .collect()
+}
+
+/// The panes triage visits, plus which of them are there for review rather than waiting.
+pub struct TriageQueue {
+    pub panes: Vec<String>,
+    pub review: HashSet<String>,
+}
+
+pub fn collect_notifying_panes() -> TriageQueue {
+    let daemon = rpc_client::fetch_agent_states();
+    let reviews = review_panes(&daemon);
+    let panes = select_notifying(
+        &daemon,
+        &reviews,
         || {
             tmux_out(&[
                 "list-panes",
@@ -79,12 +113,17 @@ pub fn collect_notifying_panes() -> Vec<String> {
             ])
             .unwrap_or_default()
         },
-    )
+    );
+    TriageQueue {
+        panes,
+        review: reviews.into_iter().collect(),
+    }
 }
 
 /// The panes triage visits, from the first source that yields any:
 ///
-/// 1. agents the daemon reports waiting on you, in `order_urgent` order
+/// 1. agents the daemon reports waiting on you, in `order_urgent` order, then `reviews`
+///    (finished work nobody has reviewed), the order the Cockpit sorts them in
 /// 2. agents the daemon reports working, most recent first
 /// 3. waiting states recorded on panes (`@ai_agent_state_raw`), for a daemon that is down
 /// 4. the pane that rang the bell last
@@ -94,6 +133,7 @@ pub fn collect_notifying_panes() -> Vec<String> {
 /// tmux is reached only through the closures, so the order is testable.
 fn select_notifying(
     daemon: &HashMap<String, AgentPaneEntry>,
+    reviews: &[String],
     tmux_states: impl FnOnce() -> String,
     exists: impl Fn(&str) -> bool,
     last_bell: impl FnOnce() -> String,
@@ -104,7 +144,11 @@ fn select_notifying(
             .iter()
             .map(|(k, v)| (k.clone(), v.state.clone(), v.last_timestamp)),
     );
-    let notifying: Vec<String> = urgent.into_iter().filter(|p| exists(p)).collect();
+    let notifying: Vec<String> = urgent
+        .into_iter()
+        .chain(reviews.iter().cloned())
+        .filter(|p| exists(p))
+        .collect();
     if !notifying.is_empty() {
         return notifying;
     }
@@ -193,7 +237,7 @@ fn alert_sound(state: &str) -> &'static str {
 }
 
 pub fn run_popup() -> i32 {
-    let notifying = collect_notifying_panes();
+    let notifying = collect_notifying_panes().panes;
     if notifying.is_empty() {
         tmux_display_msg_timed(1500, " 󰮯 No active AI Agent notification.");
         return 0;
@@ -307,7 +351,8 @@ pub fn run_popup() -> i32 {
 }
 
 pub fn run_jump() -> i32 {
-    let notifying = collect_notifying_panes();
+    let queue = collect_notifying_panes();
+    let notifying = queue.panes;
     let current_pane = tmux_out(&["display-message", "-p", "#{pane_id}"]).unwrap_or_default();
     let current_sess = tmux_out(&["display-message", "-p", "#S"]).unwrap_or_default();
     let current_win = tmux_out(&["display-message", "-p", "#I"]).unwrap_or_default();
@@ -377,6 +422,11 @@ pub fn run_jump() -> i32 {
     ])
     .filter(|s| !s.is_empty())
     .unwrap_or_else(|| "active".to_string());
+    let target_state = if queue.review.contains(target_pane) {
+        "review │ Ctrl+G reviews".to_string()
+    } else {
+        target_state
+    };
 
     if current_sess != target_sess {
         let _ = tmux_status(&["switch-client", "-t", &target_sess]);
@@ -512,6 +562,7 @@ mod tests {
     ) -> Vec<String> {
         select_notifying(
             daemon,
+            &[],
             || states.to_string(),
             |p| p.starts_with('%') && p != "%gone",
             || bell.to_string(),
@@ -528,11 +579,18 @@ mod tests {
             ("%gone", "permission", 10),
         ]);
         let tmux_never = || -> String { panic!("tmux is not consulted when the daemon answers") };
-        let picked = select_notifying(&d, tmux_never, |p| p != "%gone", tmux_never, tmux_never);
+        let picked = select_notifying(
+            &d,
+            &["%5".to_string()],
+            tmux_never,
+            |p| p != "%gone",
+            tmux_never,
+            tmux_never,
+        );
         assert_eq!(
             picked,
-            ["%3", "%2"],
-            "class first; panes that are gone are skipped"
+            ["%3", "%2", "%5"],
+            "class first, then work to review; panes that are gone are skipped"
         );
     }
 

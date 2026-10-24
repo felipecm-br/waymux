@@ -491,7 +491,38 @@ fn needs_review(finished_at: u64, reviewed_at: u64, head_moved_at: u64, dirty: b
     finished_at > reviewed_at && (dirty || head_moved_at > reviewed_at)
 }
 
-#[derive(Debug, Clone)]
+/// The Cockpit's review rule for one pane, for callers without its git cache (triage).
+/// `git status` runs only when the work is newer than the last review and HEAD has not moved.
+pub fn pane_needs_review(ppath: &str, finished_at: u64) -> bool {
+    if finished_at == 0 {
+        return false;
+    }
+    let Some(repo) = repo_path_for(ppath) else {
+        return false;
+    };
+    let Some(git_dir) = git_dir_of(Path::new(&repo)) else {
+        return false;
+    };
+    let finished = crate::triage::normalize_ts(finished_at) / 1000;
+    let reviewed = mtime_secs(&git_dir.join(REVIEW_MARKER));
+    let head_moved = mtime_secs(&git_dir.join("logs").join("HEAD"));
+    needs_review(
+        finished,
+        reviewed,
+        head_moved,
+        finished > reviewed && head_moved <= reviewed && is_dirty(&repo),
+    )
+}
+
+fn is_dirty(repo: &str) -> bool {
+    Command::new("git")
+        .args(["-C", repo, "status", "--porcelain"])
+        .stderr(Stdio::null())
+        .output()
+        .is_ok_and(|o| !o.stdout.is_empty())
+}
+
+#[derive(Debug, Clone, Default)]
 struct RawPaneRow {
     prio: u8,
     ts: u64,
@@ -782,6 +813,20 @@ fn build_rows(
     raw_rows
 }
 
+/// Repositories with more than one agent pane: their edits, diff and review marker are shared,
+/// so lazygitrs cannot tell whose change is whose and one review clears both.
+fn shared_agent_paths(rows: &[RawPaneRow]) -> HashSet<String> {
+    let mut agents: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for row in rows.iter().filter(|r| r.is_agent && !r.branch.is_empty()) {
+        agents.entry(&row.ppath).or_default().insert(&row.pid);
+    }
+    agents
+        .into_iter()
+        .filter(|(_, panes)| panes.len() > 1)
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
+
 /// The Cockpit's 12-column TSV: a `#  <session>` header per session (most urgent first), then
 /// one row per window.
 fn render_items(
@@ -796,6 +841,7 @@ fn render_items(
     let mut session_agent_items: HashMap<String, String> = HashMap::new();
     let mut seen_windows: HashSet<String> = HashSet::new();
     let mut agent_count = 0usize;
+    let shared_paths = shared_agent_paths(&raw_rows);
 
     for row in raw_rows {
         if row.is_agent {
@@ -884,12 +930,28 @@ fn render_items(
                     sync_search = sync_search.trim().to_string();
                 }
             }
+            // Another agent works in the same repository: the branch glyph turns into a warning.
+            let (br_glyph, br_glyph_c) = if row.is_agent && shared_paths.contains(&row.ppath) {
+                sync_search.push_str(" shared");
+                ("󰀏", &theme.s_permission)
+            } else {
+                ("⎇", &theme.c_branch)
+            };
             let vis_br_len = 2 + char_len(&br_trunc) + char_len(&sync_glyph);
             let pad_b = 14usize.saturating_sub(vis_br_len);
             let br_spaces = " ".repeat(pad_b);
             format!(
-                "  {}⎇ {}{}{}{}{}{}",
-                theme.c_branch, br_trunc, RESET, sync_col_c, sync_glyph, RESET, br_spaces
+                "  {}{}{}{} {}{}{}{}{}{}",
+                br_glyph_c,
+                br_glyph,
+                RESET,
+                theme.c_branch,
+                br_trunc,
+                RESET,
+                sync_col_c,
+                sync_glyph,
+                RESET,
+                br_spaces
             )
         } else {
             format!("  {}-             {}", theme.c_muted, RESET)
@@ -1150,6 +1212,57 @@ mod tests {
         assert!(!needs_review(200, 100, 50, false));
         // Never reviewed: any finished work with changes counts.
         assert!(needs_review(200, 0, 0, true));
+    }
+
+    #[test]
+    fn test_shared_agent_paths() {
+        let row = |pid: &str, path: &str, is_agent: bool| RawPaneRow {
+            pid: pid.into(),
+            ppath: path.into(),
+            branch: "main".into(),
+            is_agent,
+            ..Default::default()
+        };
+        let rows = [
+            row("%1", "/repo", true),
+            row("%2", "/repo", true),
+            row("%3", "/other", true),
+            row("%4", "/other", false),
+            row("%1", "/repo", true),
+        ];
+        let shared = shared_agent_paths(&rows);
+        assert!(shared.contains("/repo"), "two agent panes share /repo");
+        assert!(
+            !shared.contains("/other"),
+            "a shell next to one agent is not shared"
+        );
+        assert_eq!(shared.len(), 1);
+    }
+
+    #[test]
+    fn test_pane_needs_review_until_marked() {
+        let repo = std::env::temp_dir().join(format!("waymux-review-{}", std::process::id()));
+        fs::create_dir_all(&repo).unwrap();
+        let ok = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return; // no git on this machine
+        }
+        fs::write(repo.join("change.txt"), "x").unwrap();
+        let path = repo.to_str().unwrap();
+        let finished_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        assert!(pane_needs_review(path, finished_ms));
+        assert!(!pane_needs_review(path, 0), "no completion seen");
+        mark_reviewed(&repo);
+        assert!(!pane_needs_review(path, finished_ms));
+        let _ = fs::remove_dir_all(&repo);
     }
 
     #[test]
