@@ -32,7 +32,7 @@
   - `sound.rs`: event-isolated sound playback (completion chimes skipped for the pane in view and deferred to a typing pause; blocking alerts immediate).
 - `src/icons.rs`: Nerd Font icon registry (`[icons]` and `[theme.states.*].icon` over built-ins) behind `waymux icon` / `waymux icons`, the hook's window rename, the Cockpit and the state badges.
 - `src/auth.rs`: Session token generator (`0600` permissions at `$XDG_RUNTIME_DIR/waymux/token` mirrored to `$XDG_RUNTIME_DIR/acpd/token`).
-- `src/doctor.rs`: `waymux doctor` setup checks (daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, sound player, awt scripts, Claude Code hooks, theme, and on Linux an installed systemd unit missing directives the shipped one has) with a fix per gap; exits 1 on a required failure.
+- `src/doctor.rs`: `waymux doctor` setup checks (daemon, token, config, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, sound player, awt scripts, Claude Code hooks, theme, and on Linux an installed systemd unit missing directives the shipped one has) with a fix per gap; exits 1 on a required failure.
 - `src/sys.rs`: `find_in_path` (`command -v`), `shell_quote` (one POSIX word), and `default_sound_player` (`pw-play` → `paplay` → `aplay` → `afplay`).
 - `src/rpc_client.rs`: Zero-dependency synchronous TCP HTTP client for CLI subcommands (`status`, `list`, `dismiss`, `health`, `agentState/list`, `/api/status`).
 - `src/tmux_cmd.rs`: The one place tmux is spawned (`command()` / `async_command()`, always with `-u` so tab-separated `-F` rows and glyphs survive a non-UTF-8 locale; unit tests get a private `-L waymux-unit-test` socket), synchronous helpers, and atomic bracketed-paste buffer injection (`load-buffer` + `paste-buffer -p`).
@@ -94,7 +94,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **129 unit tests** (in `src/`, 15 of them `proptest` properties) and **35 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings** and **72.0% line coverage** (CI fails below 70%: `cargo llvm-cov --summary-only --fail-under-lines 70`).
+> Current baseline: **131 unit tests** (in `src/`, 15 of them `proptest` properties) and **35 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings** and **72.2% line coverage** (CI fails below 70%: `cargo llvm-cov --summary-only --fail-under-lines 70`).
 
 ### Dependency Audit & Performance Budgets (also run in CI)
 

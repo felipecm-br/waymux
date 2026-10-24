@@ -13,7 +13,7 @@ Waymux is one binary (`waymux`, legacy alias `acpd`): a synchronous CLI for inte
 waymux doctor
 ```
 
-It reports `[ok]`, `[warn]` or `[FAIL]` for the daemon, token, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, `notify-send`, a sound player, the `awt-*.sh` helpers, Claude Code hooks and the theme, with a `fix:` line per gap. Exit 1 means the daemon, tmux or git is missing. Run it from a tmux pane, and run it again after each fix.
+It reports `[ok]`, `[warn]` or `[FAIL]` for the daemon, token, config file, tmux, git, `wm`, `lazygitrs`, `delta`, `gh`, `notify-send`, a sound player, the `awt-*.sh` helpers, Claude Code hooks and the theme, with a `fix:` line per gap. Exit 1 means the daemon, config, tmux or git is missing or broken. Run it from a tmux pane, and run it again after each fix.
 
 ## 2. Install and wire it up
 

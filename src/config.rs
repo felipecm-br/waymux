@@ -2,12 +2,14 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Spinner {
     pub interval: u64,
     pub frames: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AgentStateTheme {
     pub icon: String,
     /// Optional override; empty means the built-in semantic color (`status_palette`).
@@ -16,6 +18,7 @@ pub struct AgentStateTheme {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct ThemeConfig {
     pub active_spinner: String,
     #[serde(default)]
@@ -23,6 +26,7 @@ pub struct ThemeConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct SoundConfig {
     #[serde(default = "default_sound_enabled")]
     pub enabled: bool,
@@ -38,6 +42,7 @@ fn default_sound_enabled() -> bool {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
@@ -228,5 +233,24 @@ mod tests {
     fn test_reference_config_parses() {
         let config = Config::load(concat!(env!("CARGO_MANIFEST_DIR"), "/config/default.toml"));
         assert!(config.is_ok(), "{:?}", config.err());
+    }
+
+    #[test]
+    fn test_unknown_config_keys_are_rejected() {
+        for (bad, key) in [
+            ("flow_log_hok = \"/bin/true\"\n", "flow_log_hok"),
+            ("[theme]\nactive_spinner = \"dot\"\nextra = 1\n", "extra"),
+            (
+                "[theme]\nactive_spinner = \"dot\"\n[theme.states.idle]\nicon = \"i\"\ncolr = \"#fff\"\n",
+                "colr",
+            ),
+            ("[sound]\nvol = 50\n", "vol"),
+        ] {
+            let err = toml::from_str::<Config>(bad).unwrap_err().to_string();
+            assert!(
+                err.contains("unknown field") && err.contains(key),
+                "expected unknown field {key:?}, got: {err}"
+            );
+        }
     }
 }

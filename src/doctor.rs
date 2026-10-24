@@ -169,6 +169,30 @@ fn check_theme() -> Check {
     }
 }
 
+fn check_config_at(path: Option<&str>) -> Check {
+    let Some(path) = path else {
+        return Check::ok("config", "built-in defaults (no config.toml found)");
+    };
+    let fix = format!("fix or remove {path} (see config/default.toml)");
+    match std::fs::read_to_string(path) {
+        Err(e) => Check::problem(Level::Fail, "config", &format!("{path}: {e}"), &fix),
+        Ok(content) => match toml::from_str::<crate::config::Config>(&content) {
+            Ok(_) => Check::ok("config", path),
+            Err(e) => Check::problem(
+                Level::Fail,
+                "config",
+                &format!("{path}: {}", e.message()),
+                &fix,
+            ),
+        },
+    }
+}
+
+fn check_config() -> Check {
+    let path = crate::config::Config::default_path();
+    check_config_at(path.as_deref())
+}
+
 fn check_claude_hooks() -> Check {
     let Ok(home) = std::env::var("HOME") else {
         return Check::problem(Level::Warn, "agent hooks", "$HOME is unset", "set $HOME");
@@ -245,7 +269,7 @@ fn check_systemd_unit() -> Check {
 }
 
 fn run_checks() -> Vec<Check> {
-    let mut checks = vec![check_daemon(), check_token(), check_tmux()];
+    let mut checks = vec![check_daemon(), check_token(), check_config(), check_tmux()];
     checks.push(tool(
         "git",
         Level::Fail,
@@ -346,5 +370,25 @@ mod tests {
         let fail = Check::problem(Level::Fail, "tmux", "missing", "install");
         assert_eq!(exit_code(&[Check::ok("git", "/usr/bin/git"), warn]), 0);
         assert_eq!(exit_code(&[fail]), 1);
+    }
+
+    #[test]
+    fn test_check_config_reports_first_parse_error() {
+        assert_eq!(check_config_at(None).level, Level::Ok);
+        let dir = std::env::temp_dir().join(format!("waymux-doc-cfg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "port = 4040\n").unwrap();
+        assert_eq!(check_config_at(path.to_str()).level, Level::Ok);
+
+        std::fs::write(&path, "flow_log_hok = \"/bin/true\"\n").unwrap();
+        let bad = check_config_at(path.to_str());
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(bad.level, Level::Fail);
+        assert!(
+            bad.detail.contains("flow_log_hok"),
+            "detail should name the unknown key: {}",
+            bad.detail
+        );
     }
 }

@@ -9,8 +9,8 @@ every item here.
 
 | Area | State |
 |---|---|
-| Tests | 129 unit (15 `proptest` properties) and 35 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
-| Coverage | 72.0% lines; CI fails below 70% (`cargo llvm-cov --summary-only --fail-under-lines 70`) |
+| Tests | 131 unit (15 `proptest` properties) and 35 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
+| Coverage | 72.2% lines; CI fails below 70% (`cargo llvm-cov --summary-only --fail-under-lines 70`) |
 | Fuzzing | `fuzz/`: four libFuzzer targets (hook stdin, `lines.json`, `config.toml`, `/rpc`); seeds replay past crashes; weekly CI job |
 | Lints | `clippy::pedantic`, 0 warnings, 5 `allow`s each with a reason |
 | Toolchain | MSRV 1.88 (`rust-version`, CI job); CI stable pinned at 1.99 (`RUST_STABLE` in `ci.yml`) |
@@ -43,7 +43,7 @@ absent with the default config.
 
 **Effort.** Small.
 
-## 2. Reject unknown config keys
+## 2. Reject unknown config keys — Done
 
 **Why.** `Config` (`src/config.rs`) silently ignores unknown keys, so a typo such as
 `flow_log_hok = "..."` disables the feature with no message. SIGHUP reload makes this easier

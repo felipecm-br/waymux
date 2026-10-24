@@ -11,6 +11,8 @@ log_level = "info"
 # Program run as `<hook> <event> <pane> <extra>` on agent_question, human_reply and
 # agent_finished (e.g. a focus/time-tracking log). Unset: nothing runs.
 # flow_log_hook = "~/.config/tmux/flow-log.sh"
+# Append Cockpit and wrapped tmux key presses to $XDG_STATE_HOME/flow/keys.tsv (default: false).
+# keylog = true
 
 # Delay in milliseconds before sending the 'idle' state.
 # This debouncing prevents status icon flickering when the AI issues tool calls in rapid succession.
@@ -24,7 +26,7 @@ active_spinner = "dot"
 # distinguishable on every theme. Add `color = "#rrggbb"` to a state only to override it.
 
 [theme.states.idle]
-icon = "󱥂"
+icon = "󰗡"
 
 [theme.states.busy]
 icon = "󰝲"
@@ -33,13 +35,13 @@ icon = "󰝲"
 icon = "󱜻"
 
 [theme.states.permission]
-icon = "󱅭"
+icon = "󰳌"
 
 [theme.states.stalled]
-icon = "󱥁"
+icon = "󰔟"
 
 [theme.states.error]
-icon = "󰨄"
+icon = ""
 # Program/agent name -> Nerd Font glyph, merged over the built-ins (agent, agy, claude, codex,
 # devin, muse, opencode). `agent` is the fallback for agents without an entry.
 # Shell and tmux consumers read the merged registry with `waymux icon` / `waymux icons`.

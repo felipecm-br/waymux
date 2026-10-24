@@ -285,10 +285,21 @@ fn init_hooks_prints_valid_claude_settings_json() {
 #[test]
 fn doctor_names_the_missing_daemon_and_fails() {
     let sb = Sandbox::new();
+    let cfg_dir = sb.dir.join(".config/waymux");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(
+        cfg_dir.join("config.toml"),
+        "flow_log_hok = \"/bin/true\"\n",
+    )
+    .unwrap();
     let out = sb.run(&["doctor"]);
     assert_eq!(out.status.code(), Some(1));
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("[FAIL] daemon"), "{text}");
+    assert!(
+        text.contains("[FAIL] config") && text.contains("flow_log_hok"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -351,5 +362,30 @@ fn sighup_reloads_the_config_and_keeps_it_when_the_new_one_is_broken() {
         "a broken config replaced the running one"
     );
 
+    // An unknown key is also rejected on reload and keeps the running config; at startup it
+    // exits non-zero naming the key and file.
+    let with_typo = format!("{with_hook}\nflow_log_hok = \"/bin/false\"\n");
+    std::fs::write(&config_path, &with_typo).unwrap();
+    hup();
+    std::thread::sleep(Duration::from_millis(200));
+    std::fs::remove_file(&events).unwrap();
+    assert!(
+        question_logged(),
+        "a config with an unknown key replaced the running one"
+    );
+
     assert!(daemon.stop().success());
+
+    let bad_start = sb
+        .command()
+        .args(["daemon", "--config"])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+    assert!(!bad_start.status.success());
+    let err = stderr(&bad_start);
+    assert!(
+        err.contains("config.toml") && err.contains("flow_log_hok"),
+        "{err}"
+    );
 }

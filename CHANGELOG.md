@@ -6,6 +6,7 @@ All notable changes to **Waymux** are documented in this file.
 
 > **Upgrading:** key telemetry (`waymux keylog`) is now opt-in; set `keylog = true` in `~/.config/waymux/config.toml` (or `WAYMUX_KEYLOG=1`) to keep writing `$XDG_STATE_HOME/flow/keys.tsv`.
 
+- **Unknown config keys are rejected (`src/config.rs`, `src/doctor.rs`)**: `config.toml` silently ignored unknown fields, so a typo such as `flow_log_hok = "..."` disabled the feature with no message. `Config`, `ThemeConfig`, `SoundConfig`, `AgentStateTheme` and `Spinner` now use `#[serde(deny_unknown_fields)]`: startup fails naming the key and file, SIGHUP reload logs the error and keeps the running config, and `waymux doctor` has a `config` row that parses the file and reports the first error.
 - **Key telemetry is opt-in (`src/keylog.rs`, `src/config.rs`, `config/default.toml`)**: `waymux keylog` logged every Cockpit key press to `$XDG_STATE_HOME/flow/keys.tsv` unless `WAYMUX_KEYLOG=0`. It now writes nothing unless `keylog = true` in `config.toml` or `WAYMUX_KEYLOG=1`; `WAYMUX_KEYLOG=0` still overrides both.
 - **The one-line install verifies checksums again (`install.sh`)**: releases publish `<bin>-<tag>-<target>.sha256`, but the installer fetched `<archive>.tar.gz.sha256`, found nothing and stopped ("no checksum published"), so `curl … install.sh | bash` failed on v0.2.4. It now fetches the published name, keeping the old one as a fallback. `WAYMUX_VERIFY_ATTESTATION=1` says up front when `gh` is not logged in.
 
