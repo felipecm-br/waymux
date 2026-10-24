@@ -9,8 +9,8 @@ every item here.
 
 | Area | State |
 |---|---|
-| Tests | 140 unit (15 `proptest` properties) and 37 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
-| Coverage | 80.0% lines; CI fails below 78% (`cargo llvm-cov --summary-only --fail-under-lines 78`) |
+| Tests | 141 unit (15 `proptest` properties) and 37 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
+| Coverage | 80.1% lines; CI fails below 78% (`cargo llvm-cov --summary-only --fail-under-lines 78`) |
 | Fuzzing | `fuzz/`: four libFuzzer targets (hook stdin, `lines.json`, `config.toml`, `/rpc`); seeds replay past crashes; weekly CI job |
 | Lints | `clippy::pedantic`, `unsafe_code = "deny"`, 0 warnings |
 | Toolchain | MSRV 1.88 (`rust-version`, CI job); CI stable pinned at 1.99 (`RUST_STABLE` in `ci.yml`) |
@@ -155,35 +155,29 @@ coverage reaches 80.0% and the CI floor is raised to 78%.
 
 **Effort.** Medium, incremental.
 
-## 8. Record the decisions that look like gaps
+## 8. Record the decisions that look like gaps — Done
 
-Some things are deliberately not "maximal". Write them as short decision records in
-`docs/decisions/` so nobody undoes them:
+Some things are deliberately not "maximal". Recorded as short decision records in
+[`docs/decisions/`](decisions/README.md) so nobody undoes them:
 
-- **systemd exposure 6.1, not lower.** Mount-namespace options (`ProtectSystem=`,
-  `ProtectHome=`, `PrivateTmp=`) need unprivileged user namespaces in a user unit, which some
-  distributions restrict, and the daemon must reach the tmux socket, PipeWire and wherever
-  `flow_log_hook` writes. `MemoryDenyWriteExecute=` would break a JIT-based hook. Tested with
-  `systemd-run --user` (see the `fix(systemd)` commit).
-- **CI stable toolchain pinned** (`RUST_STABLE`): bumped on purpose because pedantic lints
-  change with each release. Dependabot cannot bump it.
-- **Branch protection with admin bypass:** one maintainer; CI is required on PRs, direct
-  pushes stay possible.
-- **`tmux -u` on every call** (`tmux_cmd.rs`): without it a non-UTF-8 locale turns tabs into
-  `_` and breaks every tab-separated row.
+- **systemd exposure 6.1, not lower** ([`0001`](decisions/0001-systemd-user-unit-sandboxing.md)).
+- **CI stable toolchain pinned (`RUST_STABLE`)** ([`0002`](decisions/0002-pinned-ci-rust-toolchain.md)).
+- **Branch protection with admin bypass** ([`0003`](decisions/0003-branch-protection-single-maintainer.md)).
+- **`tmux -u` on every call (`tmux_cmd.rs`)** ([`0004`](decisions/0004-tmux-utf8-flag.md)).
 
 **Effort.** Small.
 
-## 9. Keep CI fast and stable as it grows
+## 9. Keep CI fast and stable as it grows — Done
 
-Not a gap yet, but watch it: the suite now runs six required jobs plus the weekly fuzz job.
-Add `Swatinem/rust-cache` (pinned) to the Rust jobs if they pass 5 minutes, and keep
-`tests/tmux.rs` and `tests/wt.rs` free of sleeps longer than `common::eventually`'s polling.
+Added SHA-pinned `Swatinem/rust-cache` to the Rust CI jobs in `.github/workflows/ci.yml` and
+removed the remaining 200ms fixed sleep in `tests/tmux.rs` so `tests/tmux.rs` and `tests/wt.rs`
+are free of sleeps longer than `common::eventually`'s polling.
 
-## 10. Housekeeping found along the way
+## 10. Housekeeping found along the way — Done
 
-- `waymux doctor` could report the installed binary version against the latest release, so
-  an outdated install (and its mismatch with the systemd unit's watchdog) shows up there.
+- `/health` now includes `version`, and `waymux doctor` warns when the running daemon's
+  version differs from the installed `waymux` CLI binary (catching an outdated running daemon
+  after an upgrade).
 
 ## Working on these
 

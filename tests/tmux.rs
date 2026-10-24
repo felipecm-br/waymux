@@ -56,7 +56,6 @@ fn approve_and_deny_type_into_a_waiting_pane_only() {
 
     // Not awaiting confirmation: nothing is typed.
     env.run(&["agent-action", "approve", "idle", &pane]);
-    std::thread::sleep(std::time::Duration::from_millis(200));
     assert!(!answer.exists(), "approve typed into an idle pane");
     // A malformed pane id is ignored.
     env.run(&["agent-action", "approve", "permission", "main:0"]);

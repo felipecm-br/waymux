@@ -7,12 +7,14 @@ use std::time::Instant;
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
+    version: &'static str,
     uptime_secs: u64,
 }
 
 async fn health_check(State(start_time): State<Arc<Instant>>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy",
+        version: env!("CARGO_PKG_VERSION"),
         uptime_secs: start_time.elapsed().as_secs(),
     })
 }

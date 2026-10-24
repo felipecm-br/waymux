@@ -65,10 +65,29 @@ fn tool(name: &'static str, level: Level, purpose: &str, fix: &str) -> Check {
     }
 }
 
-fn check_daemon() -> Check {
-    let port = rpc_client::daemon_port();
-    match rpc_client::http_get_json(port, "/health", 1500) {
-        Some((200, _)) => Check::ok("daemon", format!("healthy on 127.0.0.1:{port}")),
+fn check_daemon_health(
+    port: u16,
+    resp: Option<(u16, serde_json::Value)>,
+    cli_version: &str,
+) -> Check {
+    match resp {
+        Some((200, body)) => match body.get("version").and_then(|v| v.as_str()) {
+            Some(ver) if ver == cli_version => {
+                Check::ok("daemon", format!("healthy on 127.0.0.1:{port} (v{ver})"))
+            }
+            Some(ver) => Check::problem(
+                Level::Warn,
+                "daemon",
+                &format!("running v{ver} on 127.0.0.1:{port}, but CLI is v{cli_version}"),
+                "systemctl --user restart waymux",
+            ),
+            None => Check::problem(
+                Level::Warn,
+                "daemon",
+                &format!("running older binary on 127.0.0.1:{port} (CLI is v{cli_version})"),
+                "systemctl --user restart waymux",
+            ),
+        },
         Some((code, _)) => Check::problem(
             Level::Fail,
             "daemon",
@@ -82,6 +101,12 @@ fn check_daemon() -> Check {
             "systemctl --user enable --now waymux   (or run `waymux daemon` in a spare pane)",
         ),
     }
+}
+
+fn check_daemon() -> Check {
+    let port = rpc_client::daemon_port();
+    let resp = rpc_client::http_get_json(port, "/health", 1500);
+    check_daemon_health(port, resp, env!("CARGO_PKG_VERSION"))
 }
 
 fn check_token() -> Check {
@@ -390,5 +415,44 @@ mod tests {
             "detail should name the unknown key: {}",
             bad.detail
         );
+    }
+
+    #[test]
+    fn test_check_daemon_health_detects_version_mismatch() {
+        let ok = check_daemon_health(
+            4040,
+            Some((
+                200,
+                serde_json::json!({"status": "healthy", "version": "0.2.4"}),
+            )),
+            "0.2.4",
+        );
+        assert_eq!(ok.level, Level::Ok);
+        assert!(ok.detail.contains("v0.2.4"), "{}", ok.detail);
+
+        let mismatch = check_daemon_health(
+            4040,
+            Some((
+                200,
+                serde_json::json!({"status": "healthy", "version": "0.2.3"}),
+            )),
+            "0.2.4",
+        );
+        assert_eq!(mismatch.level, Level::Warn);
+        assert!(
+            mismatch.detail.contains("running v0.2.3"),
+            "{}",
+            mismatch.detail
+        );
+
+        let legacy = check_daemon_health(
+            4040,
+            Some((200, serde_json::json!({"status": "healthy"}))),
+            "0.2.4",
+        );
+        assert_eq!(legacy.level, Level::Warn);
+
+        let down = check_daemon_health(4040, None, "0.2.4");
+        assert_eq!(down.level, Level::Fail);
     }
 }
