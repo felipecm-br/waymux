@@ -112,7 +112,7 @@ WAYMUX_BIN=$PWD/target/release/waymux ./scripts/docker-sandbox.sh test
 
 ---
 
-CI also runs Clippy and the tests on macOS, a `cargo check` on the MSRV (Rust 1.88) and the Docker suite.
+CI pins its stable Rust (`RUST_STABLE` in `ci.yml`); bump it on purpose, with the new lints fixed in the same commit. Vulnerability reports go through GitHub private reporting (`SECURITY.md`). CI also runs Clippy and the tests on macOS, a `cargo check` on the MSRV (Rust 1.88) and the Docker suite.
 
 ## Engineering Conventions
 

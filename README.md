@@ -274,6 +274,10 @@ just docker-demo
 
 See [AGENTS.md](AGENTS.md) for architecture and module conventions, [CONTRIBUTING.md](CONTRIBUTING.md) for pull request guidelines, and [CHANGELOG.md](CHANGELOG.md) for release history.
 
+## 🔒 Security
+
+Report vulnerabilities privately, as described in [`SECURITY.md`](SECURITY.md).
+
 ## 📜 License
 
 MIT © [Felipe Miranda](LICENSE)
