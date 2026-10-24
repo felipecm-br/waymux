@@ -14,6 +14,7 @@ pub mod inject;
 pub mod keylog;
 pub mod pid;
 pub mod presets;
+pub mod risk;
 pub mod rpc_client;
 pub mod signals;
 pub mod status_palette;

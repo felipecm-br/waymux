@@ -93,7 +93,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux cockpit-preview <s> <i> <p> [path]` | Render contextual agent metadata card, PR status, review notes, and pane snapshot |
 | `waymux cockpit-diff <path> [pane_id]` | Render side-by-side Git diff (`delta` / `bat`) and pending review notes |
 | `waymux cockpit-help` | Render telemetry HUD and ergonomic keybinding cheat-sheet |
-| `waymux agent-action <act> <st> <pid> [pane]` | Execute guarded agent action (`approve`, `deny`, `prompt`). `approve`/`deny` re-read the daemon's live state and ignore a prompt on screen for less than 400 ms; `prompt` goes through the delivery queue |
+| `waymux agent-action <act> <st> <pid> [pane]` | Execute guarded agent action (`approve`, `deny`, `prompt`). `approve`/`deny` re-read the daemon's live state and ignore a prompt on screen for less than 400 ms; a risky call (see [Risk rules](#risk-rules)) needs a second `approve` within 3 s; `deny` sends `Esc`; `prompt` goes through the delivery queue |
 | `waymux review-notes <count\|list\|send> ...` | Count, list, or atomically send `.git/info/lines.json` review notes to an agent |
 | `waymux triage --popup` | Cycle notifying AI agent panes inside an isolated `_popups` overlay |
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
@@ -201,6 +201,12 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 - **Delivery queue** (`queue/push`, `queue/list`, `queue/cancel`): see below. `agentState/list` reports `queued` and `changed_at` (epoch ms the pane entered its state) per pane.
 - **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
 - **`GET /health` & `GET /ready`**: Liveness and readiness probes.
+
+### Risk rules
+
+`y` in the Cockpit allows a shell call matching a risk rule only on a second press within 3 s, for the same prompt; the first press says which rule matched, and the preview shows a red `󰳌 risky:` line. The rules (a speed bump, not a sandbox: the harness's permission system stays the boundary) are recursive delete (`rm` with `-r` and `-f` in any form), force push (`--force`, `-f`, `--force-with-lease`, `+refspec`), `git reset --hard`, `git clean -f`, discard changes (`git checkout .`, `git checkout -- .`, `git restore .`) and pipe to shell (`curl`/`wget` piped to a shell, an interpreter or `sudo`, or run through `bash <(curl …)`, `sh -c "$(curl …)"`, `eval`, `source`). Every command of the call is checked: it is split on `;`, `&&`, `||`, `|`, `&`, newlines and subshells, and followed into `$( )`, backticks, `<( )`, `sh -c` and `eval`, past `sudo`, `env`, `timeout`, `xargs` and `VAR=value`. The hook keeps the call's full command (`$XDG_RUNTIME_DIR/waymux/pane-cmd-*`, `0600`) so a command longer than the one-line reason is still checked.
+
+Answer keys: on Claude Code `y` sends `1` (approve once) and `n` sends `Esc`. `y` and `n` are not hotkeys there and its highlighted option is "1. Yes", so the former `n` + `Enter` approved the call (verified on Claude Code 2.1.310). Other harnesses get `y` + `Enter` and `Esc`.
 
 ### Delivery queue
 

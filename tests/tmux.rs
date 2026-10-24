@@ -67,16 +67,55 @@ fn approve_and_deny_type_into_a_waiting_pane_only() {
     let _ = std::fs::remove_file(&answer);
 }
 
+/// Deny sends `Esc` and never `Enter`: in Claude Code `n` is not a hotkey and `Enter`
+/// confirms the highlighted "1. Yes", so the old `n` + `Enter` approved the call.
 #[test]
-fn deny_answers_n() {
+fn deny_sends_escape_and_no_enter() {
     let answer = std::env::temp_dir().join(format!("waymux-deny-{}", std::process::id()));
+    let _ = std::fs::remove_file(&answer);
+    // The pane records, in hex, every byte it reads in the first second.
+    let cmd = format!(
+        "bash -c 'IFS= read -rsn1 a; IFS= read -rs -t 1 b; printf %s \"$a$b\" | od -An -tx1 > \"{}\"; sleep 30'",
+        answer.display()
+    );
+    tmux_or_skip!(env, tmux, &cmd);
+    let pane = first_pane(&tmux);
+    env.run(&["agent-action", "deny", "question", &pane]);
+    assert!(eventually(|| std::fs::read_to_string(&answer).is_ok_and(
+        |a| a.split_whitespace().collect::<Vec<_>>() == ["1b"]
+    )));
+    let _ = std::fs::remove_file(&answer);
+}
+
+/// A risky call is typed only on the second `y` within 3 s.
+#[test]
+fn risky_approve_needs_a_second_press() {
+    let answer = std::env::temp_dir().join(format!("waymux-risky-{}", std::process::id()));
     let _ = std::fs::remove_file(&answer);
     let cmd = format!("read a; echo \"$a\" > '{}'; sleep 30", answer.display());
     tmux_or_skip!(env, tmux, &cmd);
     let pane = first_pane(&tmux);
-    env.run(&["agent-action", "deny", "question", &pane]);
+    // What the hook remembers for the prompt on this pane.
+    let memo_dir = env.dir.join("run/waymux");
+    std::fs::create_dir_all(&memo_dir).unwrap();
+    std::fs::set_permissions(&memo_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let safe: String = pane
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    std::fs::write(
+        memo_dir.join(format!("pane-cmd-{safe}")),
+        "cd build && rm -rf out",
+    )
+    .unwrap();
+
+    env.run(&["agent-action", "approve", "permission", &pane]);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!answer.exists(), "first press only arms a risky approval");
+
+    env.run(&["agent-action", "approve", "permission", &pane]);
     assert!(eventually(
-        || std::fs::read_to_string(&answer).is_ok_and(|a| a.trim() == "n")
+        || std::fs::read_to_string(&answer).is_ok_and(|a| a.trim() == "y")
     ));
     let _ = std::fs::remove_file(&answer);
 }

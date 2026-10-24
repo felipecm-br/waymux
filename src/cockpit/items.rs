@@ -117,6 +117,15 @@ pub fn scan_running_agents() -> (HashMap<String, String>, HashMap<String, u64>) 
     (sess_agent, sess_etimes)
 }
 
+/// `󰇮N ` when `n` prompts wait in the delivery queue, else empty.
+pub fn queue_badge(n: u64) -> String {
+    if n == 0 {
+        String::new()
+    } else {
+        format!("󰇮{n} ")
+    }
+}
+
 pub fn format_age(diff_s: u64) -> String {
     if diff_s == 0 {
         String::new()
@@ -540,6 +549,8 @@ struct RawPaneRow {
     ico: String,
     agent_label: String,
     age_str: String,
+    /// Prompts the daemon's delivery queue holds for this pane.
+    queued: u64,
     branch: String,
     is_cur: bool,
     st: String,
@@ -694,14 +705,15 @@ fn build_rows(
             .cloned()
             .unwrap_or_default();
 
-        let (mut st, ts, reason, finished_at) = match sources.agent_states.get(pid) {
+        let (mut st, ts, reason, finished_at, queued) = match sources.agent_states.get(pid) {
             Some(entry) => (
                 entry.state.clone(),
                 entry.last_timestamp,
                 entry.message.clone().unwrap_or_default(),
                 entry.finished_at,
+                entry.queued,
             ),
-            None => (String::new(), 0, String::new(), 0),
+            None => (String::new(), 0, String::new(), 0, 0),
         };
 
         if st.is_empty() {
@@ -781,6 +793,7 @@ fn build_rows(
             ico: ico.to_string(),
             agent_label: short_label,
             age_str,
+            queued,
             branch: tsv_field(&git_meta.branch),
             is_cur,
             st: tsv_field(&st),
@@ -984,17 +997,33 @@ fn render_items(
             format!(" {}-          {}", theme.c_muted, RESET)
         };
 
-        // Col 6: Right-aligned Elapsed Age Column (6 visual chars)
-        let age_col = if row.age_str.is_empty() {
-            format!(" {}     -{}", theme.c_muted, RESET)
+        // Col 6: Right-aligned Elapsed Age Column (6 visual chars), led by a muted `󰇮N`
+        // badge when prompts wait in the delivery queue: metadata, so never a warm hue.
+        let badge = queue_badge(row.queued);
+        let age_text = if row.age_str.is_empty() {
+            "-"
         } else {
-            let pad_a = 6usize.saturating_sub(char_len(&row.age_str));
-            let age_spaces = " ".repeat(pad_a);
-            if row.prio <= REVIEW_PRIO {
-                format!(" {}{}{}{}{}", age_spaces, c_ico, BOLD, row.age_str, RESET)
-            } else {
-                format!(" {}{}{}{}", age_spaces, theme.c_muted, row.age_str, RESET)
-            }
+            row.age_str.as_str()
+        };
+        let pad_a = 6usize.saturating_sub(char_len(&badge) + char_len(age_text));
+        let age_spaces = " ".repeat(pad_a);
+        let badge_col = if badge.is_empty() {
+            String::new()
+        } else {
+            format!("{}{}{}", theme.c_muted, badge, RESET)
+        };
+        let age_col = if row.age_str.is_empty() {
+            format!(" {age_spaces}{badge_col}{}-{}", theme.c_muted, RESET)
+        } else if row.prio <= REVIEW_PRIO {
+            format!(
+                " {age_spaces}{badge_col}{c_ico}{BOLD}{}{RESET}",
+                row.age_str
+            )
+        } else {
+            format!(
+                " {age_spaces}{badge_col}{}{}{RESET}",
+                theme.c_muted, row.age_str
+            )
         };
 
         let display_line =
@@ -1189,6 +1218,12 @@ mod tests {
             Some(only_main.to_str().unwrap().to_string())
         );
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_queue_badge() {
+        assert_eq!(queue_badge(0), "");
+        assert_eq!(queue_badge(2), "󰇮2 ");
     }
 
     #[test]
@@ -1694,6 +1729,7 @@ mod tests {
             ico: "I".into(),
             agent_label: "claude".into(),
             age_str: "5m".into(),
+            queued: 0,
             branch: "main".into(),
             is_cur: idx == "1",
             st: st.into(),

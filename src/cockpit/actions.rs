@@ -38,20 +38,116 @@ pub fn confirm_check(
     Ok(())
 }
 
-fn confirm_or_explain(pid: &str, row_state: &str) -> bool {
+/// Keys that answer a permission or question prompt. Verified on Claude Code 2.1.310: `y`
+/// and `n` are not hotkeys there and the highlighted option is "1. Yes", so the old `n` +
+/// `Enter` *approved* the call; `1` approves at once and `Esc` denies. `Esc` also cancels in
+/// the other harnesses' TUIs; their approve keeps `y` + `Enter` until verified.
+pub fn answer_keys(harness: &str, approve: bool) -> &'static [&'static str] {
+    match (harness, approve) {
+        (_, false) => &["Escape"],
+        ("claude", true) => &["1"],
+        (_, true) => &["y", "Enter"],
+    }
+}
+
+/// How long the first `y` on a risky call stays armed.
+pub const RISK_ACK_MS: u64 = 3000;
+
+/// Second press of `y` on a risky call: confirmed only for the same prompt (`prompt_key`,
+/// the time the pane entered its state) within [`RISK_ACK_MS`] of the first press.
+pub fn risk_ack_confirms(armed: Option<(u64, u64)>, prompt_key: u64, now_ms: u64) -> bool {
+    armed.is_some_and(|(key, expires)| key == prompt_key && now_ms <= expires)
+}
+
+fn risk_ack_file(pid: &str) -> Option<std::path::PathBuf> {
+    let safe: String = pid.chars().filter(char::is_ascii_digit).collect();
+    crate::presets::private_runtime_dir().map(|d| d.join(format!("risk-ack-{safe}")))
+}
+
+fn read_risk_ack(path: &Path) -> Option<(u64, u64)> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let mut parts = raw.split_whitespace().map(str::parse::<u64>);
+    Some((parts.next()?.ok()?, parts.next()?.ok()?))
+}
+
+/// The shell command behind the pane's prompt: the hook's raw memo, else the part of the
+/// daemon's one-line reason after `Tool: `.
+pub fn pending_command(pid: &str, reason: Option<&str>) -> Option<String> {
+    crate::hook::recall_pane_command(pid).or_else(|| {
+        reason
+            .and_then(|r| r.split_once(": "))
+            .map(|(_, cmd)| cmd.to_string())
+    })
+}
+
+fn one_line_excerpt(cmd: &str, max: usize) -> String {
+    let flat = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > max {
+        format!("{}…", flat.chars().take(max).collect::<String>())
+    } else {
+        flat
+    }
+}
+
+/// `true` when `y` may answer now. A risky call needs a second `y` within 3 s.
+fn risk_gate(pid: &str, entry: Option<&crate::rpc_client::AgentPaneEntry>, now_ms: u64) -> bool {
+    let Some(cmd) = pending_command(pid, entry.and_then(|e| e.message.as_deref())) else {
+        return true;
+    };
+    let rules = crate::risk::risky_rules(&cmd);
+    if rules.is_empty() {
+        return true;
+    }
+    let Some(file) = risk_ack_file(pid) else {
+        tmux_display_msg(&format!(
+            "󰳌 risky ({}): answer it in the pane",
+            rules.join(", ")
+        ));
+        return false;
+    };
+    let prompt_key = entry.map_or(0, |e| e.changed_at);
+    if risk_ack_confirms(read_risk_ack(&file), prompt_key, now_ms) {
+        let _ = std::fs::remove_file(&file);
+        return true;
+    }
+    let _ = std::fs::write(&file, format!("{prompt_key} {}", now_ms + RISK_ACK_MS));
+    tmux_display_msg_timed(
+        u32::try_from(RISK_ACK_MS).unwrap_or(3000),
+        &format!(
+            "󰳌 risky ({}): press y again within 3s to allow {}",
+            rules.join(", "),
+            one_line_excerpt(&cmd, 60)
+        ),
+    );
+    false
+}
+
+fn answer(pid: &str, row_state: &str, approve: bool) {
     let live = crate::rpc_client::fetch_agent_states();
     let entry = live.get(pid);
-    match confirm_check(
+    let now = crate::sys::unix_ms();
+    if let Err(why) = confirm_check(
         row_state,
         entry.map(|e| (e.state.as_str(), e.changed_at)),
-        crate::sys::unix_ms(),
+        now,
     ) {
-        Ok(()) => true,
-        Err(why) => {
-            tmux_display_msg(&format!("Action ignored: Pane {pid} {why}"));
-            false
-        }
+        tmux_display_msg(&format!("Action ignored: Pane {pid} {why}"));
+        return;
     }
+    if approve && !risk_gate(pid, entry, now) {
+        return;
+    }
+    let harness = tmux_out(&[
+        "display-message",
+        "-p",
+        "-t",
+        pid,
+        "#{pane_current_command}",
+    ])
+    .unwrap_or_default();
+    let mut args = vec!["send-keys", "-t", pid];
+    args.extend_from_slice(answer_keys(harness.trim(), approve));
+    let _ = tmux_status(&args);
 }
 
 pub fn run_agent_action(args: &[String]) -> i32 {
@@ -65,15 +161,11 @@ pub fn run_agent_action(args: &[String]) -> i32 {
 
     match action {
         "approve" => {
-            if confirm_or_explain(pid, state) {
-                let _ = tmux_status(&["send-keys", "-t", pid, "y", "Enter"]);
-            }
+            answer(pid, state, true);
             0
         }
         "deny" => {
-            if confirm_or_explain(pid, state) {
-                let _ = tmux_status(&["send-keys", "-t", pid, "n", "Enter"]);
-            }
+            answer(pid, state, false);
             0
         }
         "prompt" => {
@@ -486,6 +578,38 @@ mod tests {
         assert!(confirm_check("permission", Some(("permission", 0)), 10_000).is_ok());
         assert!(confirm_check("permission", None, 10_000).is_ok());
         assert!(confirm_check("working", None, 10_000).is_err());
+    }
+
+    #[test]
+    fn test_answer_keys_never_deny_with_enter() {
+        assert_eq!(answer_keys("claude", true), ["1"]);
+        for h in ["claude", "codex", "agy", "gemini", ""] {
+            let deny = answer_keys(h, false);
+            assert_eq!(deny, ["Escape"], "{h}");
+            assert!(
+                !deny.contains(&"Enter"),
+                "{h}: Enter confirms the highlighted Yes"
+            );
+        }
+        assert_eq!(answer_keys("codex", true), ["y", "Enter"]);
+    }
+
+    #[test]
+    fn test_risk_ack_needs_same_prompt_within_window() {
+        assert!(!risk_ack_confirms(None, 5, 1_000));
+        assert!(risk_ack_confirms(Some((5, 4_000)), 5, 3_999));
+        assert!(risk_ack_confirms(Some((5, 4_000)), 5, 4_000));
+        assert!(!risk_ack_confirms(Some((5, 4_000)), 5, 4_001), "expired");
+        assert!(
+            !risk_ack_confirms(Some((5, 4_000)), 6, 3_000),
+            "another prompt"
+        );
+    }
+
+    #[test]
+    fn test_one_line_excerpt() {
+        assert_eq!(one_line_excerpt("rm   -rf\n build", 60), "rm -rf build");
+        assert_eq!(one_line_excerpt("abcdef", 3), "abc…");
     }
 
     #[test]

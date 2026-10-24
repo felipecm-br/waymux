@@ -1,5 +1,5 @@
 use crate::cockpit::notes;
-use crate::theme::{RESET, ThemePalette, strip_ansi};
+use crate::theme::{BOLD, RESET, ThemePalette, strip_ansi};
 use crate::tmux_cmd::{tmux_out, tmux_out_raw};
 use std::fmt::Write as _;
 
@@ -17,6 +17,19 @@ pub fn box_line(card_border: &str, w: usize, content: &str) -> String {
         card_border,
         RESET
     )
+}
+
+/// `risky: <rules> · y twice to allow` when the pane waits on a permission prompt for a
+/// command the risk rules match. Red is reserved for this kind of operational urgency.
+fn risk_banner(pane_id: &str) -> Option<String> {
+    let states = crate::rpc_client::fetch_agent_states();
+    let entry = states.get(pane_id).filter(|e| e.state == "permission")?;
+    let cmd = super::actions::pending_command(pane_id, entry.message.as_deref())?;
+    let rules = crate::risk::risky_rules(&cmd);
+    if rules.is_empty() {
+        return None;
+    }
+    Some(format!("󰳌 risky: {} · y twice to allow", rules.join(", ")))
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
@@ -62,6 +75,9 @@ pub fn run_cli(args: &[String]) -> i32 {
         .replace("\x1b[21m", "");
 
     let mut out = String::with_capacity(4096);
+    if let Some(banner) = risk_banner(&pane_id) {
+        let _ = writeln!(out, "{}{BOLD}{banner}{RESET}\n", theme.c_error);
+    }
     let lines: Vec<&str> = raw_terminal.lines().collect();
     if let Some(last_non_empty) = lines.iter().rposition(|l| !l.trim().is_empty()) {
         for line in &lines[..=last_non_empty] {

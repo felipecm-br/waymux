@@ -30,7 +30,7 @@ pub fn run_cli() -> i32 {
 
     println!("  {c_magenta}{BOLD}󱚥 AI Fleet & Agent Triage{RESET}");
     println!(
-        "    {c_yellow}{BOLD}[y / n]{RESET}  Approve / Deny    Guarded prompt reply (permission/question only)"
+        "    {c_yellow}{BOLD}[y / n]{RESET}  Approve / Deny    Guarded reply; risky calls need y twice"
     );
     println!(
         "    {c_cyan}{BOLD}[r]{RESET}      Review Notes      Dispatch Lazygitrs review notes to agent"

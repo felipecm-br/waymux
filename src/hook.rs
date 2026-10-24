@@ -311,6 +311,70 @@ fn recall_pane_tool_in(xdg: Option<&Path>, pane_id: &str) -> Option<String> {
         .filter(|s| !s.trim().is_empty())
 }
 
+/// Longest shell command kept for the risk rules; the Cockpit's `y` reads it whole.
+const MAX_COMMAND_BYTES: usize = 16 * 1024;
+
+/// The raw shell command of a tool call (`tool_input.command`), newlines kept, so the risk
+/// rules see every command of it rather than the one-line, cut summary.
+pub fn tool_command(ctx: &serde_json::Value) -> Option<String> {
+    let input = ctx.get("tool_input").or_else(|| {
+        ctx.get("toolCall")
+            .and_then(|tc| tc.get("args").or_else(|| tc.get("input")))
+    })?;
+    let cmd = input.get("command")?.as_str()?;
+    if cmd.trim().is_empty() {
+        return None;
+    }
+    let mut end = cmd.len().min(MAX_COMMAND_BYTES);
+    while !cmd.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(cmd[..end].to_string())
+}
+
+fn pane_command_memo_in(xdg: Option<&Path>, pane_id: &str) -> Option<std::path::PathBuf> {
+    pane_tool_memo_in(xdg, pane_id).map(|p| {
+        let name = p
+            .file_name()
+            .map(|f| f.to_string_lossy().replacen("pane-tool-", "pane-cmd-", 1))
+            .unwrap_or_default();
+        p.with_file_name(name)
+    })
+}
+
+fn remember_pane_command(pane_id: &str, command: Option<&str>) {
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR");
+    let Some(path) = pane_command_memo_in(xdg.as_deref().map(Path::new), pane_id) else {
+        return;
+    };
+    match command {
+        Some(c) => {
+            use std::os::unix::fs::OpenOptionsExt;
+            if let Ok(mut f) = fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)
+            {
+                let _ = std::io::Write::write_all(&mut f, c.as_bytes());
+            }
+        }
+        None => {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+/// The raw command of the tool call the pane last announced (`PreToolUse`) or asked
+/// permission for, if it was a shell command.
+pub fn recall_pane_command(pane_id: &str) -> Option<String> {
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR");
+    pane_command_memo_in(xdg.as_deref().map(Path::new), pane_id)
+        .and_then(|p| fs::read_to_string(p).ok())
+        .filter(|s| !s.trim().is_empty())
+}
+
 fn remember_pane_tool(pane_id: &str, summary: Option<&str>) {
     let xdg = std::env::var_os("XDG_RUNTIME_DIR");
     remember_pane_tool_in(xdg.as_deref().map(Path::new), pane_id, summary);
@@ -383,13 +447,18 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
             let state = classify_pre_tool_state(&ctx);
             let summary = tool_summary(&ctx);
             remember_pane_tool(&tmux_pane, summary.as_deref());
+            remember_pane_command(&tmux_pane, tool_command(&ctx).as_deref());
             send_acp_state(&tmux_pane, state, summary.as_deref());
         }
         "PostToolUse" => {
             remember_pane_tool(&tmux_pane, None);
+            remember_pane_command(&tmux_pane, None);
             send_acp_state(&tmux_pane, "working", None);
         }
         "PermissionRequest" | "Notification" => {
+            if let Some(cmd) = tool_command(&ctx) {
+                remember_pane_command(&tmux_pane, Some(&cmd));
+            }
             // The prompt is about the tool announced by the preceding PreToolUse, when any.
             let reason = recall_pane_tool(&tmux_pane).or_else(|| {
                 ctx.get("message")
@@ -400,6 +469,7 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
         }
         "Stop" => {
             remember_pane_tool(&tmux_pane, None);
+            remember_pane_command(&tmux_pane, None);
             send_acp_state(&tmux_pane, "idle", None);
         }
         "SessionEnd" | "Exit" => {
@@ -414,6 +484,7 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
                 ]);
             }
             remember_pane_tool(&tmux_pane, None);
+            remember_pane_command(&tmux_pane, None);
             send_acp_state(&tmux_pane, "closed", None);
         }
         _ => {}
