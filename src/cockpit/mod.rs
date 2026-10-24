@@ -11,13 +11,12 @@ use crate::theme::ThemePalette;
 use crate::tmux_cmd::{
     tmux_display_msg, tmux_get_global_opt, tmux_out, tmux_set_global_opt, tmux_status,
 };
-use std::io::Write;
-use std::os::unix::io::AsRawFd;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn is_stdout_tty() -> bool {
-    unsafe { nix::libc::isatty(std::io::stdout().as_raw_fd()) == 1 }
+    std::io::stdout().is_terminal()
 }
 
 fn resolve_target_path(item: &str, orig_sess: &str) -> String {

@@ -64,7 +64,7 @@ case; re-run `fuzz/config` for 60s.
 
 **Effort.** Small. First check that `config/default.toml` and the docs use only known keys.
 
-## 3. Drop the avoidable `unsafe`
+## 3. Drop the avoidable `unsafe` — Done
 
 **Why.** Three `unsafe` blocks remain. Two are `libc::isatty` (`src/hook.rs:12`,
 `src/cockpit/mod.rs:20`) that std's `IsTerminal` (stable since 1.70) replaces. The third,

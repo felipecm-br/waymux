@@ -91,6 +91,7 @@ pub fn rpc_body(data: &[u8]) {
 
 /// `tmux.*` methods spawn tmux, and a fuzz build is not a test build: point it at an empty
 /// socket directory so no fuzz input can reach the developer's tmux server.
+#[allow(unsafe_code)]
 fn isolate_tmux() {
     let dir = std::env::temp_dir().join(format!("waymux-fuzz-tmux-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);

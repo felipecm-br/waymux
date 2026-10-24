@@ -227,6 +227,7 @@ fn is_daemon_invocation(first_arg: &str) -> bool {
 /// Rust ignores SIGPIPE, so `waymux list | head` panics on the closed pipe. Commands that
 /// only print get the default disposition back and exit quietly. The daemon and the
 /// socket-writing hot paths (`hook`, `inject`, `dismiss`) keep EPIPE as an error.
+#[allow(unsafe_code)]
 fn restore_default_sigpipe(command: &str) {
     use nix::sys::signal::{SigHandler, Signal, signal};
     if is_daemon_invocation(command) || matches!(command, "hook" | "inject" | "dismiss") {

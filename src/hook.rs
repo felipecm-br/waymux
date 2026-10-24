@@ -3,13 +3,12 @@ use crate::inject::sanitize_workspace_key;
 use crate::rpc_client::{http_get_json, http_post_json, post_agent_status};
 use crate::tmux_cmd::{tmux_out, tmux_status};
 use std::fs;
-use std::io::{self, Read};
-use std::os::unix::io::AsRawFd;
+use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn is_stdin_tty() -> bool {
-    unsafe { nix::libc::isatty(io::stdin().as_raw_fd()) == 1 }
+    io::stdin().is_terminal()
 }
 
 fn read_stdin_json() -> serde_json::Value {
