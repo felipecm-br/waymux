@@ -55,6 +55,9 @@ pub struct Config {
     /// Program run as `<hook> <event> <pane> <extra>` on `agent_question`, `human_reply` and
     /// `agent_finished`. A leading `~/` expands to `$HOME`.
     pub flow_log_hook: Option<String>,
+    /// Whether `waymux keylog` appends key presses to `$XDG_STATE_HOME/flow/keys.tsv`.
+    #[serde(default)]
+    pub keylog: bool,
 }
 
 fn default_listen_addr() -> String {
@@ -85,6 +88,7 @@ impl Default for Config {
             }),
             icons: None,
             flow_log_hook: None,
+            keylog: false,
         }
     }
 }

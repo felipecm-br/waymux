@@ -4,6 +4,9 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+> **Upgrading:** key telemetry (`waymux keylog`) is now opt-in; set `keylog = true` in `~/.config/waymux/config.toml` (or `WAYMUX_KEYLOG=1`) to keep writing `$XDG_STATE_HOME/flow/keys.tsv`.
+
+- **Key telemetry is opt-in (`src/keylog.rs`, `src/config.rs`, `config/default.toml`)**: `waymux keylog` logged every Cockpit key press to `$XDG_STATE_HOME/flow/keys.tsv` unless `WAYMUX_KEYLOG=0`. It now writes nothing unless `keylog = true` in `config.toml` or `WAYMUX_KEYLOG=1`; `WAYMUX_KEYLOG=0` still overrides both.
 - **The one-line install verifies checksums again (`install.sh`)**: releases publish `<bin>-<tag>-<target>.sha256`, but the installer fetched `<archive>.tar.gz.sha256`, found nothing and stopped ("no checksum published"), so `curl … install.sh | bash` failed on v0.2.4. It now fetches the published name, keeping the old one as a fallback. `WAYMUX_VERIFY_ATTESTATION=1` says up front when `gh` is not logged in.
 
 ## [0.2.4] - 2026-10-24

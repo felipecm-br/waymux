@@ -211,13 +211,13 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 
 **Logging.** `log_level` sets the daemon's log filter: a level (`debug`) or a full `tracing` directive (`waymux=debug,axum=warn`). `RUST_LOG` overrides it.
 
-**Flow events.** `flow_log_hook = "~/bin/flow-log.sh"` runs that program as `<hook> <event> <pane> <extra>` whenever an agent asks a question (`agent_question`), you reply (`human_reply`) or a working agent finishes (`agent_finished`), e.g. to keep a focus or time-tracking log. Unset, nothing runs.
+**Flow events & key telemetry.** `flow_log_hook = "~/bin/flow-log.sh"` runs that program as `<hook> <event> <pane> <extra>` whenever an agent asks a question (`agent_question`), you reply (`human_reply`) or a working agent finishes (`agent_finished`), e.g. to keep a focus or time-tracking log. `keylog = true` makes `waymux keylog` append Cockpit and wrapped tmux key presses to `$XDG_STATE_HOME/flow/keys.tsv`. Both are off unless configured.
 
 | Variable | Default | Purpose |
 | :--- | :--- | :--- |
 | `WAYMUX_PORT` | `4040` | Port the client commands talk to (e.g. a sandboxed second daemon) |
 | `WAYMUX_COLORS` | unset | Theme `colors.toml`; else `~/.config/waymux/colors.toml`, then Omarchy's active theme, then built-in colors |
-| `WAYMUX_KEYLOG` | `1` | `0` stops `waymux keylog` (Cockpit and wrapped tmux keys) from appending presses to `$XDG_STATE_HOME/flow/keys.tsv` |
+| `WAYMUX_KEYLOG` | unset | `1` enables `waymux keylog` (`$XDG_STATE_HOME/flow/keys.tsv`) without `keylog = true` in `config.toml`; `0` disables it even when the config turns it on |
 | `WAYMUX_REVIEW_MIN_SECS` | `20` | Seconds in lazygitrs (Cockpit `g`) that clear the done-not-reviewed state when nothing was staged, committed or discarded |
 | `WAYMUX_SHARE_DIR` | `~/.local/share/waymux` | Where `install.sh` puts the tmux plugin and `scripts/`, and where `wt` looks for bundled helpers |
 | `AWT_SWEEP_ROOTS` | `~/.dotfiles:~/dev/github` | Directories `awt sweep --all` scans (each a repository or a folder of repositories) |

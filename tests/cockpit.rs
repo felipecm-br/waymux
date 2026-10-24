@@ -135,3 +135,47 @@ fn help_lists_the_keybindings() {
     assert!(out.contains("Keybindings & Shortcuts"), "{out}");
     assert!(out.contains("Worktree Lifecycle"), "{out}");
 }
+
+#[test]
+fn keylog_is_off_by_default_and_respects_config_and_env_override() {
+    let env = Env::new();
+    let keys_tsv = env.dir.join("home/.local/state/flow/keys.tsv");
+
+    // Default config: nothing is written.
+    env.run(&["keylog", "cockpit", "g", "review", "s:1", "s:0"]);
+    assert!(!keys_tsv.exists(), "keys.tsv created without opt-in");
+
+    // WAYMUX_KEYLOG=1 turns it on without a config file.
+    let out = env
+        .command(&["keylog", "cockpit", "y", "permission", "s:2"])
+        .env("WAYMUX_KEYLOG", "1")
+        .env("WAYMUX_KEYLOG_ORIGIN", "s:0")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let content = std::fs::read_to_string(&keys_tsv).unwrap();
+    assert!(
+        content.contains("\tcockpit\ty\tpermission\ts:2\ts:0\n"),
+        "{content}"
+    );
+
+    // keylog = true in ~/.config/waymux/config.toml turns it on, and WAYMUX_KEYLOG=0 overrides it.
+    let cfg_dir = env.dir.join("home/.config/waymux");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("config.toml"), "keylog = true\n").unwrap();
+    env.run(&["keylog", "cockpit", "g", "review", "s:1", "s:0"]);
+    let content = std::fs::read_to_string(&keys_tsv).unwrap();
+    assert!(
+        content.contains("\tcockpit\tg\treview\ts:1\ts:0\n"),
+        "{content}"
+    );
+
+    let out = env
+        .command(&["keylog", "cockpit", "n", "permission", "s:3", "s:0"])
+        .env("WAYMUX_KEYLOG", "0")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let after = std::fs::read_to_string(&keys_tsv).unwrap();
+    assert_eq!(after, content, "WAYMUX_KEYLOG=0 must override config");
+}
