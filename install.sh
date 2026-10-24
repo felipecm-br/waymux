@@ -112,6 +112,22 @@ verify_checksum() {
   echo "✓ Verified SHA-256 of $(basename "$archive")"
 }
 
+# With WAYMUX_VERIFY_ATTESTATION=1, also checks the archive's signed build provenance: it
+# must have been built by this repository's release workflow. Needs an authenticated `gh`.
+verify_attestation() {
+  local archive="$1"
+  [[ "${WAYMUX_VERIFY_ATTESTATION:-0}" == "1" ]] || return 0
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "Error: WAYMUX_VERIFY_ATTESTATION=1 needs the GitHub CLI (gh)." >&2
+    return 1
+  fi
+  if ! gh attestation verify "$archive" --repo "$REPO" >/dev/null; then
+    echo "Error: no valid build provenance for $(basename "$archive") from ${REPO}." >&2
+    return 1
+  fi
+  echo "✓ Verified build provenance of $(basename "$archive")"
+}
+
 install_from_release() {
   local target tag url tmp_dir archive
   target="$(detect_target)" || return 1
@@ -131,6 +147,7 @@ install_from_release() {
     if curl -fsSL "$url" -o "${tmp_dir}/${archive}" 2>/dev/null; then
       curl -fsSL "${url}.sha256" -o "${tmp_dir}/${archive}.sha256" 2>/dev/null || true
       verify_checksum "${tmp_dir}/${archive}" "${tmp_dir}/${archive}.sha256" || exit 1
+      verify_attestation "${tmp_dir}/${archive}" || exit 1
       tar -xzf "${tmp_dir}/${archive}" -C "$tmp_dir"
       if [[ -f "${tmp_dir}/waymux" ]]; then
         install -m 755 "${tmp_dir}/waymux" "${PREFIX}/waymux"

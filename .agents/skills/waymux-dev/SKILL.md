@@ -79,5 +79,5 @@ The daemon is always the first binary's, so a daemon-side change shows in both c
 ## Release
 
 1. Bump `version` in `Cargo.toml`, move `[Unreleased]` in `CHANGELOG.md` under the new version with today's date, and commit `chore(release): bump version to X.Y.Z`.
-2. Tag `vX.Y.Z` and push the tag; `.github/workflows/release.yml` builds Linux (musl, gnu) and macOS archives, each with a `.sha256` that `install.sh` requires.
+2. Tag `vX.Y.Z` and push the tag; `.github/workflows/release.yml` builds Linux (musl, gnu) and macOS archives, each with a `.sha256` that `install.sh` requires and a build-provenance attestation, plus a CycloneDX SBOM. Afterwards confirm the release has assets (`gh release view vX.Y.Z --json assets`) and that `gh attestation verify <archive> --repo felipecm-br/waymux` passes for one of them: v0.2.0 to v0.2.3 were published with no archives because the upload jobs failed.
 3. Locally: `./scripts/update-daemon.sh` installs the binary and restarts `waymux.service`. Ask before running it, because it restarts the user's live daemon. Then `waymux doctor` and `cargo clean`.

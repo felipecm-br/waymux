@@ -49,6 +49,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+      # Signed build provenance (`gh attestation verify <archive> --repo felipecm-br/waymux`).
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -59,6 +62,7 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
       - name: Build and Upload waymux Binary Asset
+        id: waymux
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: waymux
@@ -67,6 +71,7 @@ jobs:
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and Upload acpd Binary Asset
+        id: acpd
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
         with:
           bin: acpd
@@ -74,3 +79,34 @@ jobs:
           archive: $bin-$tag-$target
           checksum: sha256
           token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: |
+            ${{ steps.waymux.outputs.tar }}
+            ${{ steps.acpd.outputs.tar }}
+
+  sbom:
+    # CycloneDX bill of materials for the locked dependency tree, attached to the release.
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-cyclonedx
+      - name: Generate and Upload SBOM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cargo cyclonedx --format json --override-filename "waymux-${TAG}.cdx"
+          gh release upload "$TAG" "waymux-${TAG}.cdx.json" --clobber

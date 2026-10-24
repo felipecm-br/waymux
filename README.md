@@ -39,7 +39,7 @@ Running multiple autonomous AI coding agents (`agy`, `claude`, `codex`, `opencod
 curl -fsSL https://raw.githubusercontent.com/felipecm-br/waymux/main/install.sh | bash
 ```
 
-The installer downloads the pre-built binary to `~/.local/bin/waymux` (and symlinks `~/.local/bin/acpd`), verifies its SHA-256 checksum (the install stops if the checksum is missing or wrong; `WAYMUX_SKIP_CHECKSUM=1` overrides), installs the tmux plugin and the `awt-*.sh` worktree helpers under `~/.local/share/waymux/`, and enables the user-level systemd service (`waymux.service`).
+The installer downloads the pre-built binary to `~/.local/bin/waymux` (and symlinks `~/.local/bin/acpd`), verifies its SHA-256 checksum (the install stops if the checksum is missing or wrong; `WAYMUX_SKIP_CHECKSUM=1` overrides; `WAYMUX_VERIFY_ATTESTATION=1` also checks the signed build provenance with `gh attestation verify`), installs the tmux plugin and the `awt-*.sh` worktree helpers under `~/.local/share/waymux/`, and enables the user-level systemd service (`waymux.service`).
 
 | Flag | Effect |
 | :--- | :--- |
@@ -223,6 +223,7 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 | `AWT_SWEEP_KEEP_BRANCHES` | your user name | Branches whose `target/` `awt sweep --clean-targets` never removes |
 | `@border_gradient` (tmux option) | unset | Waymaker gradient palette (preset such as `aurora` or `#rrggbb,#rrggbb,...`) for the Cockpit popup: it opens borderless and Waymaker draws a gradient frame |
 | `WAYMUX_SKIP_CHECKSUM` | `0` | `1` lets `install.sh` proceed without a published checksum |
+| `WAYMUX_VERIFY_ATTESTATION` | `0` | `1` makes `install.sh` also verify each archive's build provenance (needs `gh`; releases from v0.2.4 on) |
 
 Helpers in `~/.config/waymaker/scripts/` override the bundled `awt-*.sh` scripts, so you can customize the worktree flow without forking.
 
