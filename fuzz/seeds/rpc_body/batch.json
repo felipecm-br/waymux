@@ -1,0 +1,1 @@
+[{"jsonrpc":"2.0","method":"agentState/set","params":{"pane_id":"%1","state":"permission"}},{"jsonrpc":"2.0","method":"nope","id":"a"}]

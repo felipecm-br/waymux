@@ -1,0 +1,65 @@
+# default.toml — reference configuration for waymux
+# Copy to ~/.config/waymux/config.toml (legacy ~/.config/acpd/config.toml is still read as a fallback).
+
+listen_addr = "127.0.0.1"
+port = 4040
+# Default: $XDG_RUNTIME_DIR/waymux/waymux.pid
+# pid_file = "/run/user/1000/waymux/waymux.pid"
+shutdown_timeout_secs = 30
+# A level, or a full tracing directive such as "waymux=debug,axum=warn". RUST_LOG overrides it.
+log_level = "info"
+# Program run as `<hook> <event> <pane> <extra>` on agent_question, human_reply and
+# agent_finished (e.g. a focus/time-tracking log). Unset: nothing runs.
+# flow_log_hook = "~/.config/tmux/flow-log.sh"
+
+# Delay in milliseconds before sending the 'idle' state.
+# This debouncing prevents status icon flickering when the AI issues tool calls in rapid succession.
+idle_debounce_ms = 0
+
+[theme]
+active_spinner = "dot"
+
+# State colors are semantic and come from a built-in palette (src/status_palette.rs),
+# picked per light/dark theme mode so permission, question, stalled and error stay
+# distinguishable on every theme. Add `color = "#rrggbb"` to a state only to override it.
+
+[theme.states.idle]
+icon = "󱥂"
+
+[theme.states.busy]
+icon = "󰝲"
+
+[theme.states.question]
+icon = "󱜻"
+
+[theme.states.permission]
+icon = "󱅭"
+
+[theme.states.stalled]
+icon = "󱥁"
+
+[theme.states.error]
+icon = "󰨄"
+# Program/agent name -> Nerd Font glyph, merged over the built-ins (agent, agy, claude, codex,
+# devin, muse, opencode). `agent` is the fallback for agents without an entry.
+# Shell and tmux consumers read the merged registry with `waymux icon` / `waymux icons`.
+[icons]
+# devin = ""
+# yazi = "󰇥"
+
+[spinners]
+minidot = { interval = 83, frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] }
+line = { interval = 100, frames = ["|", "/", "-", "\\"] }
+jump = { interval = 100, frames = ["⢄", "⢂", "⢁", "⡁", "⡈", "⡐", "⡠"] }
+pulse = { interval = 125, frames = ["█", "▓", "▒", "░"] }
+points = { interval = 143, frames = ["∙∙∙", "●∙∙", "∙●∙", "∙∙●"] }
+meter = { interval = 143, frames = ["▱▱▱", "▰▱▱", "▰▰▱", "▰▰▰", "▰▰▱", "▰▱▱", "▱▱▱"] }
+hamburger = { interval = 333, frames = ["☱", "☲", "☴", "☲"] }
+ellipsis = { interval = 333, frames = ["·", "..", "...", ".."] }
+globe = { interval = 250, frames = ["🌍", "🌎", "🌏"] }
+moon = { interval = 125, frames = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"] }
+monkey = { interval = 333, frames = ["🙈", "🙉", "🙊"] }
+arc = { interval = 150, frames = ["◜", "◠", "◝", "◞", "◡", "◟"] }
+nerd = { interval = 100, frames = [" ", " ", " ", " "] }
+nerdarc = { interval = 120, frames = ["◜", " ", "◝", "◞", "◡", "◟", " "] }
+dot = { interval = 100, frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] }

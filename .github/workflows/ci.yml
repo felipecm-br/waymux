@@ -6,8 +6,10 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Weekly, so a new RustSec advisory against a locked dependency shows up without a push.
+    # Weekly, so a new RustSec advisory against a locked dependency shows up without a push,
+    # and the fuzz job below runs.
     - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 # Every job only reads the repository. Actions are pinned to commit SHAs (Dependabot bumps
 # them), so a moved tag cannot change what runs.
@@ -118,3 +120,35 @@ jobs:
         run: BENCH_SLACK=4 ./scripts/bench.sh --check target/release/waymux
       - name: Run Docker End-to-End Suite
         run: WAYMUX_BIN="$PWD/target/release/waymux" ./scripts/docker-sandbox.sh test
+
+  fuzz:
+    # 60s per target on the weekly schedule (or by hand). Seeds in fuzz/seeds/ include every
+    # past crash, so a regression fails here even before the fuzzer finds anything new.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [hook_input, review_notes, config, rpc_body]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: nightly
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-fuzz
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: fuzz
+        run: |
+          mkdir -p "corpus/${{ matrix.target }}"
+          cargo +nightly fuzz run "${{ matrix.target }}" "corpus/${{ matrix.target }}" "seeds/${{ matrix.target }}" -- -max_total_time=60
+      - name: Upload Crash Inputs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/

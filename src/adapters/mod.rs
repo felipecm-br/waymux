@@ -115,7 +115,11 @@ fn urgency_score(state: &AgentState) -> u8 {
 }
 
 /// Icon from `[theme.states.<key>]` (else the registry's built-in) and the semantic state color.
-fn state_icon_color(theme: Option<&ThemeConfig>, key: &str, mode: Mode) -> (String, String) {
+pub(crate) fn state_icon_color(
+    theme: Option<&ThemeConfig>,
+    key: &str,
+    mode: Mode,
+) -> (String, String) {
     let icon = theme
         .and_then(|t| t.states.get(key))
         .map(|s| s.icon.as_str())

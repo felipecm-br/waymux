@@ -23,6 +23,9 @@ pub mod tmux_cmd;
 pub mod triage;
 pub mod wt;
 
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing;
+
 use std::path::Path;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
