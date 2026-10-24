@@ -14,7 +14,6 @@ use state::{IncomingUpdate, dispatch_update};
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct StatusRequest {
     pub agent: Option<String>,
     pub pane_id: String,

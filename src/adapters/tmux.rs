@@ -130,56 +130,6 @@ async fn unset_tmux_pane_state(pane_id: &str) {
     }
 }
 
-#[allow(dead_code)]
-async fn set_tmux_option(pane_id: &str, option: &str, value: &str) {
-    let out = crate::tmux_cmd::async_command()
-        .args(["set-option", "-w", "-t", pane_id, option, value])
-        .output()
-        .await;
-    if let Ok(o) = out
-        && !o.status.success()
-    {
-        tracing::warn!(
-            "Tmux set-option {} failed: {}",
-            option,
-            String::from_utf8_lossy(&o.stderr)
-        );
-    }
-}
-
-#[allow(dead_code)]
-async fn unset_tmux_option(pane_id: &str, option: &str) {
-    let out = crate::tmux_cmd::async_command()
-        .args(["set-option", "-w", "-u", "-t", pane_id, option])
-        .output()
-        .await;
-    if let Ok(o) = out
-        && !o.status.success()
-    {
-        tracing::warn!(
-            "Tmux unset-option {} failed: {}",
-            option,
-            String::from_utf8_lossy(&o.stderr)
-        );
-    }
-}
-
-#[allow(dead_code)]
-async fn refresh_tmux_client() {
-    let out = crate::tmux_cmd::async_command()
-        .args(["refresh-client", "-S"])
-        .output()
-        .await;
-    if let Ok(o) = out
-        && !o.status.success()
-    {
-        tracing::warn!(
-            "Tmux refresh-client failed: {}",
-            String::from_utf8_lossy(&o.stderr)
-        );
-    }
-}
-
 pub struct TmuxAdapter {
     spinners: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,

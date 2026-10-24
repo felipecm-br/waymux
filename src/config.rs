@@ -38,7 +38,6 @@ fn default_sound_enabled() -> bool {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[allow(dead_code)]
 pub struct Config {
     #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
