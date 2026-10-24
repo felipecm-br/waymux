@@ -33,6 +33,8 @@ impl Env {
         for sub in ["bin", "home", "run", "tmux", rel] {
             std::fs::create_dir_all(dir.join(sub)).unwrap();
         }
+        // The resolved path, as git and current_dir report it (macOS: /var -> /private/var).
+        let dir = dir.canonicalize().unwrap();
         let git = which("git");
         std::os::unix::fs::symlink(git, dir.join("bin/git")).unwrap();
         // An identity for commits that waymux itself makes (`wt -W` stashes).
