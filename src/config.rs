@@ -52,8 +52,8 @@ pub struct Config {
     pub sound: Option<SoundConfig>,
     /// Program/agent name -> Nerd Font glyph, merged over the built-ins in `icons`.
     pub icons: Option<HashMap<String, String>>,
-    /// Program run as `<hook> <event> <pane> <extra>` on agent_question, human_reply and
-    /// agent_finished. A leading `~/` expands to `$HOME`.
+    /// Program run as `<hook> <event> <pane> <extra>` on `agent_question`, `human_reply` and
+    /// `agent_finished`. A leading `~/` expands to `$HOME`.
     pub flow_log_hook: Option<String>,
 }
 
@@ -95,8 +95,7 @@ impl Config {
         let name = self
             .theme
             .as_ref()
-            .map(|t| t.active_spinner.clone())
-            .unwrap_or_else(|| "arc".to_string());
+            .map_or_else(|| "arc".to_string(), |t| t.active_spinner.clone());
         let spinner = self.spinners.as_ref().and_then(|s| s.get(&name).cloned());
         (name, spinner)
     }
@@ -123,11 +122,11 @@ impl Config {
     pub fn default_path() -> Option<String> {
         let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-            format!("{}/.config", home)
+            format!("{home}/.config")
         });
         [
-            format!("{}/waymux/config.toml", xdg_config),
-            format!("{}/acpd/config.toml", xdg_config),
+            format!("{xdg_config}/waymux/config.toml"),
+            format!("{xdg_config}/acpd/config.toml"),
             "/etc/waymux/config.toml".to_string(),
             "/etc/acpd/config.toml".to_string(),
             "config/default.toml".to_string(),
@@ -206,13 +205,13 @@ mod tests {
     #[test]
     fn test_state_color_is_optional() {
         let config: Config = toml::from_str(
-            r##"
+            r#"
             [theme]
             active_spinner = "minidot"
 
             [theme.states.permission]
             icon = "󱅭"
-        "##,
+        "#,
         )
         .unwrap();
         let theme = config.theme.unwrap();

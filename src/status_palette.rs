@@ -57,8 +57,10 @@ pub fn state_color(theme: Option<&ThemeConfig>, state: &str, mode: Mode) -> Stri
         .and_then(|t| t.states.get(state).or_else(|| t.states.get(canonical)))
         .map(|s| s.color.trim())
         .filter(|c| !c.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| builtin_color(canonical, mode).to_string())
+        .map_or_else(
+            || builtin_color(canonical, mode).to_string(),
+            str::to_string,
+        )
 }
 
 /// Unquoted value of a `key = value` line (inline `#` comments after a quoted value ignored).
@@ -114,8 +116,7 @@ pub fn theme_colors_path() -> Option<std::path::PathBuf> {
 pub fn detect_mode() -> Mode {
     theme_colors_path()
         .and_then(|path| std::fs::read_to_string(path).ok())
-        .map(|content| mode_from_colors_toml(&content))
-        .unwrap_or(Mode::Dark)
+        .map_or(Mode::Dark, |content| mode_from_colors_toml(&content))
 }
 
 /// WCAG 2.x relative luminance of `#rrggbb`.
@@ -146,6 +147,12 @@ pub fn contrast_ratio(a: &str, b: &str) -> Option<f64> {
 pub const MIN_TEXT_CONTRAST: f64 = 4.5;
 pub const MIN_LINE_CONTRAST: f64 = 3.0;
 
+/// An sRGB channel (0-255 scale) as a byte; clamped first, so the cast cannot wrap.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn channel(value: f64) -> u8 {
+    value.round().clamp(0.0, 255.0) as u8
+}
+
 /// `color` unchanged when it reaches `min_ratio` against `background`, otherwise the smallest
 /// step of a blend toward `toward` (usually the theme foreground) that does. Keeps the theme's
 /// hue where possible; e.g. lumon's `muted` (1.68:1) becomes a legible slate.
@@ -165,9 +172,9 @@ pub fn ensure_contrast(color: &str, background: &str, toward: &str, min_ratio: f
         let t = f64::from(step) / 20.0;
         let mixed = format!(
             "#{:02x}{:02x}{:02x}",
-            (from[0] + (to[0] - from[0]) * t).round() as u8,
-            (from[1] + (to[1] - from[1]) * t).round() as u8,
-            (from[2] + (to[2] - from[2]) * t).round() as u8
+            channel(from[0] + (to[0] - from[0]) * t),
+            channel(from[1] + (to[1] - from[1]) * t),
+            channel(from[2] + (to[2] - from[2]) * t)
         );
         if contrast_ratio(&mixed, background).is_some_and(|r| r >= min_ratio) {
             return mixed;
@@ -201,6 +208,8 @@ mod tests {
     /// Regression bar for the built-in palettes (actual minimums: 28 dark, 33 light).
     const MIN_STATE_DELTA_E76: f64 = 20.0;
 
+    // r, g, b, x, y, z, L, a: the CIE formulas' own names.
+    #[allow(clippy::many_single_char_names)]
     fn to_lab(hex: &str) -> (f64, f64, f64) {
         let h = hex.trim_start_matches('#');
         let lin = |i: usize| {
@@ -212,9 +221,9 @@ mod tests {
             }
         };
         let (r, g, b) = (lin(0), lin(2), lin(4));
-        let x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047;
-        let y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b;
-        let z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883;
+        let x = (0.412_456_4 * r + 0.357_576_1 * g + 0.180_437_5 * b) / 0.95047;
+        let y = 0.212_672_9 * r + 0.715_152_2 * g + 0.072_175_0 * b;
+        let z = (0.019_333_9 * r + 0.119_192_0 * g + 0.950_304_1 * b) / 1.08883;
         let f = |t: f64| {
             if t > 216.0 / 24389.0 {
                 t.cbrt()

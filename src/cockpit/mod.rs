@@ -41,7 +41,7 @@ fn resolve_target_path(item: &str, orig_sess: &str) -> String {
     }
 
     if t_path.is_empty() && !t_sess.is_empty() {
-        let target = format!("{}:", t_sess);
+        let target = format!("{t_sess}:");
         t_path = tmux_out(&[
             "display-message",
             "-t",
@@ -53,7 +53,7 @@ fn resolve_target_path(item: &str, orig_sess: &str) -> String {
     }
 
     if (t_path.is_empty() || !Path::new(&t_path).is_dir()) && !orig_sess.is_empty() {
-        let target = format!("{}:", orig_sess);
+        let target = format!("{orig_sess}:");
         t_path = tmux_out(&[
             "display-message",
             "-t",
@@ -67,8 +67,7 @@ fn resolve_target_path(item: &str, orig_sess: &str) -> String {
     if t_path.is_empty() || !Path::new(&t_path).is_dir() {
         t_path = std::env::current_dir()
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
+            .map_or_else(|| ".".to_string(), |p| p.to_string_lossy().to_string());
     }
 
     t_path
@@ -81,7 +80,24 @@ fn compute_start_idx(
     orig_sess: &str,
     orig_win: &str,
 ) -> usize {
-    if !saved_sess.is_empty() {
+    if saved_sess.is_empty() {
+        if let Some(n) = first_waiting_row(items_str) {
+            return n;
+        }
+        let mut n = 0usize;
+        for line in items_str.lines() {
+            if line.starts_with('#') || line.is_empty() {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('\t').collect();
+            let s = cols.get(3).copied().unwrap_or("");
+            let i = cols.get(1).copied().unwrap_or("");
+            if s == orig_sess && i == orig_win {
+                return n;
+            }
+            n += 1;
+        }
+    } else {
         let mut n = 0usize;
         for line in items_str.lines() {
             if line.starts_with('#') || line.is_empty() {
@@ -95,23 +111,6 @@ fn compute_start_idx(
                     return n;
                 }
             } else if s == saved_sess {
-                return n;
-            }
-            n += 1;
-        }
-    } else {
-        if let Some(n) = first_waiting_row(items_str) {
-            return n;
-        }
-        let mut n = 0usize;
-        for line in items_str.lines() {
-            if line.starts_with('#') || line.is_empty() {
-                continue;
-            }
-            let cols: Vec<&str> = line.split('\t').collect();
-            let s = cols.get(3).copied().unwrap_or("");
-            let i = cols.get(1).copied().unwrap_or("");
-            if s == orig_sess && i == orig_win {
                 return n;
             }
             n += 1;
@@ -143,11 +142,11 @@ fn ship_cli_args(branch: String) -> Vec<String> {
 
 fn find_wm_bin() -> String {
     if let Ok(home) = std::env::var("HOME") {
-        let wm = format!("{}/.local/bin/wm", home);
+        let wm = format!("{home}/.local/bin/wm");
         if Path::new(&wm).is_file() {
             return wm;
         }
-        let mm = format!("{}/.local/bin/mm", home);
+        let mm = format!("{home}/.local/bin/mm");
         if Path::new(&mm).is_file() {
             return mm;
         }
@@ -157,11 +156,11 @@ fn find_wm_bin() -> String {
 
 fn find_lazygitrs_bin() -> String {
     if let Ok(home) = std::env::var("HOME") {
-        let l1 = format!("{}/.local/bin/lazygitrs", home);
+        let l1 = format!("{home}/.local/bin/lazygitrs");
         if Path::new(&l1).is_file() {
             return l1;
         }
-        let l2 = format!("{}/.cargo/bin/lazygitrs", home);
+        let l2 = format!("{home}/.cargo/bin/lazygitrs");
         if Path::new(&l2).is_file() {
             return l2;
         }
@@ -171,12 +170,14 @@ fn find_lazygitrs_bin() -> String {
 
 const COCKPIT_BADGE: &str = " 󱂬 ";
 
+// The `__ACTION__` dispatch chain ends every branch with an explicit `continue` (reopen the
+// picker) or `return` (close it), so neither is "redundant" here.
+#[allow(clippy::needless_continue, clippy::redundant_else)]
 pub fn run_cockpit(args: &[String]) -> i32 {
     let is_fullscreen = args.iter().any(|a| a == "--fullscreen");
     let exe_str = std::env::current_exe()
         .ok()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "waymux".to_string());
+        .map_or_else(|| "waymux".to_string(), |p| p.to_string_lossy().to_string());
 
     if is_fullscreen {
         if !is_stdout_tty() {
@@ -201,7 +202,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             shell_quote(&exe_str)
         );
         let border_fg = format!("fg={}", theme.orange);
-        let text_fg = format!("fg={}", text_col);
+        let text_fg = format!("fg={text_col}");
         let mut popup_args = vec![
             "display-popup",
             "-S",
@@ -217,7 +218,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
         // borderless and Waymaker draws a gradient frame carrying the badge.
         let gradient = tmux_get_global_opt("@border_gradient");
         let gradient_env = format!("WM_BORDER_GRADIENT={}", gradient.trim());
-        let title_env = format!("WM_BORDER_TITLE={}", COCKPIT_BADGE);
+        let title_env = format!("WM_BORDER_TITLE={COCKPIT_BADGE}");
         if !gradient.trim().is_empty() {
             popup_args.extend(["-B", "-e", &gradient_env, "-e", &title_env]);
         }
@@ -259,8 +260,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
         .unwrap_or_else(|| {
             if !seg_bg.is_empty() && !fg_opt.is_empty() && !accent_opt.is_empty() {
                 format!(
-                    "list-border:{},group-header:{},selected-prefix:{},selected-fg:{}",
-                    seg_bg, fg_opt, accent_opt, fg_opt
+                    "list-border:{seg_bg},group-header:{fg_opt},selected-prefix:{accent_opt},selected-fg:{fg_opt}"
                 )
             } else {
                 "list-border:239,group-header:245,selected-prefix:214,selected-fg:223".to_string()
@@ -277,15 +277,15 @@ pub fn run_cockpit(args: &[String]) -> i32 {
         let start_idx =
             compute_start_idx(&items_str, &saved_sess, &saved_idx, &orig_sess, &orig_win);
 
-        let mut child = match Command::new(&wm_bin)
+        let Ok(mut child) = Command::new(&wm_bin)
             .args([
                 "--config",
                 &toml_path.to_string_lossy(),
-                &format!("results.spinner={}", spinner_name),
+                &format!("results.spinner={spinner_name}"),
                 "--pos",
                 &start_idx.to_string(),
                 "--color",
-                &format!("spinner:{}", spinner_color),
+                &format!("spinner:{spinner_color}"),
                 "--color",
                 &color_spec,
                 "--group-prefix",
@@ -294,18 +294,16 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return 1,
+        else {
+            return 1;
         };
 
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(items_str.as_bytes());
         }
 
-        let output = match child.wait_with_output() {
-            Ok(o) => o,
-            Err(_) => return 0,
+        let Ok(output) = child.wait_with_output() else {
+            return 0;
         };
 
         let chosen = String::from_utf8_lossy(&output.stdout)
@@ -334,8 +332,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
                 .unwrap_or_default();
             if branch.is_empty() || matches!(branch.as_str(), "main" | "master" | "HEAD") {
                 tmux_display_msg(&format!(
-                    "Cannot ship default branch '{}' (not a feature worktree)",
-                    branch
+                    "Cannot ship default branch '{branch}' (not a feature worktree)"
                 ));
                 return 0;
             }
@@ -389,15 +386,12 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             continue;
         } else if chosen.starts_with("__JUMP_LAST_AGENT__") {
             let last_target = tmux_get_global_opt("@cockpit_last_agent");
-            let current_target = format!("{}:{}", orig_sess, orig_win);
+            let current_target = format!("{orig_sess}:{orig_win}");
             if current_target != ":" {
                 tmux_set_global_opt("@cockpit_last_agent", &current_target);
             }
-            if !last_target.is_empty() {
-                if !tmux_status(&["switch-client", "-t", &last_target]) {
-                    let _ = tmux_status(&["switch-client", "-l"]);
-                }
-            } else {
+            // No recorded agent, or it is gone: fall back to the previous session.
+            if last_target.is_empty() || !tmux_status(&["switch-client", "-t", &last_target]) {
                 let _ = tmux_status(&["switch-client", "-l"]);
             }
             return 0;
@@ -417,11 +411,10 @@ pub fn run_cockpit(args: &[String]) -> i32 {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
+                .is_ok_and(|s| s.success());
 
             if !is_git {
-                tmux_display_msg(&format!("Not in a git repository: {}", target_path));
+                tmux_display_msg(&format!("Not in a git repository: {target_path}"));
                 if is_patch {
                     continue;
                 }
@@ -438,8 +431,7 @@ pub fn run_cockpit(args: &[String]) -> i32 {
 
             if is_patch && porcelain.is_empty() {
                 tmux_display_msg(&format!(
-                    "Working tree is clean: nothing to patch in {}",
-                    target_path
+                    "Working tree is clean: nothing to patch in {target_path}"
                 ));
                 continue;
             }
@@ -503,11 +495,11 @@ pub fn run_cockpit(args: &[String]) -> i32 {
             let session = cols.get(3).copied().unwrap_or("");
             let idx = cols.get(1).copied().unwrap_or("");
             if !session.is_empty() && !idx.is_empty() && idx != "-" {
-                let current_target = format!("{}:{}", orig_sess, orig_win);
+                let current_target = format!("{orig_sess}:{orig_win}");
                 if current_target != ":" {
                     tmux_set_global_opt("@cockpit_last_agent", &current_target);
                 }
-                let target = format!("{}:{}", session, idx);
+                let target = format!("{session}:{idx}");
                 let _ = tmux_status(&["switch-client", "-t", &target]);
             }
             return 0;

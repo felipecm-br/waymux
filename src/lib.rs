@@ -221,10 +221,10 @@ fn is_daemon_invocation(first_arg: &str) -> bool {
 /// only print get the default disposition back and exit quietly. The daemon and the
 /// socket-writing hot paths (`hook`, `inject`, `dismiss`) keep EPIPE as an error.
 fn restore_default_sigpipe(command: &str) {
+    use nix::sys::signal::{SigHandler, Signal, signal};
     if is_daemon_invocation(command) || matches!(command, "hook" | "inject" | "dismiss") {
         return;
     }
-    use nix::sys::signal::{SigHandler, Signal, signal};
     // SAFETY: single-threaded at this point, and SIG_DFL installs no handler code.
     unsafe {
         let _ = signal(Signal::SIGPIPE, SigHandler::SigDfl);
@@ -246,8 +246,7 @@ pub fn entry() -> anyhow::Result<()> {
     let bin_name = args
         .first()
         .and_then(|s| Path::new(s).file_name())
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| "waymux".to_string());
+        .map_or_else(|| "waymux".to_string(), |f| f.to_string_lossy().to_string());
 
     if bin_name == "awt" {
         let code = wt::run_cli(&args[1..]);
@@ -257,7 +256,7 @@ pub fn entry() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let first_arg = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    let first_arg = args.get(1).map_or("", std::string::String::as_str);
     restore_default_sigpipe(first_arg);
 
     if let Some(spec) = find_command(first_arg)
@@ -324,9 +323,7 @@ pub fn entry() -> anyhow::Result<()> {
         let mut config_path = None;
         let mut iter = args.iter().skip(1);
         while let Some(arg) = iter.next() {
-            if arg == "daemon" {
-                continue;
-            } else if arg == "--config" || arg == "-c" {
+            if arg == "--config" || arg == "-c" {
                 config_path = iter.next().cloned();
             } else if let Some(stripped) = arg.strip_prefix("--config=") {
                 config_path = Some(stripped.to_string());
@@ -345,24 +342,24 @@ pub fn entry() -> anyhow::Result<()> {
             .init();
 
         tracing::info!("Starting Waymux Daemon...");
-        match &loaded_from {
-            Some(path) => tracing::info!("Loaded config from {}", path),
-            None => tracing::info!("No external config file found, using built-in defaults"),
+        if let Some(path) = &loaded_from {
+            tracing::info!("Loaded config from {}", path);
+        } else {
+            tracing::info!("No external config file found, using built-in defaults");
         }
 
         // Default to the per-user runtime dir (systemd's RuntimeDirectory=waymux) so a second
         // daemon is refused even without a config file.
-        let pid_path = match config.pid_file.clone() {
-            Some(path) => path,
-            None => {
-                let dir = crate::presets::private_runtime_dir().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "{} is not a directory owned by you; set pid_file in the config",
-                        crate::presets::runtime_dir().display()
-                    )
-                })?;
-                dir.join("waymux.pid").to_string_lossy().to_string()
-            }
+        let pid_path = if let Some(path) = config.pid_file.clone() {
+            path
+        } else {
+            let dir = crate::presets::private_runtime_dir().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} is not a directory owned by you; set pid_file in the config",
+                    crate::presets::runtime_dir().display()
+                )
+            })?;
+            dir.join("waymux.pid").to_string_lossy().to_string()
         };
         tracing::info!("Creating PID file at {}", pid_path);
         let _pid_file = crate::pid::PidFile::create(&pid_path)?;

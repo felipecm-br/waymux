@@ -3,6 +3,7 @@
 //! the developer's tmux server, sounds or token.
 
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -123,7 +124,7 @@ struct Daemon {
 
 impl Daemon {
     fn stop(mut self) -> std::process::ExitStatus {
-        let pid = nix::unistd::Pid::from_raw(self.child.id() as i32);
+        let pid = nix::unistd::Pid::from_raw(i32::try_from(self.child.id()).unwrap());
         let _ = nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGTERM);
         let status = self.child.wait().unwrap();
         std::mem::forget(self);
@@ -265,7 +266,7 @@ fn doctor_names_the_missing_daemon_and_fails() {
 fn sighup_reloads_the_config_and_keeps_it_when_the_new_one_is_broken() {
     let sb = Sandbox::new();
     let daemon = sb.spawn_daemon();
-    let pid = nix::unistd::Pid::from_raw(daemon.child.id() as i32);
+    let pid = nix::unistd::Pid::from_raw(i32::try_from(daemon.child.id()).unwrap());
     let hup = || nix::sys::signal::kill(pid, nix::sys::signal::Signal::SIGHUP).unwrap();
 
     // flow_log_hook is the reloadable setting a client can observe: it runs on a question.
@@ -276,7 +277,6 @@ fn sighup_reloads_the_config_and_keeps_it_when_the_new_one_is_broken() {
         format!("#!/bin/sh\necho \"$1\" >> '{}'\n", events.display()),
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     let config_path = sb.dir.join("config.toml");
     let base = std::fs::read_to_string(&config_path).unwrap();

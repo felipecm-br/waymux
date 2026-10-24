@@ -210,8 +210,7 @@ impl ApiState {
 
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
 
         self.rehydrate_from_raw_lines(&output, now_secs).await;
     }
@@ -276,7 +275,7 @@ impl ApiState {
                 _ => String::new(),
             };
 
-            let current_snapshot = format!("{}:{}", cursor_info, text_snapshot);
+            let current_snapshot = format!("{cursor_info}:{text_snapshot}");
             let current_cpu = if pane_pid > 0 {
                 get_process_tree_cpu_ticks(pane_pid)
             } else {
@@ -354,7 +353,7 @@ fn get_process_tree_cpu_ticks(root_pid: u32) -> u64 {
                 Err(_) => continue,
             };
 
-            let stat_path = format!("/proc/{}/stat", pid);
+            let stat_path = format!("/proc/{pid}/stat");
             if let Ok(content) = std::fs::read_to_string(stat_path)
                 && let Some(rparen) = content.rfind(')')
             {
@@ -409,7 +408,7 @@ fn log_flow_event(hook: Option<&Arc<str>>, event: &str, target: &str, extra: &st
             .await
         {
             Ok(out) if !out.status.success() => {
-                tracing::debug!("flow_log_hook {} exited with {}", hook, out.status)
+                tracing::debug!("flow_log_hook {} exited with {}", hook, out.status);
             }
             Err(e) => tracing::debug!("flow_log_hook {} failed to start: {}", hook, e),
             Ok(_) => {}
@@ -446,10 +445,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
             let prev = states.get(&update.pane_id).map(|s| s.state.clone());
             let finished_at =
                 if update.state == AgentState::Idle && prev == Some(AgentState::Working) {
-                    let now_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0);
+                    let now_ms = crate::sys::unix_ms();
                     // Persist on the pane so a restarted daemon still knows (theme switches
                     // restart it); rehydrate_from_tmux reads it back.
                     let pane = update.pane_id.clone();
@@ -468,10 +464,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                     });
                     now_ms
                 } else {
-                    states
-                        .get(&update.pane_id)
-                        .map(|s| s.finished_at)
-                        .unwrap_or(0)
+                    states.get(&update.pane_id).map_or(0, |s| s.finished_at)
                 };
             states.insert(
                 update.pane_id.clone(),
@@ -514,10 +507,10 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
             );
         }
         // Human answered question (transitioned from question/permission to working or idle)
-        (Some(AgentState::AwaitingInput), AgentState::Working)
-        | (Some(AgentState::AwaitingInput), AgentState::Idle)
-        | (Some(AgentState::Permission), AgentState::Working)
-        | (Some(AgentState::Permission), AgentState::Idle) => {
+        (
+            Some(AgentState::AwaitingInput | AgentState::Permission),
+            AgentState::Working | AgentState::Idle,
+        ) => {
             log_flow_event(flow_log_hook.as_ref(), "human_reply", &update.pane_id, "");
         }
         _ => {}
@@ -608,6 +601,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flow_log_hook_gets_event_target_and_extra() {
+        use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("waymux-flow-hook-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("out");
@@ -617,7 +611,6 @@ mod tests {
             format!("#!/bin/sh\nprintf '%s|' \"$@\" > '{}'\n", out.display()),
         )
         .unwrap();
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let hook: Arc<str> = Arc::from(hook.to_string_lossy().as_ref());

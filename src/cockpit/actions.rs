@@ -16,9 +16,9 @@ pub fn can_confirm_state(state: &str) -> bool {
 }
 
 pub fn run_agent_action(args: &[String]) -> i32 {
-    let action = args.first().map(|s| s.as_str()).unwrap_or("");
-    let state = args.get(1).map(|s| s.as_str()).unwrap_or("");
-    let pid = args.get(2).map(|s| s.as_str()).unwrap_or("");
+    let action = args.first().map_or("", std::string::String::as_str);
+    let state = args.get(1).map_or("", std::string::String::as_str);
+    let pid = args.get(2).map_or("", std::string::String::as_str);
 
     if !is_valid_pane_id(pid) {
         return 0;
@@ -31,8 +31,7 @@ pub fn run_agent_action(args: &[String]) -> i32 {
             } else {
                 let st = if state.is_empty() { "normal" } else { state };
                 tmux_display_msg(&format!(
-                    "Action ignored: Pane {} is not awaiting confirmation (state: {})",
-                    pid, st
+                    "Action ignored: Pane {pid} is not awaiting confirmation (state: {st})"
                 ));
             }
             0
@@ -43,8 +42,7 @@ pub fn run_agent_action(args: &[String]) -> i32 {
             } else {
                 let st = if state.is_empty() { "normal" } else { state };
                 tmux_display_msg(&format!(
-                    "Action ignored: Pane {} is not awaiting confirmation (state: {})",
-                    pid, st
+                    "Action ignored: Pane {pid} is not awaiting confirmation (state: {st})"
                 ));
             }
             0
@@ -105,7 +103,7 @@ pub fn create_window_from_raw(raw_input: &str) -> Option<String> {
     }
 
     if row_path.is_empty() {
-        let target_sess = format!("{}:", session);
+        let target_sess = format!("{session}:");
         if let Some(sdir) = tmux_out(&[
             "display-message",
             "-t",
@@ -118,7 +116,7 @@ pub fn create_window_from_raw(raw_input: &str) -> Option<String> {
         }
     }
 
-    let target_sess = format!("{}:", session);
+    let target_sess = format!("{session}:");
     let new_target = if !row_path.is_empty() && Path::new(&row_path).is_dir() {
         tmux_out(&[
             "new-window",
@@ -161,7 +159,7 @@ pub fn run_window_create() -> i32 {
     let mut raw = String::new();
     let _ = io::stdin().read_to_string(&mut raw);
     if let Some(target) = create_window_from_raw(&raw) {
-        println!("{}", target);
+        println!("{target}");
     }
     0
 }
@@ -243,16 +241,9 @@ fn active_agent_states(target: &str, whole_session: bool) -> Vec<String> {
         .collect()
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 /// Returns true when the kill may proceed; otherwise arms `key` and tells the user why.
 fn confirm_kill(key: &str, label: &str, states: &[String]) -> bool {
-    let now = now_ms();
+    let now = crate::sys::unix_ms();
     let armed = tmux_get_global_opt(KILL_ARM_OPT);
     match kill_decision(!states.is_empty(), &armed, key, now) {
         KillDecision::Kill => {
@@ -262,13 +253,13 @@ fn confirm_kill(key: &str, label: &str, states: &[String]) -> bool {
             true
         }
         KillDecision::Arm => {
-            tmux_set_global_opt(KILL_ARM_OPT, &format!("{}|{}", key, now));
+            tmux_set_global_opt(KILL_ARM_OPT, &format!("{key}|{now}"));
             tmux_display_msg_timed(
-                KILL_CONFIRM_MS as u32,
+                u32::try_from(KILL_CONFIRM_MS).unwrap_or(u32::MAX),
                 &format!(
                     " 󰚌 {}: agent {} │ press again to kill",
                     label,
-                    states.first().map(String::as_str).unwrap_or("active")
+                    states.first().map_or("active", String::as_str)
                 ),
             );
             false
@@ -290,7 +281,7 @@ pub fn run_window_delete() -> i32 {
             return 0;
         }
 
-        let target_sess = format!("{}:", sess_name);
+        let target_sess = format!("{sess_name}:");
         let wt_path = tmux_out(&[
             "display-message",
             "-t",
@@ -399,7 +390,7 @@ pub fn run_window_delete() -> i32 {
     let record_script = crate::wt::find_user_script("record-window-state.sh");
 
     for (sess, idx) in targets {
-        let target = format!("{}:{}", sess, idx);
+        let target = format!("{sess}:{idx}");
         let label = tmux_out(&[
             "display-message",
             "-p",
@@ -414,9 +405,7 @@ pub fn run_window_delete() -> i32 {
 
         let is_active = tmux_out(&["display-message", "-p", "-t", &target, "#{window_active}"])
             .unwrap_or_default();
-        let win_count = tmux_out(&["list-windows", "-t", &sess])
-            .map(|s| s.lines().count())
-            .unwrap_or(0);
+        let win_count = tmux_out(&["list-windows", "-t", &sess]).map_or(0, |s| s.lines().count());
 
         if is_active == "1"
             && win_count > 1

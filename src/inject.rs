@@ -16,7 +16,7 @@ fn log_injector(msg: &str) {
         .mode(0o600)
         .open(dir.join("injector.log"))
     {
-        let _ = writeln!(f, "{}", msg);
+        let _ = writeln!(f, "{msg}");
     }
 }
 
@@ -183,34 +183,30 @@ fn find_target_pane(workspace_dir: &str) -> Option<String> {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let raw_workspace_dir = args.first().map(|s| s.as_str()).unwrap_or("");
-    let raw_prompt = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    let raw_workspace_dir = args.first().map_or("", std::string::String::as_str);
+    let raw_prompt = args.get(1).map_or("", std::string::String::as_str);
 
     let workspace_dir = raw_workspace_dir.trim_matches(['\'', '"']);
     let prompt = raw_prompt.trim_matches(['\'', '"']);
 
-    log_injector(&format!("{} {}", workspace_dir, prompt));
+    log_injector(&format!("{workspace_dir} {prompt}"));
 
     if workspace_dir.is_empty() || prompt.is_empty() {
         return 1;
     }
 
-    let pane = match find_target_pane(workspace_dir) {
-        Some(p) => p,
-        None => {
-            log_injector(&format!(
-                "no target agent pane found for workspace ({})",
-                workspace_dir
-            ));
-            return 1;
-        }
+    let Some(pane) = find_target_pane(workspace_dir) else {
+        log_injector(&format!(
+            "no target agent pane found for workspace ({workspace_dir})"
+        ));
+        return 1;
     };
 
     if tmux_load_and_paste_bracketed(None, &pane, prompt) {
         let _ = tmux_status(&["send-keys", "-t", &pane, "Enter"]);
         let _ = tmux_out(&[
             "display-message",
-            &format!("󰊢 Review note dispatched to AI agent in pane {}", pane),
+            &format!("󰊢 Review note dispatched to AI agent in pane {pane}"),
         ]);
         return 0;
     }
@@ -220,7 +216,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     let _ = tmux_status(&["send-keys", "-t", &pane, "Enter"]);
     let _ = tmux_out(&[
         "display-message",
-        &format!("󰊢 Review note dispatched to AI agent in pane {}", pane),
+        &format!("󰊢 Review note dispatched to AI agent in pane {pane}"),
     ]);
     0
 }

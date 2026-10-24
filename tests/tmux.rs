@@ -9,6 +9,7 @@ mod common;
 
 use common::{Env, Tmux, eventually};
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::process::Stdio;
 
 /// The env and its tmux server, or None (test skipped) without tmux.
@@ -156,7 +157,6 @@ fn window_delete_runs_the_record_script_before_killing() {
     std::fs::create_dir_all(&scripts).unwrap();
     let script = scripts.join("record-window-state.sh");
     std::fs::write(&script, "#!/bin/sh\necho \"$@\" > \"$HOME/recorded\"\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     run_with_stdin(&env, &["window-delete"], "x\t1\tx\tmain\n");

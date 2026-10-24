@@ -4,6 +4,7 @@
 mod common;
 
 use common::Env;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Output;
 
@@ -17,7 +18,6 @@ fn fake_helper(dir: &Path, name: &str) {
         "#!/bin/sh\n{ echo \"${0##*/}\"; for a in \"$@\"; do echo \"[$a]\"; done; } > \"$HOME/calls\"\nexit 7\n",
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
@@ -181,7 +181,6 @@ fn create_adds_a_worktree_records_its_base_and_runs_the_post_create_hook() {
         "#!/bin/sh\necho \"$2 $3\" > \"$HOME/post-create\"\n",
     )
     .unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(
         hooks.join("post-create.sh"),
         std::fs::Permissions::from_mode(0o755),

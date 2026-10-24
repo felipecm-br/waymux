@@ -1,5 +1,6 @@
 use crate::tmux_cmd::{tmux_display_msg, tmux_load_and_paste_bracketed, tmux_out, tmux_status};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -77,19 +78,17 @@ pub fn load_notes(path: &Path) -> Option<NotesFile> {
 }
 
 pub fn count_pending_in_file(path: &Path) -> usize {
-    load_notes(path)
-        .map(|data| data.notes.iter().filter(|n| n.status == "New").count())
-        .unwrap_or(0)
+    load_notes(path).map_or(0, |data| {
+        data.notes.iter().filter(|n| n.status == "New").count()
+    })
 }
 
 pub fn render_pending_notes(ppath: &str) -> String {
-    let notes_file = match resolve_notes_file(ppath) {
-        Some(p) => p,
-        None => return String::new(),
+    let Some(notes_file) = resolve_notes_file(ppath) else {
+        return String::new();
     };
-    let data = match load_notes(&notes_file) {
-        Some(d) => d,
-        None => return String::new(),
+    let Some(data) = load_notes(&notes_file) else {
+        return String::new();
     };
     let pending: Vec<&ReviewNote> = data.notes.iter().filter(|n| n.status == "New").collect();
     if pending.is_empty() {
@@ -97,10 +96,11 @@ pub fn render_pending_notes(ppath: &str) -> String {
     }
 
     let mut out = String::new();
-    out.push_str(&format!(
-        "\x1b[1;33m  󰆈 Pending AI Review Notes ({}):\x1b[0m\n",
+    let _ = writeln!(
+        out,
+        "\x1b[1;33m  󰆈 Pending AI Review Notes ({}):\x1b[0m",
         pending.len()
-    ));
+    );
     for n in pending.iter().take(5) {
         let f = if n.file.is_empty() {
             "unknown"
@@ -111,20 +111,21 @@ pub fn render_pending_notes(ppath: &str) -> String {
         let clean_c = n.comment.replace(['\n', '\r'], " ");
         let c_trunc = if clean_c.chars().count() > 60 {
             let s: String = clean_c.chars().take(57).collect();
-            format!("{}...", s)
+            format!("{s}...")
         } else {
             clean_c
         };
-        out.push_str(&format!(
-            "    \x1b[1;36m• {}:{}\x1b[0m \x1b[2m›\x1b[0m \"{}\"\n",
-            f, l, c_trunc
-        ));
+        let _ = writeln!(
+            out,
+            "    \x1b[1;36m• {f}:{l}\x1b[0m \x1b[2m›\x1b[0m \"{c_trunc}\""
+        );
     }
     if pending.len() > 5 {
-        out.push_str(&format!(
-            "    \x1b[2m... and {} more notes\x1b[0m\n",
+        let _ = writeln!(
+            out,
+            "    \x1b[2m... and {} more notes\x1b[0m",
             pending.len() - 5
-        ));
+        );
     }
     out.push_str(
         "    \x1b[2m(Press \x1b[1;36mr\x1b[0;2m to dispatch all review notes to agent)\x1b[0m\n\n",
@@ -173,51 +174,40 @@ pub fn format_and_mark_sent(data: &mut NotesFile) -> Option<(usize, String)> {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
-    let ppath = args.get(1).map(|s| s.as_str()).unwrap_or("");
+    let cmd = args.first().map_or("", std::string::String::as_str);
+    let ppath = args.get(1).map_or("", std::string::String::as_str);
 
     match cmd {
         "count" => {
-            let count = resolve_notes_file(ppath)
-                .map(|p| count_pending_in_file(&p))
-                .unwrap_or(0);
-            println!("{}", count);
+            let count = resolve_notes_file(ppath).map_or(0, |p| count_pending_in_file(&p));
+            println!("{count}");
             0
         }
         "list" => {
             let rendered = render_pending_notes(ppath);
             if !rendered.is_empty() {
-                print!("{}", rendered);
+                print!("{rendered}");
             }
             0
         }
         "send" => {
-            let session = args.get(2).map(|s| s.as_str()).unwrap_or("");
-            let idx = args.get(3).map(|s| s.as_str()).unwrap_or("");
-            let pane_id = args.get(4).map(|s| s.as_str()).unwrap_or("");
+            let session = args.get(2).map_or("", std::string::String::as_str);
+            let idx = args.get(3).map_or("", std::string::String::as_str);
+            let pane_id = args.get(4).map_or("", std::string::String::as_str);
 
-            let notes_file = match resolve_notes_file(ppath) {
-                Some(p) => p,
-                None => {
-                    tmux_display_msg(&format!("No review notes found for {}", ppath));
-                    return 0;
-                }
+            let Some(notes_file) = resolve_notes_file(ppath) else {
+                tmux_display_msg(&format!("No review notes found for {ppath}"));
+                return 0;
             };
 
-            let mut data = match load_notes(&notes_file) {
-                Some(d) => d,
-                None => {
-                    tmux_display_msg("No pending review notes to send");
-                    return 0;
-                }
+            let Some(mut data) = load_notes(&notes_file) else {
+                tmux_display_msg("No pending review notes to send");
+                return 0;
             };
 
-            let (count, prompt) = match format_and_mark_sent(&mut data) {
-                Some(res) => res,
-                None => {
-                    tmux_display_msg("No pending review notes to send");
-                    return 0;
-                }
+            let Some((count, prompt)) = format_and_mark_sent(&mut data) else {
+                tmux_display_msg("No pending review notes to send");
+                return 0;
             };
 
             if let Ok(serialized) = serde_json::to_string_pretty(&data) {
@@ -230,7 +220,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 && !idx.is_empty()
                 && idx != "-"
             {
-                let target_spec = format!("{}:{}", session, idx);
+                let target_spec = format!("{session}:{idx}");
                 target_pane =
                     tmux_out(&["display-message", "-p", "-t", &target_spec, "#{pane_id}"])
                         .unwrap_or_default();
@@ -249,8 +239,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
 
             tmux_display_msg(&format!(
-                "Dispatched {} review note(s) to agent in pane {}",
-                count, target_pane
+                "Dispatched {count} review note(s) to agent in pane {target_pane}"
             ));
             0
         }

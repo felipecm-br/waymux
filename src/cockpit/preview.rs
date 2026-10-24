@@ -1,6 +1,7 @@
 use crate::cockpit::notes;
 use crate::theme::{RESET, ThemePalette, strip_ansi};
 use crate::tmux_cmd::{tmux_out, tmux_out_raw};
+use std::fmt::Write as _;
 
 pub fn box_line(card_border: &str, w: usize, content: &str) -> String {
     let clean = strip_ansi(content);
@@ -19,17 +20,23 @@ pub fn box_line(card_border: &str, w: usize, content: &str) -> String {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let session = args.first().map(|s| s.as_str()).unwrap_or("");
-    let idx = args.get(1).map(|s| s.as_str()).unwrap_or("");
-    let mut pane_id = args.get(2).map(|s| s.as_str()).unwrap_or("").to_string();
-    let mut ppath = args.get(3).map(|s| s.as_str()).unwrap_or("").to_string();
+    let session = args.first().map_or("", std::string::String::as_str);
+    let idx = args.get(1).map_or("", std::string::String::as_str);
+    let mut pane_id = args
+        .get(2)
+        .map_or("", std::string::String::as_str)
+        .to_string();
+    let mut ppath = args
+        .get(3)
+        .map_or("", std::string::String::as_str)
+        .to_string();
 
     if session.is_empty() || idx.is_empty() || idx == "-" {
         println!("  \x1b[38;2;146;131;116m(no active window selected)\x1b[0m");
         return 0;
     }
 
-    let target_win = format!("{}:{}", session, idx);
+    let target_win = format!("{session}:{idx}");
     if pane_id.is_empty() || pane_id == "-" {
         pane_id = tmux_out(&["display-message", "-p", "-t", &target_win, "#{pane_id}"])
             .unwrap_or_default();
@@ -62,10 +69,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             out.push('\n');
         }
     } else {
-        out.push_str(&format!(
-            "  {}(pane output empty or detached){}\n",
-            c_gray, RESET
-        ));
+        let _ = writeln!(out, "  {c_gray}(pane output empty or detached){RESET}");
     }
 
     let notes_section = notes::render_pending_notes(&ppath);
@@ -74,6 +78,6 @@ pub fn run_cli(args: &[String]) -> i32 {
         out.push_str(&notes_section);
     }
 
-    print!("{}", out);
+    print!("{out}");
     0
 }

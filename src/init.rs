@@ -89,7 +89,7 @@ fn print_hooks() {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let flag = args.first().map(|s| s.as_str()).unwrap_or("--help");
+    let flag = args.first().map_or("--help", std::string::String::as_str);
     match flag {
         "--tmux" | "tmux" => {
             println!("{TMUX_SNIPPET}");

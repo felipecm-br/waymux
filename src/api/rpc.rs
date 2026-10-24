@@ -179,8 +179,8 @@ impl RpcError {
         }
     }
 
-    fn invalid_params(e: serde_json::Error) -> Self {
-        Self::new(INVALID_PARAMS, format!("Invalid params: {}", e))
+    fn invalid_params(e: &serde_json::Error) -> Self {
+        Self::new(INVALID_PARAMS, format!("Invalid params: {e}"))
     }
 }
 
@@ -209,7 +209,7 @@ pub(super) async fn handle_rpc(State(state): State<ApiState>, body: Bytes) -> Re
     let message: Value = match serde_json::from_slice(&body) {
         Ok(message) => message,
         Err(e) => {
-            let error = RpcError::new(PARSE_ERROR, format!("Parse error: {}", e));
+            let error = RpcError::new(PARSE_ERROR, format!("Parse error: {e}"));
             return reply(json!(RpcResponse::from_result(Value::Null, Err(error))));
         }
     };
@@ -248,7 +248,7 @@ async fn handle_message(state: &ApiState, message: Value) -> Option<RpcResponse>
             return Some(RpcResponse::from_result(id, Err(error)));
         }
         Err(e) => {
-            let error = RpcError::new(INVALID_REQUEST, format!("Invalid Request: {}", e));
+            let error = RpcError::new(INVALID_REQUEST, format!("Invalid Request: {e}"));
             return Some(RpcResponse::from_result(id, Err(error)));
         }
     };
@@ -482,10 +482,12 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
     };
 
     match current_state {
-        Some(AgentState::AwaitingInput)
-        | Some(AgentState::Permission)
-        | Some(AgentState::Stalled)
-        | Some(AgentState::Error) => {
+        Some(
+            AgentState::AwaitingInput
+            | AgentState::Permission
+            | AgentState::Stalled
+            | AgentState::Error,
+        ) => {
             tracing::info!("Dismissing attention state for pane {}", pane_id);
             dispatch_update(
                 state,
@@ -539,7 +541,7 @@ async fn wait(state: &ApiState, params: WaitParams) -> RpcResult {
         .as_deref()
         .unwrap_or("idle")
         .parse::<AgentState>()
-        .map_err(|e| RpcError::new(INVALID_PARAMS, format!("Invalid target_state: {}", e)))?;
+        .map_err(|e| RpcError::new(INVALID_PARAMS, format!("Invalid target_state: {e}")))?;
 
     let pane_id = params.pane_id;
     let reached = |state: &str| serde_json::json!({ "status": "reached", "pane_id": pane_id, "state": state });
@@ -603,8 +605,7 @@ async fn wait(state: &ApiState, params: WaitParams) -> RpcResult {
                 let states = state.pane_states.lock().await;
                 states
                     .get(&pane_id)
-                    .map(|s| s.state.as_str().to_string())
-                    .unwrap_or_else(|| "unknown".into())
+                    .map_or_else(|| "unknown".into(), |s| s.state.as_str().to_string())
             };
             Ok(serde_json::json!({
                 "status": "timeout",
@@ -640,7 +641,7 @@ async fn stdout(mut cmd: tokio::process::Command) -> Result<String, RpcError> {
         )),
         Err(e) => Err(RpcError::new(
             SERVER_ERROR,
-            format!("Failed to execute tmux: {}", e),
+            format!("Failed to execute tmux: {e}"),
         )),
     }
 }
@@ -663,7 +664,7 @@ fn rows(stdout: &str, min_cols: usize, row: impl Fn(&[&str]) -> Value) -> Value 
 
 /// Params that must be present and well-formed.
 fn strict<T: serde::de::DeserializeOwned>(params: Value) -> Result<T, RpcError> {
-    serde_json::from_value(params).map_err(RpcError::invalid_params)
+    serde_json::from_value(params).map_err(|e| RpcError::invalid_params(&e))
 }
 
 /// Params that may be omitted (`null` falls back to the defaults).
@@ -751,7 +752,7 @@ mod tests {
             RpcResponse::Success { result, .. } => {
                 assert_eq!(result.get("status").unwrap(), "dismissed");
             }
-            _ => panic!("Expected dismiss success"),
+            RpcResponse::Error { .. } => panic!("Expected dismiss success"),
         }
 
         // Verify state is now Idle
@@ -772,7 +773,7 @@ mod tests {
                 assert_eq!(result.get("status").unwrap(), "reached");
                 assert_eq!(result.get("state").unwrap(), "idle");
             }
-            _ => panic!("Expected wait success"),
+            RpcResponse::Error { .. } => panic!("Expected wait success"),
         }
 
         // 3. When working, dismiss should be ignored
@@ -797,7 +798,7 @@ mod tests {
             RpcResponse::Success { result, .. } => {
                 assert_eq!(result.get("status").unwrap(), "ignored");
             }
-            _ => panic!("Expected dismiss ignored"),
+            RpcResponse::Error { .. } => panic!("Expected dismiss ignored"),
         }
     }
 

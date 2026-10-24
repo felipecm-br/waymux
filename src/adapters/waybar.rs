@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 fn get_waybar_state_path() -> String {
     let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    format!("{}/acpd-waybar-state.json", xdg_runtime)
+    format!("{xdg_runtime}/acpd-waybar-state.json")
 }
 
 pub struct WaybarAdapter {

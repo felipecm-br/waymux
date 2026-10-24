@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 #[cfg(test)]
 pub const TEST_SOCKET: &str = "waymux-unit-test";
 
-/// Forces UTF-8 output whatever the locale. Without it, a client whose LC_ALL/LC_CTYPE/LANG
+/// Forces UTF-8 output whatever the locale. Without it, a client whose `LC_ALL/LC_CTYPE/LANG`
 /// is not UTF-8 (cron, `env -i`, some service managers) turns the tabs in `-F` formats and
 /// every non-ASCII glyph into `_`, so tab-separated rows no longer split and agent states
 /// and icons are lost.
@@ -58,8 +58,7 @@ pub fn tmux_status(args: &[&str]) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 pub fn tmux_get_global_opt(opt: &str) -> String {
@@ -95,15 +94,14 @@ pub fn tmux_load_and_paste_bracketed(
     }
     load_args.push("-");
 
-    let mut child = match command()
+    let Ok(mut child) = command()
         .args(&load_args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
+    else {
+        return false;
     };
 
     if let Some(mut stdin) = child.stdin.take()
@@ -112,7 +110,7 @@ pub fn tmux_load_and_paste_bracketed(
         return false;
     }
 
-    if !child.wait().map(|s| s.success()).unwrap_or(false) {
+    if !child.wait().is_ok_and(|s| s.success()) {
         return false;
     }
 
@@ -137,12 +135,15 @@ mod tests {
 
     #[test]
     fn test_commands_use_private_socket_under_test() {
-        let sync_args: Vec<_> = command().get_args().map(|a| a.to_owned()).collect();
+        let sync_args: Vec<_> = command()
+            .get_args()
+            .map(std::borrow::ToOwned::to_owned)
+            .collect();
         assert_eq!(sync_args, [UTF8, "-L", TEST_SOCKET]);
         let async_args: Vec<_> = async_command()
             .as_std()
             .get_args()
-            .map(|a| a.to_owned())
+            .map(std::borrow::ToOwned::to_owned)
             .collect();
         assert_eq!(async_args, [UTF8, "-L", TEST_SOCKET]);
     }

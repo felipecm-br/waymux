@@ -64,8 +64,7 @@ impl std::str::FromStr for AgentState {
             "error" => Ok(AgentState::Error),
             "closed" => Ok(AgentState::Closed),
             invalid => Err(format!(
-                "Invalid params: Unknown agent state '{}'. Expected one of: working, idle, awaiting_input, permission, stalled, error, closed.",
-                invalid
+                "Invalid params: Unknown agent state '{invalid}'. Expected one of: working, idle, awaiting_input, permission, stalled, error, closed."
             )),
         }
     }

@@ -7,7 +7,6 @@ use std::io::{self, Read};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn is_stdin_tty() -> bool {
     unsafe { nix::libc::isatty(io::stdin().as_raw_fd()) == 1 }
@@ -226,17 +225,14 @@ fn write_pane_state_file(pane_id: &str, state: &str) {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let now_ms = crate::sys::unix_ms();
     let data = serde_json::json!({
         "paneId": pane_id,
         "state": state,
         "message": serde_json::Value::Null,
         "timestamp": now_ms,
     });
-    let file = std::env::temp_dir().join(format!("acpd-pane-state-{}.json", safe_pane));
+    let file = std::env::temp_dir().join(format!("acpd-pane-state-{safe_pane}.json"));
     if let Ok(s) = serde_json::to_string(&data) {
         let _ = fs::write(file, s);
     }
@@ -289,14 +285,14 @@ pub fn tool_summary(ctx: &serde_json::Value) -> Option<String> {
     let name = one_line(name);
     let detail = detail.map(|d| one_line(&d)).filter(|d| !d.is_empty());
     let summary = match detail {
-        Some(d) => format!("{}: {}", name, d),
+        Some(d) => format!("{name}: {d}"),
         None => name,
     };
     Some(summary.chars().take(MAX_REASON_CHARS).collect())
 }
 
 /// Per-pane memo of the last tool summary, so the permission prompt that follows a
-/// PreToolUse can say what it is about. Lives in the private runtime dir (0700): commands can
+/// `PreToolUse` can say what it is about. Lives in the private runtime dir (0700): commands can
 /// contain secrets.
 fn pane_tool_memo(pane_id: &str) -> Option<std::path::PathBuf> {
     let xdg = std::env::var("XDG_RUNTIME_DIR").ok()?;
@@ -307,7 +303,7 @@ fn pane_tool_memo(pane_id: &str) -> Option<std::path::PathBuf> {
     Some(
         std::path::PathBuf::from(xdg)
             .join("waymux")
-            .join(format!("pane-tool-{}", safe_pane)),
+            .join(format!("pane-tool-{safe_pane}")),
     )
 }
 
@@ -316,7 +312,7 @@ fn remember_pane_tool(pane_id: &str, summary: Option<&str>) {
         return;
     };
     match summary {
-        Some(s) if path.parent().is_some_and(|d| d.is_dir()) => {
+        Some(s) if path.parent().is_some_and(std::path::Path::is_dir) => {
             let _ = fs::write(path, s);
         }
         _ => {
@@ -346,7 +342,7 @@ fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
     }
 }
 
-/// SessionStart fires before any turn, except `compact`, which can land mid-turn.
+/// `SessionStart` fires before any turn, except `compact`, which can land mid-turn.
 fn session_start_awaits_prompt(ctx: &serde_json::Value) -> bool {
     ctx.get("source").and_then(|v| v.as_str()) != Some("compact")
 }
@@ -445,7 +441,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
         .or_else(|| ctx.get("sessionId"))
         .or_else(|| ctx.get("session_id"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| std::env::var("AGY_CONVERSATION_ID").ok())
         .unwrap_or_default();
 
@@ -453,7 +449,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
         .get("workspacePath")
         .or_else(|| ctx.get("cwd"))
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| {
             std::env::current_dir()
                 .ok()
@@ -504,9 +500,9 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
         {
             let sport = parsed
                 .get("port")
-                .and_then(|v| v.as_u64())
-                .map(|p| p as u16)
-                .unwrap_or(initial_port);
+                .and_then(serde_json::Value::as_u64)
+                // A value past u16 would wrap to some other port; keep the default instead.
+                .map_or(initial_port, |p| u16::try_from(p).unwrap_or(initial_port));
             if let Some((200, sdata)) = http_get_json(sport, "/session-api/session", 50)
                 && sdata.get("sessionId").and_then(|v| v.as_str()) == Some(conv_id.as_str())
             {
@@ -518,8 +514,7 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
 
         let exe_str = std::env::current_exe()
             .ok()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| "waymux".to_string());
+            .map_or_else(|| "waymux".to_string(), |p| p.to_string_lossy().to_string());
         let notify_cmd = notify_command(&exe_str, &workspace_path);
 
         if let Some((200, sdata)) = http_get_json(initial_port, "/session-api/session", 60) {
@@ -555,9 +550,9 @@ fn run_lazygit_hook(event_type: &str) -> i32 {
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
-    let kind = args.first().map(|s| s.as_str()).unwrap_or("tmux");
-    let event = args.get(1).map(|s| s.as_str()).unwrap_or("");
-    let agent = args.get(2).map(|s| s.as_str());
+    let kind = args.first().map_or("tmux", std::string::String::as_str);
+    let event = args.get(1).map_or("", std::string::String::as_str);
+    let agent = args.get(2).map(std::string::String::as_str);
     match kind {
         "lazygit" => run_lazygit_hook(event),
         _ => run_tmux_hook(event, agent),

@@ -270,10 +270,7 @@ pub fn run_popup() -> i32 {
         } else {
             tmux_display_msg_timed(
                 1500,
-                &format!(
-                    " 󰮯 Already focused on active agent ({} › {})",
-                    sess, win_name
-                ),
+                &format!(" 󰮯 Already focused on active agent ({sess} › {win_name})"),
             );
             return 0;
         }
@@ -284,7 +281,7 @@ pub fn run_popup() -> i32 {
         let _ = tmux_status(&["select-pane", "-t", &pane]);
         tmux_display_msg_timed(
             1500,
-            &format!(" 󰮯 AI Agent: focused split pane ({} › {})", sess, win_name),
+            &format!(" 󰮯 AI Agent: focused split pane ({sess} › {win_name})"),
         );
         return 0;
     }
@@ -311,9 +308,9 @@ pub fn run_popup() -> i32 {
         }
     }
 
-    let src_win = format!("{}:{}", sess, win_idx);
-    let dst_win1 = format!("{}:1", popup_sess);
-    let dst_win0 = format!("{}:0", popup_sess);
+    let src_win = format!("{sess}:{win_idx}");
+    let dst_win1 = format!("{popup_sess}:1");
+    let dst_win0 = format!("{popup_sess}:0");
     if !tmux_status(&["link-window", "-s", &src_win, "-t", &dst_win1]) {
         let _ = tmux_status(&["link-window", "-a", "-s", &src_win, "-t", &dst_win0]);
     }
@@ -325,8 +322,7 @@ pub fn run_popup() -> i32 {
     let theme = ThemePalette::load();
     let text_col = std::env::var("TMUX_POPUP_TEXT_COLOR").unwrap_or_else(|_| "default".into());
     let attach_cmd = format!(
-        "tmux attach-session -t \"{}:1\"; tmux unlink-window -t \"{}:1\" >/dev/null 2>&1 || true",
-        popup_sess, popup_sess
+        "tmux attach-session -t \"{popup_sess}:1\"; tmux unlink-window -t \"{popup_sess}:1\" >/dev/null 2>&1 || true"
     );
 
     let _ = tmux_status(&[
@@ -334,7 +330,7 @@ pub fn run_popup() -> i32 {
         "-S",
         &format!("fg={}", theme.yellow),
         "-s",
-        &format!("fg={}", text_col),
+        &format!("fg={text_col}"),
         "-T",
         " 󰮯 ",
         "-w",
@@ -370,13 +366,13 @@ pub fn run_jump() -> i32 {
             if current_sess != origin_sess {
                 let _ = tmux_status(&["switch-client", "-t", &origin_sess]);
             }
-            let target_win = format!("{}:{}", origin_sess, origin_win);
+            let target_win = format!("{origin_sess}:{origin_win}");
             let _ = tmux_status(&["select-window", "-t", &target_win]);
             let _ = tmux_status(&["select-pane", "-t", &origin_pane]);
 
             tmux_display_msg_timed(
                 1500,
-                &format!(" 󰌑 AI Triage: Returned to {}:{}", origin_sess, origin_win),
+                &format!(" 󰌑 AI Triage: Returned to {origin_sess}:{origin_win}"),
             );
             return 0;
         }
@@ -431,13 +427,13 @@ pub fn run_jump() -> i32 {
     if current_sess != target_sess {
         let _ = tmux_status(&["switch-client", "-t", &target_sess]);
     }
-    let win_spec = format!("{}:{}", target_sess, target_win);
+    let win_spec = format!("{target_sess}:{target_win}");
     let _ = tmux_status(&["select-window", "-t", &win_spec]);
     let _ = tmux_status(&["select-pane", "-t", target_pane]);
 
     if let Ok(home) = std::env::var("HOME") {
         let sound_rel = alert_sound(&target_state);
-        let sound_file = format!("{}/.local/share/sounds/ai/{}", home, sound_rel);
+        let sound_file = format!("{home}/.local/share/sounds/ai/{sound_rel}");
         if Path::new(&sound_file).is_file() {
             let _ = Command::new(crate::sys::default_sound_player())
                 .arg(&sound_file)
@@ -525,13 +521,19 @@ mod tests {
 
     #[test]
     fn test_next_in_queue_never_skips_after_service() {
-        let queue: Vec<String> = ["%a", "%b", "%c"].iter().map(|s| s.to_string()).collect();
+        let queue: Vec<String> = ["%a", "%b", "%c"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         assert_eq!(next_in_queue(&queue, "%x").unwrap(), "%a");
         assert_eq!(next_in_queue(&queue, "%a").unwrap(), "%b");
         assert_eq!(next_in_queue(&queue, "%c").unwrap(), "%a");
 
         // After %a is serviced it leaves the queue; from %a the next jump is %b, not %c.
-        let serviced: Vec<String> = ["%b", "%c"].iter().map(|s| s.to_string()).collect();
+        let serviced: Vec<String> = ["%b", "%c"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         assert_eq!(next_in_queue(&serviced, "%a").unwrap(), "%b");
         assert!(next_in_queue(&[], "%a").is_none());
     }

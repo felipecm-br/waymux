@@ -123,7 +123,8 @@ CI also runs Clippy and the tests on macOS, a `cargo check` on the MSRV (Rust 1.
 5. **Never Splice Values Into Shell Strings:** Pass paths and names to `sh -c` as positional arguments (`"$1"`), or quote each word with `sys::shell_quote` when tmux needs one command string (`display-popup`, `split-window`).
 6. **No Author-Specific Paths:** Resolve paths from `$HOME`, `$XDG_RUNTIME_DIR` and config, with a working fallback when an optional file (Omarchy theme, sounds, dotfile scripts) is absent. Per-user runtime files go in `presets::runtime_dir()`, never `/tmp`.
 7. **New Commands Go In `COMMANDS`:** Add the entry (usage, one-line about, `plumbing` flag) and the router arm together; `waymux doctor` should learn about any new external dependency.
-8. **Atomic Commits:** Keep commits focused, tested, and formatted.
-9. **Storage & Worktree Hygiene:**
+8. **Lints:** `[lints.clippy]` in `Cargo.toml` enables `clippy::pedantic`, minus the API-surface lints (`must_use_candidate`, `missing_*_doc`) and `too_many_lines`. Allow anything else only on the item, with a comment saying why.
+9. **Atomic Commits:** Keep commits focused, tested, and formatted.
+10. **Storage & Worktree Hygiene:**
    - Before finishing any task, remove temporary files or scratch worktrees created during the task, and only those. Never delete files or worktrees you did not create without asking the user.
    - `target/` grows without bound as Rust test binaries accumulate across edits. Run `cargo clean` in completed feature worktrees and after every release (once `./scripts/update-daemon.sh` has installed the updated binaries).

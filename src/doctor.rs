@@ -295,11 +295,7 @@ fn run_checks() -> Vec<Check> {
 }
 
 fn exit_code(checks: &[Check]) -> i32 {
-    if checks.iter().any(|c| c.level == Level::Fail) {
-        1
-    } else {
-        0
-    }
+    i32::from(checks.iter().any(|c| c.level == Level::Fail))
 }
 
 pub fn run_cli() -> i32 {

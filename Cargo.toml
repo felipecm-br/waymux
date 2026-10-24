@@ -39,6 +39,15 @@ tower = { version = "0.5", features = ["util"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# The library only serves this crate's own binaries, so API-surface lints add noise:
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# The long CLI/render functions get split when they are next changed, not in a lint pass.
+too_many_lines = "allow"
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

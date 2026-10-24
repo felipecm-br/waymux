@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub fn read_token() -> Option<String> {
     let uid = nix::unistd::getuid();
@@ -12,10 +12,10 @@ pub fn read_token() -> Option<String> {
         candidates.push(PathBuf::from(&xdg).join("waymux").join("token"));
         candidates.push(PathBuf::from(xdg).join("acpd").join("token"));
     }
-    candidates.push(PathBuf::from(format!("/run/user/{}/waymux/token", uid)));
-    candidates.push(PathBuf::from(format!("/run/user/{}/acpd/token", uid)));
-    candidates.push(PathBuf::from(format!("/tmp/waymux-{}/token", uid)));
-    candidates.push(PathBuf::from(format!("/tmp/acpd-{}/token", uid)));
+    candidates.push(PathBuf::from(format!("/run/user/{uid}/waymux/token")));
+    candidates.push(PathBuf::from(format!("/run/user/{uid}/acpd/token")));
+    candidates.push(PathBuf::from(format!("/tmp/waymux-{uid}/token")));
+    candidates.push(PathBuf::from(format!("/tmp/acpd-{uid}/token")));
     if let Ok(home) = std::env::var("HOME") {
         candidates.push(
             PathBuf::from(&home)
@@ -58,7 +58,7 @@ fn http_request(
 
     let body_str = body.unwrap_or("");
     let auth_header = match token {
-        Some(t) if !t.is_empty() => format!("Authorization: Bearer {}\r\n", t),
+        Some(t) if !t.is_empty() => format!("Authorization: Bearer {t}\r\n"),
         _ => String::new(),
     };
     let content_headers = if body.is_some() {
@@ -71,8 +71,7 @@ fn http_request(
     };
 
     let req = format!(
-        "{} {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{}{}Connection: close\r\n\r\n{}",
-        method, path, port, auth_header, content_headers, body_str
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{auth_header}{content_headers}Connection: close\r\n\r\n{body_str}"
     );
 
     stream.write_all(req.as_bytes()).ok()?;
@@ -127,9 +126,8 @@ pub struct AgentPaneEntry {
 
 pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
     let mut map = HashMap::new();
-    let token = match read_token() {
-        Some(t) => t,
-        None => return map,
+    let Some(token) = read_token() else {
+        return map;
     };
 
     let payload = serde_json::json!({
@@ -150,7 +148,7 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                 .to_string();
             let ts = info
                 .get("last_timestamp")
-                .and_then(|t| t.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let message = info
                 .get("message")
@@ -158,7 +156,7 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                 .map(str::to_string);
             let finished_at = info
                 .get("finished_at")
-                .and_then(|t| t.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             if !state.is_empty() {
                 map.insert(
@@ -179,10 +177,7 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
 
 pub fn post_agent_status(pane_id: &str, state: &str, message: Option<&str>) -> bool {
     let token = read_token();
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+    let now_ms = crate::sys::unix_ms();
 
     let payload = serde_json::json!({
         "pane_id": pane_id,
@@ -204,12 +199,12 @@ pub fn check_health_cli() -> i32 {
             if trimmed.is_empty() {
                 println!("healthy");
             } else {
-                println!("{}", trimmed);
+                println!("{trimmed}");
             }
             0
         }
         Some((code, _)) => {
-            eprintln!("unhealthy: unexpected HTTP {} from waymux daemon", code);
+            eprintln!("unhealthy: unexpected HTTP {code} from waymux daemon");
             1
         }
         None => {
@@ -234,9 +229,8 @@ pub fn dismiss_pane_cli(args: &[String]) -> i32 {
         return 0;
     }
 
-    let token = match read_token() {
-        Some(t) => t,
-        None => return 0,
+    let Some(token) = read_token() else {
+        return 0;
     };
 
     let payload = serde_json::json!({

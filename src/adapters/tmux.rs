@@ -190,11 +190,7 @@ impl TmuxAdapter {
         let win = match out {
             Ok(o) if o.status.success() => {
                 let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                if !s.is_empty() {
-                    s
-                } else {
-                    pane_id.to_string()
-                }
+                if s.is_empty() { pane_id.to_string() } else { s }
             }
             _ => pane_id.to_string(),
         };
@@ -384,8 +380,7 @@ impl TmuxAdapter {
                         .output()
                         .await;
                     let msg = format!(
-                        "  #[fg=cyan]{}:{} › {} #[fg=yellow](i)#[fg=default]",
-                        window_idx, window_name, action
+                        "  #[fg=cyan]{window_idx}:{window_name} › {action} #[fg=yellow](i)#[fg=default]"
                     );
                     let _ = crate::tmux_cmd::async_command()
                         .args(["set", "-g", "@ai_agent_bell", &msg])

@@ -67,8 +67,7 @@ async fn wait_for_typing_pause() {
         let activity = tmux_output(&["list-clients", "-F", "#{client_activity}"]).await;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         if at_typing_pause(&activity, now) || start.elapsed() >= BREAKPOINT_MAX_WAIT {
             return;
         }
@@ -128,23 +127,17 @@ impl SoundAdapter {
         ];
 
         for dir in Self::SOUND_CONFIG_DIRS {
-            mute_markers.push(format!("{}/.config/{}/sounds/muted", home, dir));
-            state_pointers.push(format!(
-                "{}/.config/{}/sounds/{}.sound",
-                home, dir, event_type
-            ));
-            direct_files.push(format!(
-                "{}/.config/{}/sounds/{}.wav",
-                home, dir, event_type
-            ));
+            mute_markers.push(format!("{home}/.config/{dir}/sounds/muted"));
+            state_pointers.push(format!("{home}/.config/{dir}/sounds/{event_type}.sound"));
+            direct_files.push(format!("{home}/.config/{dir}/sounds/{event_type}.wav"));
         }
 
         if event_type == "response" {
-            state_pointers.push(format!("{}/.config/omarchy/sounds/ai-response.sound", home));
+            state_pointers.push(format!("{home}/.config/omarchy/sounds/ai-response.sound"));
             for dir in Self::SOUND_CONFIG_DIRS {
-                state_pointers.push(format!("{}/.config/{}/sounds/response.sound", home, dir));
+                state_pointers.push(format!("{home}/.config/{dir}/sounds/response.sound"));
             }
-            direct_files.push(format!("{}/.config/omarchy/sounds/ai-response.wav", home));
+            direct_files.push(format!("{home}/.config/omarchy/sounds/ai-response.wav"));
         }
 
         (mute_markers, state_pointers, direct_files)
@@ -221,15 +214,15 @@ impl SoundAdapter {
 
         // 4. Fallback defaults
         let default_sound = match event_type {
-            "question" => format!("{}/.local/share/sounds/ai/02-gentle-ping.wav", home),
-            "permission" => format!("{}/.local/share/sounds/ai/06-cyber-pulse.wav", home),
-            "error" => format!("{}/.local/share/sounds/ai/10-arcade-blip.wav", home),
-            _ => format!("{}/.local/share/sounds/ai/01-crystal-chime.wav", home),
+            "question" => format!("{home}/.local/share/sounds/ai/02-gentle-ping.wav"),
+            "permission" => format!("{home}/.local/share/sounds/ai/06-cyber-pulse.wav"),
+            "error" => format!("{home}/.local/share/sounds/ai/10-arcade-blip.wav"),
+            _ => format!("{home}/.local/share/sounds/ai/01-crystal-chime.wav"),
         };
 
         let fallbacks = [
             default_sound,
-            format!("{}/.local/share/sounds/ai/01-crystal-chime.wav", home),
+            format!("{home}/.local/share/sounds/ai/01-crystal-chime.wav"),
             "/usr/share/sounds/freedesktop/stereo/complete.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/message.oga".to_string(),
             "/usr/share/sounds/freedesktop/stereo/bell.oga".to_string(),
@@ -321,10 +314,15 @@ impl OutputAdapter for SoundAdapter {
 
         match (&prev_state, &update.state) {
             // When agent transitions from Working (or active state) to Idle -> AI response finished!
-            (Some(AgentState::Working), AgentState::Idle)
-            | (Some(AgentState::AwaitingInput), AgentState::Idle)
-            | (Some(AgentState::Permission), AgentState::Idle)
-            | (Some(AgentState::Stalled), AgentState::Idle) => {
+            (
+                Some(
+                    AgentState::Working
+                    | AgentState::AwaitingInput
+                    | AgentState::Permission
+                    | AgentState::Stalled,
+                ),
+                AgentState::Idle,
+            ) => {
                 self.play_response(&update.pane_id).await;
             }
             // When agent transitions to AwaitingInput -> AI asking question / input
