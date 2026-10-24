@@ -168,3 +168,102 @@ fn window_delete_runs_the_record_script_before_killing() {
     );
     assert_eq!(tmux.window_count("main"), 1);
 }
+
+#[test]
+fn hook_and_inject_paste_into_the_workspace_agent_pane_and_clear_on_session_end() {
+    let answer = std::env::temp_dir().join(format!("waymux-inject-{}", std::process::id()));
+    let _ = std::fs::remove_file(&answer);
+    let cmd = format!("read a; echo \"$a\" > '{}'; sleep 30", answer.display());
+    tmux_or_skip!(env, tmux, &cmd);
+    let pane = first_pane(&tmux);
+    let repo = env.repo();
+    let repo_str = repo.to_string_lossy();
+
+    // Empty workspace or prompt exits 1.
+    assert_eq!(
+        env.command(&["inject", "", ""])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(1)
+    );
+    // Without a matching agent pane, inject exits 1.
+    assert_eq!(
+        env.command(&["inject", "/nonexistent", "hi"])
+            .output()
+            .unwrap()
+            .status
+            .code(),
+        Some(1)
+    );
+
+    // Run tmux and lazygit lifecycle hooks on the pane: sets @ai_agent_title, @ai_agent_state_raw,
+    // and records the workspace's active pane file.
+    tmux.run(&[
+        "set-option",
+        "-p",
+        "-t",
+        &pane,
+        "@ai_agent_state_raw",
+        "idle",
+    ]);
+    let run_hook = |kind: &str, event: &str, body: &str| {
+        let mut child = env
+            .command(&["hook", kind, event, "claude"])
+            .env("TMUX_PANE", &pane)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+        assert!(child.wait().unwrap().success());
+    };
+    run_hook("tmux", "SessionStart", r#"{"source":"startup"}"#);
+    run_hook(
+        "tmux",
+        "UserPromptSubmit",
+        r#"{"prompt":"Fix the login flow"}"#,
+    );
+    assert_eq!(
+        tmux.run(&["show-option", "-wv", "-t", &pane, "@ai_agent_title"]),
+        "Fix the login flow"
+    );
+    run_hook(
+        "tmux",
+        "PreToolUse",
+        r#"{"tool_name":"Bash","tool_input":{"command":"cargo test"}}"#,
+    );
+    run_hook("tmux", "PermissionRequest", r#"{"message":"allow?"}"#);
+    run_hook("tmux", "PostToolUse", "{}");
+    run_hook("tmux", "Stop", "{}");
+    run_hook(
+        "lazygit",
+        "PreToolUse",
+        &format!(r#"{{"sessionId":"s1","cwd":"{repo_str}"}}"#),
+    );
+
+    // inject finds the pane via the recorded active-pane file and pastes with bracketed paste.
+    env.run(&["inject", &repo_str, "review note from lazygitrs"]);
+    assert!(eventually(|| {
+        std::fs::read_to_string(&answer).is_ok_and(|a| a.contains("review note from lazygitrs"))
+    }));
+
+    // SessionEnd clears @ai_agent_title and lazygit sentinel.
+    run_hook("tmux", "SessionEnd", "{}");
+    run_hook(
+        "lazygit",
+        "SessionEnd",
+        &format!(r#"{{"sessionId":"s1","cwd":"{repo_str}"}}"#),
+    );
+    assert_eq!(
+        tmux.run(&["show-option", "-wv", "-t", &pane, "@ai_agent_title"]),
+        ""
+    );
+    let _ = std::fs::remove_file(&answer);
+}

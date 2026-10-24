@@ -9,8 +9,8 @@ every item here.
 
 | Area | State |
 |---|---|
-| Tests | 139 unit (15 `proptest` properties) and 36 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
-| Coverage | 77.3% lines; CI fails below 75% (`cargo llvm-cov --summary-only --fail-under-lines 75`) |
+| Tests | 140 unit (15 `proptest` properties) and 37 end-to-end (`tests/cli.rs`, `cockpit.rs`, `tmux.rs`, `wt.rs`): real daemon, real git, private tmux server |
+| Coverage | 80.0% lines; CI fails below 78% (`cargo llvm-cov --summary-only --fail-under-lines 78`) |
 | Fuzzing | `fuzz/`: four libFuzzer targets (hook stdin, `lines.json`, `config.toml`, `/rpc`); seeds replay past crashes; weekly CI job |
 | Lints | `clippy::pedantic`, `unsafe_code = "deny"`, 0 warnings |
 | Toolchain | MSRV 1.88 (`rust-version`, CI job); CI stable pinned at 1.99 (`RUST_STABLE` in `ci.yml`) |
@@ -147,12 +147,11 @@ Add a weekly CI job (`cargo mutants --in-diff` on PRs once the baseline is clean
 
 **Effort.** Medium to large, depending on how many mutants survive at first.
 
-## 7. Raise the remaining low-coverage files
+## 7. Raise the remaining low-coverage files — Done
 
-After item 5: `presets/mod.rs` (25%: `materialize_cockpit_toml` writes the picker config into
-the runtime dir; test it with a temp `XDG_RUNTIME_DIR`), `tmux_cmd.rs` (61%: bracketed paste
-via `tests/tmux.rs`), `inject.rs` (62%), `hook.rs` (62%). Raise the CI floor each time
-coverage moves; never lower it.
+After item 5: `presets/mod.rs` (25% → 94.5%), `tmux_cmd.rs` (61% → 89.3%: bracketed paste
+via `tests/tmux.rs`), `inject.rs` (62% → 93.8%), `hook.rs` (62% → 83.9%). Total line
+coverage reaches 80.0% and the CI floor is raised to 78%.
 
 **Effort.** Medium, incremental.
 

@@ -3,13 +3,18 @@ use std::path::PathBuf;
 
 pub const COCKPIT_PICKER_TOML_TEMPLATE: &str = include_str!("cockpit-picker.toml");
 
-pub fn runtime_dir() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
+fn runtime_dir_from(xdg: Option<&std::ffi::OsStr>) -> PathBuf {
+    if let Some(xdg) = xdg.filter(|v| !v.is_empty()) {
         PathBuf::from(xdg).join("waymux")
     } else {
         let uid = nix::unistd::getuid();
         PathBuf::from(format!("/tmp/waymux-{uid}"))
     }
+}
+
+pub fn runtime_dir() -> PathBuf {
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR");
+    runtime_dir_from(xdg.as_deref())
 }
 
 /// [`runtime_dir`], created `0700` when missing. `None` when it is not a directory owned by the
@@ -88,5 +93,19 @@ mod tests {
         assert!(!toml.to_ascii_lowercase().contains("darkgray"));
         assert!(toml.contains("{#7f9bb3:Jump}"));
         assert!(toml.parse::<toml::Table>().is_ok());
+    }
+
+    #[test]
+    fn test_runtime_dir_prefers_xdg_and_falls_back_to_uid_tmp() {
+        assert_eq!(
+            runtime_dir_from(Some(std::ffi::OsStr::new("/run/user/1000"))),
+            PathBuf::from("/run/user/1000/waymux")
+        );
+        let fallback = runtime_dir_from(None);
+        assert!(
+            fallback.to_string_lossy().starts_with("/tmp/waymux-"),
+            "{fallback:?}"
+        );
+        assert!(active_pane_file("/repo/a").is_some());
     }
 }
