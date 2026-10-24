@@ -109,13 +109,11 @@ impl SoundAdapter {
         }
     }
 
-    fn expand_home(path: &str) -> String {
-        if path.starts_with("~/")
-            && let Ok(home) = std::env::var("HOME")
-        {
-            return format!("{}{}", home, &path[1..]);
+    fn expand_home(home: &str, path: &str) -> String {
+        match path.strip_prefix('~') {
+            Some(rest) if rest.starts_with('/') => format!("{}{}", home, rest),
+            _ => path.to_string(),
         }
-        path.to_string()
     }
 
     /// Per-user config directories searched for sound overrides, in priority order.
@@ -160,8 +158,13 @@ impl SoundAdapter {
 
     fn resolve_sound_path(&self, event_type: &str) -> Option<String> {
         let home = std::env::var("HOME").ok()?;
+        self.resolve_sound_path_in(&home, event_type)
+    }
+
+    /// `resolve_sound_path` against an explicit home directory, so tests never touch `$HOME`.
+    fn resolve_sound_path_in(&self, home: &str, event_type: &str) -> Option<String> {
         let (mute_markers, state_pointers, direct_files) =
-            Self::sound_search_paths(&home, event_type);
+            Self::sound_search_paths(home, event_type);
 
         // Check explicit mute marker files
         for marker in &mute_markers {
@@ -183,7 +186,7 @@ impl SoundAdapter {
                     return None;
                 }
                 if !trimmed.is_empty() {
-                    let expanded = Self::expand_home(trimmed);
+                    let expanded = Self::expand_home(home, trimmed);
                     if std::path::Path::new(&expanded).is_file() {
                         return Some(expanded);
                     }
@@ -215,7 +218,7 @@ impl SoundAdapter {
             };
 
             if let Some(p) = custom_path {
-                let expanded = Self::expand_home(p);
+                let expanded = Self::expand_home(home, p);
                 if std::path::Path::new(&expanded).is_file() {
                     return Some(expanded);
                 }
@@ -430,11 +433,7 @@ mod tests {
         std::fs::write(&resp_file, b"resp").unwrap();
         std::fs::write(&quest_file, b"quest").unwrap();
 
-        let old_home = std::env::var("HOME").ok();
-        unsafe {
-            std::env::set_var("HOME", &temp_dir);
-        }
-
+        let home = temp_dir.to_string_lossy();
         let sound_cfg = SoundConfig {
             enabled: true,
             player: Some("pw-play".to_string()),
@@ -446,14 +445,8 @@ mod tests {
         let adapter = SoundAdapter::new(Some(sound_cfg));
 
         // When question is configured, it should resolve to quest_file, NOT fallback to response (resp_file)
-        let resolved_quest = adapter.resolve_sound_path("question");
-        let resolved_resp = adapter.resolve_sound_path("response");
-
-        if let Some(h) = old_home {
-            unsafe {
-                std::env::set_var("HOME", h);
-            }
-        }
+        let resolved_quest = adapter.resolve_sound_path_in(&home, "question");
+        let resolved_resp = adapter.resolve_sound_path_in(&home, "response");
 
         assert_eq!(
             resolved_quest,
@@ -462,6 +455,16 @@ mod tests {
         assert_eq!(resolved_resp, Some(resp_file.to_string_lossy().to_string()));
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_expand_home_only_rewrites_a_leading_tilde_slash() {
+        assert_eq!(SoundAdapter::expand_home("/h", "~/a.wav"), "/h/a.wav");
+        assert_eq!(
+            SoundAdapter::expand_home("/h", "~user/a.wav"),
+            "~user/a.wav"
+        );
+        assert_eq!(SoundAdapter::expand_home("/h", "/abs/a.wav"), "/abs/a.wav");
     }
 
     #[test]

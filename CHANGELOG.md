@@ -4,6 +4,10 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+### Audit Follow-ups
+
+- **Sound tests leave `$HOME` alone (`src/adapters/sound.rs`)**: `test_resolve_sound_path_isolation` swapped `$HOME` with `unsafe { set_var }` while other tests ran on parallel threads, a data race under edition 2024. Path resolution now takes the home directory as an argument (`resolve_sound_path_in`), and `expand_home` rewrites only a leading `~/`.
+
 ### 󰀏 Triage Covers Review, Cockpit Flags Shared Repositories
 
 - **Triage visits unreviewed work (`src/triage.rs`, `src/cockpit/items.rs`)**: `triage --jump` and `--popup` served only waiting agents, so finished work marked `󰷋` waited for a Cockpit visit. After the waiting agents, the queue now holds idle agents whose work nobody has reviewed, oldest completion first, the order the Cockpit sorts them in; the jump labels them `review │ Ctrl+G reviews`. `pane_needs_review` applies the Cockpit's rule per pane and runs `git status` only when the work is newer than the last review and HEAD has not moved.
