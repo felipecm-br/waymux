@@ -4,6 +4,9 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Delivery queue (`src/api/queue.rs`, `src/delivery.rs`, `src/inject.rs`, `src/cockpit/notes.rs`, `src/cockpit/actions.rs`)**: `inject`, `review-notes send` and the Cockpit's `I` pasted and pressed `Enter` whatever the agent was doing, so a review note sent while the agent waited on a permission prompt answered the prompt, and one sent mid-turn landed inside the turn. The daemon now holds every prompt (`queue/push`, `queue/list`, `queue/cancel`, `waymux queue add|ls|rm`) and types it only after 1 s of `idle`, one per rest; a prompt the agent does not take within 5 s is marked `stalled` and never typed twice. Prompts over 12 KB go to a private file the agent reads, and invisible Unicode characters are stripped. Review notes are marked sent only once queued.
+- **`y`/`n` re-check the live state (`src/cockpit/actions.rs`)**: `agent-action approve|deny` trusted the state the Cockpit row was drawn with. It now reads the daemon's live state, refuses when the agent is no longer on a prompt, and ignores a prompt on screen for less than 400 ms (`changed_at` in `agentState/list`), so a key pressed as the list re-sorts never answers a prompt just arrived.
+
 ## [0.3.0] - 2026-10-28
 
 > **Upgrading:** key telemetry (`waymux keylog`) is now opt-in; set `keylog = true` in `~/.config/waymux/config.toml` (or `WAYMUX_KEYLOG=1`) to keep writing `$XDG_STATE_HOME/flow/keys.tsv`.

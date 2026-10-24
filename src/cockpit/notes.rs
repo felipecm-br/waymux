@@ -1,4 +1,4 @@
-use crate::tmux_cmd::{tmux_display_msg, tmux_load_and_paste_bracketed, tmux_out, tmux_status};
+use crate::tmux_cmd::{tmux_display_msg, tmux_out};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::fs;
@@ -210,10 +210,6 @@ pub fn run_cli(args: &[String]) -> i32 {
                 return 0;
             };
 
-            if let Ok(serialized) = serde_json::to_string_pretty(&data) {
-                let _ = fs::write(&notes_file, serialized);
-            }
-
             let mut target_pane = pane_id.to_string();
             if !super::actions::is_valid_pane_id(&target_pane)
                 && !session.is_empty()
@@ -231,15 +227,18 @@ pub fn run_cli(args: &[String]) -> i32 {
                 return 1;
             }
 
-            if !tmux_load_and_paste_bracketed(Some("cockpit_review_prompt"), &target_pane, &prompt)
-            {
-                let flat = prompt.replace(['\n', '\r'], " ");
-                let _ = tmux_status(&["send-keys", "-l", "-t", &target_pane, "--", &flat]);
-                let _ = tmux_status(&["send-keys", "-t", &target_pane, "Enter"]);
+            let outcome = crate::delivery::dispatch_prompt(&target_pane, &prompt, "review-notes");
+            if let crate::delivery::Dispatch::Refused(_) = outcome {
+                tmux_display_msg(&outcome.message(&target_pane));
+                return 1;
             }
-
+            // Marked sent only once the daemon holds the notes (or they were typed).
+            if let Ok(serialized) = serde_json::to_string_pretty(&data) {
+                let _ = fs::write(&notes_file, serialized);
+            }
             tmux_display_msg(&format!(
-                "Dispatched {count} review note(s) to agent in pane {target_pane}"
+                "{} ({count} review note(s))",
+                outcome.message(&target_pane)
             ));
             0
         }

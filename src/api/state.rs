@@ -13,6 +13,9 @@ pub struct PaneStateInfo {
     /// Epoch ms of the last working → idle transition seen live; 0 when unknown (e.g. panes
     /// rehydrated after a restart), so a restart never looks like freshly finished work.
     pub finished_at: u64,
+    /// Epoch ms when the pane entered `state`; 0 when unknown (rehydrated), so guards that
+    /// wait for a state to settle do not hold back a pane the daemon only learnt about.
+    pub changed_at: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +36,9 @@ pub struct ApiState {
     pub next_seq: Arc<std::sync::atomic::AtomicU64>,
     pub state_broadcast: tokio::sync::broadcast::Sender<AgentUpdate>,
     pub stall_records: Arc<tokio::sync::Mutex<std::collections::HashMap<String, StallRecord>>>,
+    /// Prompts held for each pane until its agent is at rest (see `super::queue`).
+    pub queues: Arc<tokio::sync::Mutex<super::queue::Queues>>,
+    pub next_queue_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -68,6 +74,8 @@ impl ApiState {
             next_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             state_broadcast,
             stall_records: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            queues: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            next_queue_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         }
     }
 
@@ -171,6 +179,7 @@ impl ApiState {
                             state: state.clone(),
                             message: None,
                             finished_at,
+                            changed_at: 0,
                         },
                     );
                 }
@@ -480,6 +489,10 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                 } else {
                     states.get(&update.pane_id).map_or(0, |s| s.finished_at)
                 };
+            let changed_at = match states.get(&update.pane_id) {
+                Some(s) if s.state == update.state => s.changed_at,
+                _ => crate::sys::unix_ms(),
+            };
             states.insert(
                 update.pane_id.clone(),
                 PaneStateInfo {
@@ -488,6 +501,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                     state: update.state.clone(),
                     message: update.message.clone(),
                     finished_at,
+                    changed_at,
                 },
             );
             (prev, true)
@@ -497,6 +511,8 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     if !should_proceed {
         return;
     }
+
+    super::queue::on_state(state, &update.pane_id, &update.state).await;
 
     let settings = state.settings();
     let flow_log_hook = settings.flow_log_hook.clone();
@@ -806,6 +822,7 @@ mod tests {
                 state: AgentState::Working,
                 message: None,
                 finished_at: 0,
+                changed_at: 0,
             },
         );
 

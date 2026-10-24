@@ -46,6 +46,27 @@ pub struct WaitParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct QueuePushParams {
+    pub pane_id: String,
+    pub text: String,
+    #[serde(default)]
+    pub by: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+pub struct QueueListParams {
+    pub pane_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QueueCancelParams {
+    pub pane_id: String,
+    #[serde(default)]
+    pub id: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SplitPaneParams {
     pub command: Option<String>,
     pub target_pane: Option<String>,
@@ -269,6 +290,16 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
         "agentState/list" => Ok(list_states(state).await),
         "agentState/dismiss" | "agent_state/dismiss" => dismiss(state, lenient(params)?).await,
         "agentState/wait" | "agent_state/wait" => wait(state, lenient(params)?).await,
+        "queue/push" => queue_push(state, strict(params)?).await,
+        "queue/list" => {
+            let p: QueueListParams = lenient(params)?;
+            Ok(super::queue::list(state, p.pane_id.as_deref()).await)
+        }
+        "queue/cancel" => {
+            let p: QueueCancelParams = strict(params)?;
+            let dropped = super::queue::cancel(state, &p.pane_id, p.id).await;
+            Ok(json!({ "dropped": dropped }))
+        }
         "tmux.split_pane" => {
             let p: SplitPaneParams = strict(params)?;
             let mut cmd = crate::tmux_cmd::async_command();
@@ -451,7 +482,25 @@ async fn update_state(state: &ApiState, params: StateUpdateParams) -> RpcResult 
     Ok(serde_json::json!("ok"))
 }
 
+async fn queue_push(state: &ApiState, params: QueuePushParams) -> RpcResult {
+    if params.pane_id.is_empty() {
+        return Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter"));
+    }
+    let by = params.by.as_deref().unwrap_or("rpc");
+    match super::queue::push(state, &params.pane_id, &params.text, by).await {
+        Ok((id, position)) => Ok(json!({ "id": id, "position": position, "status": "queued" })),
+        Err(e) => Err(RpcError::new(INVALID_PARAMS, e.code())),
+    }
+}
+
 async fn list_states(state: &ApiState) -> Value {
+    let queued: std::collections::HashMap<String, usize> = state
+        .queues
+        .lock()
+        .await
+        .iter()
+        .map(|(pane, q)| (pane.clone(), q.items.len()))
+        .collect();
     let states = state.pane_states.lock().await;
     let mut map = serde_json::Map::new();
     for (pane_id, info) in states.iter() {
@@ -464,6 +513,12 @@ async fn list_states(state: &ApiState) -> Value {
         }
         if info.finished_at > 0 {
             pane_obj["finished_at"] = serde_json::json!(info.finished_at);
+        }
+        if info.changed_at > 0 {
+            pane_obj["changed_at"] = serde_json::json!(info.changed_at);
+        }
+        if let Some(&n) = queued.get(pane_id).filter(|n| **n > 0) {
+            pane_obj["queued"] = serde_json::json!(n);
         }
         map.insert(pane_id.clone(), pane_obj);
     }

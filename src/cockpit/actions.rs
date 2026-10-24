@@ -15,6 +15,45 @@ pub fn can_confirm_state(state: &str) -> bool {
     matches!(state, "permission" | "question" | "awaiting_input")
 }
 
+/// How long a prompt must have been on screen before `y`/`n` answer it, so a key pressed
+/// while the Cockpit list moves under the cursor never answers a prompt just arrived.
+pub const DWELL_MS: u64 = 400;
+
+/// Whether `y`/`n` may answer the pane now. The daemon's live state wins over the state the
+/// Cockpit row was drawn with (it can be seconds old); without a daemon entry the row's state
+/// is all there is. `changed_at` 0 means the daemon does not know when the state began.
+pub fn confirm_check(
+    row_state: &str,
+    live: Option<(&str, u64)>,
+    now_ms: u64,
+) -> Result<(), String> {
+    let (state, changed_at) = live.unwrap_or((row_state, 0));
+    if !can_confirm_state(state) {
+        let st = if state.is_empty() { "normal" } else { state };
+        return Err(format!("is not awaiting confirmation (state: {st})"));
+    }
+    if changed_at > 0 && now_ms.saturating_sub(changed_at) < DWELL_MS {
+        return Err("prompt just appeared: read it, then press again".into());
+    }
+    Ok(())
+}
+
+fn confirm_or_explain(pid: &str, row_state: &str) -> bool {
+    let live = crate::rpc_client::fetch_agent_states();
+    let entry = live.get(pid);
+    match confirm_check(
+        row_state,
+        entry.map(|e| (e.state.as_str(), e.changed_at)),
+        crate::sys::unix_ms(),
+    ) {
+        Ok(()) => true,
+        Err(why) => {
+            tmux_display_msg(&format!("Action ignored: Pane {pid} {why}"));
+            false
+        }
+    }
+}
+
 pub fn run_agent_action(args: &[String]) -> i32 {
     let action = args.first().map_or("", std::string::String::as_str);
     let state = args.get(1).map_or("", std::string::String::as_str);
@@ -26,24 +65,14 @@ pub fn run_agent_action(args: &[String]) -> i32 {
 
     match action {
         "approve" => {
-            if can_confirm_state(state) {
+            if confirm_or_explain(pid, state) {
                 let _ = tmux_status(&["send-keys", "-t", pid, "y", "Enter"]);
-            } else {
-                let st = if state.is_empty() { "normal" } else { state };
-                tmux_display_msg(&format!(
-                    "Action ignored: Pane {pid} is not awaiting confirmation (state: {st})"
-                ));
             }
             0
         }
         "deny" => {
-            if can_confirm_state(state) {
+            if confirm_or_explain(pid, state) {
                 let _ = tmux_status(&["send-keys", "-t", pid, "n", "Enter"]);
-            } else {
-                let st = if state.is_empty() { "normal" } else { state };
-                tmux_display_msg(&format!(
-                    "Action ignored: Pane {pid} is not awaiting confirmation (state: {st})"
-                ));
             }
             0
         }
@@ -51,8 +80,8 @@ pub fn run_agent_action(args: &[String]) -> i32 {
             if args.len() > 3 {
                 let prompt_text = args[3..].join(" ");
                 if !prompt_text.is_empty() {
-                    let _ = tmux_status(&["send-keys", "-l", "-t", pid, "--", &prompt_text]);
-                    let _ = tmux_status(&["send-keys", "-t", pid, "Enter"]);
+                    let outcome = crate::delivery::dispatch_prompt(pid, &prompt_text, "cockpit");
+                    tmux_display_msg(&outcome.message(pid));
                 }
             }
             0
@@ -440,6 +469,23 @@ mod tests {
         assert!(!is_valid_pane_id("-"));
         assert!(!is_valid_pane_id("%"));
         assert!(!is_valid_pane_id("%12a"));
+    }
+
+    #[test]
+    fn test_confirm_check_prefers_live_state_and_waits_dwell() {
+        // Row says permission, daemon says the agent already moved on.
+        assert!(confirm_check("permission", Some(("working", 1)), 10_000).is_err());
+        // Row is stale the other way: daemon says permission, long enough ago.
+        assert!(confirm_check("idle", Some(("permission", 1_000)), 10_000).is_ok());
+        // Prompt arrived 100 ms ago: too soon.
+        let err = confirm_check("permission", Some(("permission", 9_900)), 10_000).unwrap_err();
+        assert!(err.contains("just appeared"));
+        // Exactly the dwell is enough.
+        assert!(confirm_check("question", Some(("question", 10_000 - DWELL_MS)), 10_000).is_ok());
+        // Unknown start (rehydrated) and no daemon entry fall back to the row.
+        assert!(confirm_check("permission", Some(("permission", 0)), 10_000).is_ok());
+        assert!(confirm_check("permission", None, 10_000).is_ok());
+        assert!(confirm_check("working", None, 10_000).is_err());
     }
 
     #[test]

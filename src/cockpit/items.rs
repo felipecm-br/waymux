@@ -1401,6 +1401,7 @@ mod tests {
             last_timestamp: ts,
             message: message.map(str::to_string),
             finished_at: 0,
+            ..Default::default()
         }
     }
 
@@ -1533,6 +1534,7 @@ mod tests {
                     last_timestamp: 1_700_000_000,
                     message: None,
                     finished_at: 1_700_000_000_000,
+                    ..Default::default()
                 },
             ),
             (
@@ -1542,6 +1544,7 @@ mod tests {
                     last_timestamp: 1_700_000_000,
                     message: None,
                     finished_at: 1_700_000_000_000,
+                    ..Default::default()
                 },
             ),
         ]);

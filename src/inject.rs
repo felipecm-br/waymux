@@ -1,4 +1,4 @@
-use crate::tmux_cmd::{tmux_load_and_paste_bracketed, tmux_out, tmux_status};
+use crate::tmux_cmd::tmux_out;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -202,23 +202,10 @@ pub fn run_cli(args: &[String]) -> i32 {
         return 1;
     };
 
-    if tmux_load_and_paste_bracketed(None, &pane, prompt) {
-        let _ = tmux_status(&["send-keys", "-t", &pane, "Enter"]);
-        let _ = tmux_out(&[
-            "display-message",
-            &format!("󰊢 Review note dispatched to AI agent in pane {pane}"),
-        ]);
-        return 0;
-    }
-
-    let single_line = prompt.replace(['\n', '\r'], " ");
-    let _ = tmux_status(&["send-keys", "-t", &pane, "-l", &single_line]);
-    let _ = tmux_status(&["send-keys", "-t", &pane, "Enter"]);
-    let _ = tmux_out(&[
-        "display-message",
-        &format!("󰊢 Review note dispatched to AI agent in pane {pane}"),
-    ]);
-    0
+    let outcome = crate::delivery::dispatch_prompt(&pane, prompt, "inject");
+    log_injector(&format!("{pane}: {outcome:?}"));
+    let _ = tmux_out(&["display-message", &outcome.message(&pane)]);
+    i32::from(matches!(outcome, crate::delivery::Dispatch::Refused(_)))
 }
 
 #[cfg(test)]

@@ -114,7 +114,7 @@ pub fn daemon_port() -> u16 {
         .unwrap_or(4040)
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AgentPaneEntry {
     pub state: String,
     pub last_timestamp: u64,
@@ -122,6 +122,10 @@ pub struct AgentPaneEntry {
     pub message: Option<String>,
     /// Epoch ms of the last working → idle transition the daemon saw; 0 when unknown.
     pub finished_at: u64,
+    /// Epoch ms when the pane entered `state`; 0 when the daemon does not know.
+    pub changed_at: u64,
+    /// Prompts waiting in the daemon's delivery queue for this pane.
+    pub queued: u64,
 }
 
 pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
@@ -154,10 +158,12 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                 .get("message")
                 .and_then(|m| m.as_str())
                 .map(str::to_string);
-            let finished_at = info
-                .get("finished_at")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or(0);
+            let num = |key: &str| {
+                info.get(key)
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let finished_at = num("finished_at");
             if !state.is_empty() {
                 map.insert(
                     pane_id.clone(),
@@ -166,6 +172,8 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
                         last_timestamp: ts,
                         message,
                         finished_at,
+                        changed_at: num("changed_at"),
+                        queued: num("queued"),
                     },
                 );
             }
@@ -173,6 +181,41 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
     }
 
     map
+}
+
+/// Why an RPC call did not return a result.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CallError {
+    /// No token, no daemon, or no answer in time.
+    Unreachable,
+    /// The daemon answered with a JSON-RPC error; the message is its reason.
+    Rejected(String),
+}
+
+/// Calls one JSON-RPC method on the daemon and returns its `result`.
+pub fn rpc_call(
+    method: &str,
+    params: &serde_json::Value,
+    timeout_ms: u64,
+) -> Result<serde_json::Value, CallError> {
+    let token = read_token().ok_or(CallError::Unreachable)?;
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1
+    });
+    let (_, body) = http_post_json(daemon_port(), "/rpc", Some(&token), &payload, timeout_ms)
+        .ok_or(CallError::Unreachable)?;
+    let val: serde_json::Value = serde_json::from_str(&body).map_err(|_| CallError::Unreachable)?;
+    if let Some(err) = val.get("error") {
+        let msg = err
+            .get("message")
+            .and_then(|m| m.as_str())
+            .unwrap_or("error");
+        return Err(CallError::Rejected(msg.to_string()));
+    }
+    val.get("result").cloned().ok_or(CallError::Unreachable)
 }
 
 pub fn post_agent_status(pane_id: &str, state: &str, message: Option<&str>) -> bool {

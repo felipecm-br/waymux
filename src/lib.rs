@@ -4,6 +4,7 @@ pub mod auth;
 pub mod cockpit;
 pub mod config;
 pub mod daemon;
+pub mod delivery;
 pub mod doctor;
 pub mod health;
 pub mod hook;
@@ -91,6 +92,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "inject",
         usage: "inject <workspace_dir> <prompt>",
         about: "Paste a multi-line prompt into the workspace's agent pane",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "queue",
+        usage: "queue <add <pane_id> <text> | ls [pane_id] | rm <pane_id> [id]>",
+        about: "List, add or drop prompts held until an agent is at rest",
         plumbing: false,
     },
     CommandSpec {
@@ -296,6 +303,7 @@ pub fn entry() -> anyhow::Result<()> {
         "cockpit-help" => Some(cockpit::help::run_cli()),
         "agent-action" => Some(cockpit::actions::run_agent_action(&args[2..])),
         "review-notes" => Some(cockpit::notes::run_cli(&args[2..])),
+        "queue" => Some(delivery::run_cli(&args[2..])),
         "window-create" => Some(cockpit::actions::run_window_create()),
         "window-delete" => Some(cockpit::actions::run_window_delete()),
         "triage" => Some(triage::run_cli(&args[2..])),

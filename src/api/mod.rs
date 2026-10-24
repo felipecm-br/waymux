@@ -1,5 +1,6 @@
 //! HTTP control plane: the authenticated `/rpc` and `/api/status` routes.
 
+mod queue;
 mod rpc;
 mod state;
 

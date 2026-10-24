@@ -551,6 +551,7 @@ mod tests {
                         last_timestamp: *ts,
                         message: None,
                         finished_at: 0,
+                        ..Default::default()
                     },
                 )
             })

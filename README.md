@@ -93,12 +93,13 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux cockpit-preview <s> <i> <p> [path]` | Render contextual agent metadata card, PR status, review notes, and pane snapshot |
 | `waymux cockpit-diff <path> [pane_id]` | Render side-by-side Git diff (`delta` / `bat`) and pending review notes |
 | `waymux cockpit-help` | Render telemetry HUD and ergonomic keybinding cheat-sheet |
-| `waymux agent-action <act> <st> <pid> [pane]` | Execute guarded agent action (`approve`, `deny`, `prompt`) |
+| `waymux agent-action <act> <st> <pid> [pane]` | Execute guarded agent action (`approve`, `deny`, `prompt`). `approve`/`deny` re-read the daemon's live state and ignore a prompt on screen for less than 400 ms; `prompt` goes through the delivery queue |
 | `waymux review-notes <count\|list\|send> ...` | Count, list, or atomically send `.git/info/lines.json` review notes to an agent |
 | `waymux triage --popup` | Cycle notifying AI agent panes inside an isolated `_popups` overlay |
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
-| `waymux inject <workspace_dir> <prompt>` | Inject multi-line prompt into active workspace agent pane via bracketed paste |
+| `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
+| `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
 | `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
 | `waymux init <--tmux\|--systemd\|--hooks>` | Print the tmux plugin line, the systemd unit, or a Claude Code hooks block |
 | `waymux doctor` | Check the setup and print a fix for each gap |
@@ -197,8 +198,21 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
   - `tmux.display_message`, `tmux.ring_bell`
 
   Requests follow JSON-RPC 2.0: numeric or string `id`, notifications (no `id`, HTTP 204), batches, and spec error codes (`-32700` parse error, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32000` tmux failure).
+- **Delivery queue** (`queue/push`, `queue/list`, `queue/cancel`): see below. `agentState/list` reports `queued` and `changed_at` (epoch ms the pane entered its state) per pane.
 - **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
 - **`GET /health` & `GET /ready`**: Liveness and readiness probes.
+
+### Delivery queue
+
+`inject`, `review-notes send` and the Cockpit's `I` never type into an agent directly. Typed mid-turn, a prompt lands inside the turn; typed while the agent waits on a permission prompt, the paste and its `Enter` answer the prompt. The daemon holds each prompt and types it when:
+
+- the pane is `idle` (a pane with no agent state is typed into at once, as before), and
+- it has stayed idle, with no state change, for 1 s, so a flicker to idle between two tool calls does not count, and
+- the previous prompt was taken: one prompt per rest.
+
+A typed prompt stays at the head until the pane shows `working`. One the agent does not take within 5 s is marked `stalled`, never typed again, and announced with a tmux message; it holds the prompts behind it until the pane next works or `waymux queue rm <pane> <id>` drops it. A queue holds 8 prompts of at most 16 KiB each (`queue_full`, `too_large`), lives in daemon memory only, and is dropped when the pane closes.
+
+Before queuing, invisible characters (Unicode tags, bidi controls, zero-width spaces) are removed, and a prompt over 12 KB is written to `$XDG_RUNTIME_DIR/waymux/paste/` (`0600`, removed after 24 h) and replaced by `[Pasted text: <path>, N lines]` for the agent to read. Without a daemon, the prompt is typed directly unless the hook last saw the agent working or on a prompt.
 
 ---
 
