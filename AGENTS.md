@@ -93,7 +93,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **125 unit tests** (in `src/`, 15 of them `proptest` properties) and **18 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`) passing, with **0 Clippy warnings** and **64.8% line coverage** (CI fails below 62%: `cargo llvm-cov --summary-only --fail-under-lines 62`).
+> Current baseline: **126 unit tests** (in `src/`, 15 of them `proptest` properties) and **34 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings** and **71.7% line coverage** (CI fails below 70%: `cargo llvm-cov --summary-only --fail-under-lines 70`).
 
 ### Dependency Audit & Performance Budgets (also run in CI)
 

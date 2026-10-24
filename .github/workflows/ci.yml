@@ -87,7 +87,7 @@ jobs:
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
       - name: Measure Coverage
-        run: cargo llvm-cov --summary-only --fail-under-lines 62
+        run: cargo llvm-cov --summary-only --fail-under-lines 70
 
   dependencies:
     # Advisories, licenses, duplicate crates and sources (deny.toml).
