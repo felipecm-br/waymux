@@ -1,0 +1,24 @@
+# Weekly dependency PRs. Minor and patch bumps arrive as one grouped PR per ecosystem;
+# majors come one per PR so each can be reviewed. CI (cargo-deny, tests, MSRV) gates them.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: build(deps)
+
+  # Keeps the SHA-pinned actions current; the `# vX.Y.Z` comments are updated too.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+    commit-message:
+      prefix: ci(deps)
