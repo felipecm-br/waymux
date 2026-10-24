@@ -227,7 +227,7 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 
 Helpers in `~/.config/waymaker/scripts/` override the bundled `awt-*.sh` scripts, so you can customize the worktree flow without forking.
 
-Three optional extension scripts are not bundled and are looked up in the same helper directories, then in `~/.config/tmux/`: `awt-popup.sh` (`waymux wt popup` and the Cockpit's worktree switcher; `wt popup` exits 127 without it), `session-picker.sh` (the Cockpit's session switcher) and `flow-telemetry.py` (run with `--hud` above the Cockpit help).
+Four optional extension scripts are not bundled and are looked up in the same helper directories, then in `~/.config/tmux/`: `awt-popup.sh` (`waymux wt popup` and the Cockpit's worktree switcher; `wt popup` exits 127 without it), `session-picker.sh` (the Cockpit's session switcher), `record-window-state.sh` (run as `--push <session:window>` before the Cockpit kills a window) and `flow-telemetry.py` (run with `--hud` above the Cockpit help).
 
 ## 🩺 Troubleshooting
 

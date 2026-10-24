@@ -395,8 +395,8 @@ pub fn run_window_delete() -> i32 {
         return 0;
     }
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    let record_script = format!("{}/.config/tmux/record-window-state.sh", home);
+    // Optional user script that records a window before it is killed (e.g. to reopen it).
+    let record_script = crate::wt::find_user_script("record-window-state.sh");
 
     for (sess, idx) in targets {
         let target = format!("{}:{}", sess, idx);
@@ -426,8 +426,8 @@ pub fn run_window_delete() -> i32 {
             let _ = tmux_status(&["next-window", "-t", &sess]);
         }
 
-        if Path::new(&record_script).is_file() {
-            let _ = Command::new(&record_script)
+        if let Some(record_script) = &record_script {
+            let _ = Command::new(record_script)
                 .args(["--push", &target])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())

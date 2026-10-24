@@ -147,3 +147,24 @@ fn triage_jump_visits_the_waiting_pane() {
         "the waiting window is selected"
     );
 }
+
+#[test]
+fn window_delete_runs_the_record_script_before_killing() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    tmux.run(&["new-window", "-d", "-t", "main:1", "sleep 30"]);
+    let scripts = env.dir.join("home/.config/waymaker/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let script = scripts.join("record-window-state.sh");
+    std::fs::write(&script, "#!/bin/sh\necho \"$@\" > \"$HOME/recorded\"\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    run_with_stdin(&env, &["window-delete"], "x\t1\tx\tmain\n");
+    assert_eq!(
+        std::fs::read_to_string(env.dir.join("home/recorded"))
+            .unwrap()
+            .trim(),
+        "--push main:1"
+    );
+    assert_eq!(tmux.window_count("main"), 1);
+}
