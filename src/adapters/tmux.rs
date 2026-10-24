@@ -136,6 +136,43 @@ pub struct TmuxAdapter {
     pane_windows: Arc<Mutex<HashMap<String, String>>>,
     window_panes: Arc<Mutex<HashMap<String, HashMap<String, AgentState>>>>,
     display: std::sync::RwLock<Display>,
+    /// The status-bar alert shown now, so a burst of agents needing you is one line.
+    bell: Arc<Mutex<BellBurst>>,
+}
+
+/// Alerts raised within [`BELL_BURST`] of the first one share one status-bar line, and the
+/// line is cleared only by the timer of its latest alert.
+#[derive(Default)]
+struct BellBurst {
+    started: Option<tokio::time::Instant>,
+    /// `(pane, "idx:name › icon state")`, one per pane, in arrival order.
+    items: Vec<(String, String)>,
+    generation: u64,
+}
+
+const BELL_BURST: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The status-bar line for a burst: one alert as before, several as a count and names.
+pub fn burst_message(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => format!("  #[fg=cyan]{one} #[fg=yellow](i)#[fg=default]"),
+        many => {
+            let names: Vec<&str> = many
+                .iter()
+                .map(|i| i.split(" › ").next().unwrap_or(i))
+                .collect();
+            let shown = match names.len() {
+                2 => format!("{} and {}", names[0], names[1]),
+                3 => format!("{}, {} and {}", names[0], names[1], names[2]),
+                n => format!("{}, {} and {} more", names[0], names[1], n - 2),
+            };
+            format!(
+                "  #[fg=yellow]{} agents need you#[fg=default] › #[fg=cyan]{shown} #[fg=yellow](i)#[fg=default]",
+                many.len()
+            )
+        }
+    }
 }
 
 /// The settings a config reload replaces.
@@ -173,6 +210,7 @@ impl TmuxAdapter {
             pane_windows: Arc::new(Mutex::new(HashMap::new())),
             window_panes: Arc::new(Mutex::new(HashMap::new())),
             display: std::sync::RwLock::new(Display::new(theme, active_spinner)),
+            bell: Arc::new(Mutex::new(BellBurst::default())),
         }
     }
 
@@ -379,9 +417,26 @@ impl TmuxAdapter {
                         .args(["set", "-g", "@ai_agent_last_bell", pane_id])
                         .output()
                         .await;
-                    let msg = format!(
-                        "  #[fg=cyan]{window_idx}:{window_name} › {action} #[fg=yellow](i)#[fg=default]"
-                    );
+                    let item = format!("{window_idx}:{window_name} › {action}");
+                    let (msg, generation) = {
+                        let mut bell = self.bell.lock().await;
+                        let now = tokio::time::Instant::now();
+                        if bell
+                            .started
+                            .is_none_or(|s| now.duration_since(s) >= BELL_BURST)
+                        {
+                            bell.started = Some(now);
+                            bell.items.clear();
+                        }
+                        match bell.items.iter_mut().find(|(p, _)| p == pane_id) {
+                            Some(existing) => existing.1 = item,
+                            None => bell.items.push((pane_id.to_string(), item)),
+                        }
+                        bell.generation += 1;
+                        let labels: Vec<String> =
+                            bell.items.iter().map(|(_, l)| l.clone()).collect();
+                        (burst_message(&labels), bell.generation)
+                    };
                     let _ = crate::tmux_cmd::async_command()
                         .args(["set", "-g", "@ai_agent_bell", &msg])
                         .output()
@@ -391,9 +446,18 @@ impl TmuxAdapter {
                         .output()
                         .await;
 
-                    // Clear after 7 seconds
+                    // Clear after 7 seconds, unless a newer alert owns the line by then.
+                    let bell = Arc::clone(&self.bell);
                     tokio::spawn(async move {
                         tokio::time::sleep(tokio::time::Duration::from_secs(7)).await;
+                        {
+                            let mut b = bell.lock().await;
+                            if b.generation != generation {
+                                return;
+                            }
+                            b.items.clear();
+                            b.started = None;
+                        }
                         let _ = crate::tmux_cmd::async_command()
                             .args(["set", "-g", "@ai_agent_bell", ""])
                             .output()
@@ -514,6 +578,19 @@ impl OutputAdapter for TmuxAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_burst_message_counts_and_names_agents() {
+        assert_eq!(burst_message(&[]), "");
+        let one = burst_message(&["3:api › 󰳌 permission".into()]);
+        assert!(one.contains("3:api › 󰳌 permission"));
+        assert!(!one.contains("agents need you"));
+        let two = burst_message(&["3:api › a".into(), "4:web › b".into()]);
+        assert!(two.contains("2 agents need you"));
+        assert!(two.contains("3:api and 4:web"));
+        let five: Vec<String> = (1..=5).map(|i| format!("{i}:w{i} › x")).collect();
+        assert!(burst_message(&five).contains("1:w1, 2:w2 and 3 more"));
+    }
     use crate::config::{AgentStateTheme, ThemeConfig};
     use std::collections::HashMap;
 

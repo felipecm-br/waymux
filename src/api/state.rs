@@ -18,6 +18,17 @@ pub struct PaneStateInfo {
     pub changed_at: u64,
 }
 
+/// The message `agentState/dismiss` sets when focusing a pane clears its attention state.
+/// Such an `idle` only clears the badge: the agent may still sit on its prompt.
+pub const DISMISSED: &str = "dismissed by user focus";
+
+impl PaneStateInfo {
+    /// Idle from the agent itself, not from a focus dismissing a prompt badge.
+    pub fn at_rest(&self) -> bool {
+        self.state == AgentState::Idle && self.message.as_deref() != Some(DISMISSED)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StallRecord {
     pub last_output_snapshot: String,
@@ -38,6 +49,9 @@ pub struct ApiState {
     pub stall_records: Arc<tokio::sync::Mutex<std::collections::HashMap<String, StallRecord>>>,
     /// Prompts held for each pane until its agent is at rest (see `super::queue`).
     pub queues: Arc<tokio::sync::Mutex<super::queue::Queues>>,
+    /// What each pane's agent did since its pane was last focused.
+    pub activity:
+        Arc<tokio::sync::Mutex<std::collections::HashMap<String, crate::activity::Activity>>>,
     pub next_queue_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -75,6 +89,7 @@ impl ApiState {
             state_broadcast,
             stall_records: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             queues: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            activity: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_queue_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         }
     }
@@ -513,6 +528,23 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     }
 
     super::queue::on_state(state, &update.pane_id, &update.state).await;
+    {
+        let now = crate::sys::unix_ms();
+        let mut activity = state.activity.lock().await;
+        if update.state == AgentState::Closed {
+            activity.remove(&update.pane_id);
+        } else {
+            activity
+                .entry(update.pane_id.clone())
+                .or_insert_with(|| crate::activity::Activity::new(now))
+                .record(
+                    &update.state,
+                    update.message.as_deref(),
+                    update.message.as_deref() == Some(DISMISSED),
+                    now,
+                );
+        }
+    }
 
     let settings = state.settings();
     let flow_log_hook = settings.flow_log_hook.clone();

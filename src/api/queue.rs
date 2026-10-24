@@ -2,6 +2,9 @@
 //! agent has been at rest for a second, one per rest, never into a permission prompt or the
 //! middle of a turn.
 //!
+//! A pane the daemon has no agent state for (a hookless agent) is typed into at once, as
+//! before the queue.
+//!
 //! A typed prompt stays at the head until the pane shows `working` (the agent took it). One
 //! the agent does not take within the stall window is marked `stalled` and never typed again,
 //! so text is never typed twice; it holds the ones behind it until the pane next works or the
@@ -64,18 +67,12 @@ impl PushError {
     }
 }
 
-/// A pane may be typed into when its agent is idle, or when the daemon has no agent state
-/// for it at all (a hookless agent: it is typed into right away, as before the queue).
-pub fn at_rest(state: Option<&AgentState>) -> bool {
-    matches!(state, None | Some(AgentState::Idle))
-}
-
 /// Whether the pane is still in the rest a delivery was scheduled for: same state seq, still
-/// idle. `None` on both sides is a pane with no agent state.
-fn still_resting(scheduled: Option<u64>, current: Option<(u64, &AgentState)>) -> bool {
+/// at rest. `None` on both sides is a pane with no agent state.
+fn still_resting(scheduled: Option<u64>, current: Option<(u64, bool)>) -> bool {
     match (scheduled, current) {
         (None, None) => true,
-        (Some(seq), Some((now, state))) => seq == now && *state == AgentState::Idle,
+        (Some(seq), Some((now, rest))) => seq == now && rest,
         _ => false,
     }
 }
@@ -199,7 +196,7 @@ async fn kick(state: &ApiState, pane_id: &str) {
     let (seq, ready) = {
         let states = state.pane_states.lock().await;
         match states.get(pane_id) {
-            Some(info) => (Some(info.seq_id), at_rest(Some(&info.state))),
+            Some(info) => (Some(info.seq_id), info.at_rest()),
             None => (None, true),
         }
     };
@@ -234,9 +231,9 @@ fn schedule(state: ApiState, pane_id: String, seq: Option<u64>) {
 async fn deliver(state: &ApiState, pane_id: &str, scheduled: Option<u64>) {
     let current = {
         let states = state.pane_states.lock().await;
-        states.get(pane_id).map(|i| (i.seq_id, i.state.clone()))
+        states.get(pane_id).map(|i| (i.seq_id, i.at_rest()))
     };
-    let resting = still_resting(scheduled, current.as_ref().map(|(seq, st)| (*seq, st)));
+    let resting = still_resting(scheduled, current);
     let (id, text) = {
         let mut queues = state.queues.lock().await;
         let Some(queue) = queues.get_mut(pane_id) else {
@@ -344,9 +341,8 @@ mod tests {
     }
 
     #[test]
-    fn test_at_rest_only_idle_or_stateless() {
-        assert!(at_rest(None));
-        assert!(at_rest(Some(&AgentState::Idle)));
+    fn test_at_rest_only_idle() {
+        assert!(pane(AgentState::Idle, 1).at_rest());
         for st in [
             AgentState::Working,
             AgentState::Permission,
@@ -355,18 +351,33 @@ mod tests {
             AgentState::Error,
             AgentState::Closed,
         ] {
-            assert!(!at_rest(Some(&st)), "{st:?} must not be typed into");
+            assert!(
+                !pane(st.clone(), 1).at_rest(),
+                "{st:?} must not be typed into"
+            );
         }
     }
 
     #[test]
     fn test_still_resting_needs_same_seq_and_idle() {
         assert!(still_resting(None, None));
-        assert!(still_resting(Some(3), Some((3, &AgentState::Idle))));
-        assert!(!still_resting(Some(3), Some((4, &AgentState::Idle))));
-        assert!(!still_resting(Some(3), Some((3, &AgentState::Permission))));
-        assert!(!still_resting(None, Some((1, &AgentState::Idle))));
+        assert!(still_resting(Some(3), Some((3, true))));
+        assert!(!still_resting(Some(3), Some((4, true))));
+        assert!(!still_resting(Some(3), Some((3, false))));
+        assert!(!still_resting(None, Some((1, true))));
         assert!(!still_resting(Some(1), None));
+    }
+
+    #[tokio::test]
+    async fn test_focus_dismissed_prompt_is_not_a_rest() {
+        let state = ApiState::new(vec![], 0);
+        let mut info = pane(AgentState::Idle, 2);
+        info.message = Some(crate::api::state::DISMISSED.into());
+        assert!(!info.at_rest());
+        state.pane_states.lock().await.insert("%7".into(), info);
+        push(&state, "%7", "note", "t").await.unwrap();
+        // Nothing scheduled: the agent may still be on its permission prompt.
+        assert!(state.queues.lock().await["%7"].scheduled.is_none());
     }
 
     #[tokio::test]

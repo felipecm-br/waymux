@@ -14,6 +14,15 @@ use tokio::sync::Mutex;
 const BREAKPOINT_IDLE_SECS: u64 = 2;
 /// Completion chimes never wait longer than this for a pause.
 const BREAKPOINT_MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+/// Blocking alerts closer together than this are one burst and play one sound: a fan of
+/// agents reaching their prompts together would otherwise play them all over each other.
+pub const ALERT_BURST: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Whether an alert at `now` starts a new burst (and so plays) after one that started at
+/// `last`.
+pub fn starts_burst(last: Option<tokio::time::Instant>, now: tokio::time::Instant) -> bool {
+    last.is_none_or(|l| now.duration_since(l) >= ALERT_BURST)
+}
 
 async fn tmux_output(args: &[&str]) -> String {
     match crate::tmux_cmd::async_command().args(args).output().await {
@@ -98,6 +107,8 @@ pub struct SoundAdapter {
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,
     /// Set while a deferred completion chime waits for a typing pause.
     response_pending: Arc<AtomicBool>,
+    /// When the current burst of blocking alerts started.
+    last_alert: std::sync::Mutex<Option<tokio::time::Instant>>,
 }
 
 impl SoundAdapter {
@@ -106,6 +117,7 @@ impl SoundAdapter {
             config: std::sync::RwLock::new(config),
             pane_states: Arc::new(Mutex::new(HashMap::new())),
             response_pending: Arc::new(AtomicBool::new(false)),
+            last_alert: std::sync::Mutex::new(None),
         }
     }
 
@@ -263,6 +275,18 @@ impl SoundAdapter {
     }
 
     fn play(&self, event_type: &'static str) {
+        {
+            let now = tokio::time::Instant::now();
+            let mut last = self
+                .last_alert
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !starts_burst(*last, now) {
+                tracing::info!("SoundAdapter: {event_type} joins the current alert burst");
+                return;
+            }
+            *last = Some(now);
+        }
         if let Some((player, sound_path)) = self.sound_for(event_type) {
             tokio::spawn(play_file(event_type, player, sound_path));
         }
@@ -351,6 +375,21 @@ impl OutputAdapter for SoundAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_alerts_within_the_burst_window_play_once() {
+        let t0 = tokio::time::Instant::now();
+        assert!(starts_burst(None, t0));
+        assert!(!starts_burst(
+            Some(t0),
+            t0 + std::time::Duration::from_millis(200)
+        ));
+        assert!(!starts_burst(
+            Some(t0),
+            t0 + ALERT_BURST - std::time::Duration::from_millis(1)
+        ));
+        assert!(starts_burst(Some(t0), t0 + ALERT_BURST));
+    }
 
     #[test]
     fn test_in_focused_view_needs_visible_pane_and_focused_client() {

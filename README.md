@@ -198,7 +198,8 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
   - `tmux.display_message`, `tmux.ring_bell`
 
   Requests follow JSON-RPC 2.0: numeric or string `id`, notifications (no `id`, HTTP 204), batches, and spec error codes (`-32700` parse error, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32000` tmux failure).
-- **Delivery queue** (`queue/push`, `queue/list`, `queue/cancel`): see below. `agentState/list` reports `queued` and `changed_at` (epoch ms the pane entered its state) per pane.
+- **Delivery queue** (`queue/push`, `queue/list`, `queue/cancel`): see below.
+- **`agent/recap`** (`{pane_id}`): what the agent did since its pane was last focused (see [Away recap](#away-recap)). `agentState/list` reports `queued` and `changed_at` (epoch ms the pane entered its state) per pane.
 - **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
 - **`GET /health` & `GET /ready`**: Liveness and readiness probes.
 
@@ -208,11 +209,19 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 
 Answer keys: on Claude Code `y` sends `1` (approve once) and `n` sends `Esc`. `y` and `n` are not hotkeys there and its highlighted option is "1. Yes", so the former `n` + `Enter` approved the call (verified on Claude Code 2.1.310). Other harnesses get `y` + `Enter` and `Esc`.
 
+### Away recap
+
+The daemon counts, per pane, finished turns (working for at least 5 s, then idle), files edited (`Edit`, `Write`, ...), shell commands and the last test command (`cargo test`, `pytest`, `go test`, ...), from the hook's tool summaries. Focusing the pane (`pane-focus-in` → `waymux dismiss`) starts the count again. Once you have been away from a pane for 10 minutes, the Cockpit preview opens with one muted line: `󰋚 Since you last looked (42m): 3 turns · 6 files: retry.rs, retry_test.rs +4 · 11 commands · tests: cargo test`.
+
+### Alert bursts
+
+Blocking alerts (permission, question, stalled, error) within 1.5 s of each other play one sound, and status-bar alerts within 2 s share one line (`3 agents need you › 3:api, 4:web and 5:docs`). A line is cleared by the timer of its latest alert only.
+
 ### Delivery queue
 
 `inject`, `review-notes send` and the Cockpit's `I` never type into an agent directly. Typed mid-turn, a prompt lands inside the turn; typed while the agent waits on a permission prompt, the paste and its `Enter` answer the prompt. The daemon holds each prompt and types it when:
 
-- the pane is `idle` (a pane with no agent state is typed into at once, as before), and
+- the pane is `idle` from the agent itself (a pane with no agent state is typed into at once, as before; the `idle` that focusing a pane sets to clear a prompt badge does not count, since the agent may still be on its prompt), and
 - it has stayed idle, with no state change, for 1 s, so a flicker to idle between two tool calls does not count, and
 - the previous prompt was taken: one prompt per rest.
 

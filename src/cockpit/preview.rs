@@ -32,6 +32,18 @@ fn risk_banner(pane_id: &str) -> Option<String> {
     Some(format!("󰳌 risky: {} · y twice to allow", rules.join(", ")))
 }
 
+/// What the agent did since you last focused its pane, once you have been away a while.
+fn recap(pane_id: &str) -> Option<String> {
+    let res = crate::rpc_client::rpc_call(
+        "agent/recap",
+        &serde_json::json!({ "pane_id": pane_id }),
+        150,
+    )
+    .ok()?;
+    let activity: crate::activity::Activity = serde_json::from_value(res).ok()?;
+    crate::activity::recap_line(&activity, crate::sys::unix_ms())
+}
+
 pub fn run_cli(args: &[String]) -> i32 {
     let session = args.first().map_or("", std::string::String::as_str);
     let idx = args.get(1).map_or("", std::string::String::as_str);
@@ -77,6 +89,9 @@ pub fn run_cli(args: &[String]) -> i32 {
     let mut out = String::with_capacity(4096);
     if let Some(banner) = risk_banner(&pane_id) {
         let _ = writeln!(out, "{}{BOLD}{banner}{RESET}\n", theme.c_error);
+    }
+    if let Some(recap) = recap(&pane_id) {
+        let _ = writeln!(out, "{c_gray}{recap}{RESET}\n");
     }
     let lines: Vec<&str> = raw_terminal.lines().collect();
     if let Some(last_non_empty) = lines.iter().rposition(|l| !l.trim().is_empty()) {

@@ -291,6 +291,12 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
         "agentState/dismiss" | "agent_state/dismiss" => dismiss(state, lenient(params)?).await,
         "agentState/wait" | "agent_state/wait" => wait(state, lenient(params)?).await,
         "queue/push" => queue_push(state, strict(params)?).await,
+        "agent/recap" => {
+            let p: QueueListParams = lenient(params)?;
+            let activity = state.activity.lock().await;
+            let entry = p.pane_id.as_deref().and_then(|pane| activity.get(pane));
+            Ok(entry.map_or(Value::Null, |a| json!(a)))
+        }
         "queue/list" => {
             let p: QueueListParams = lenient(params)?;
             Ok(super::queue::list(state, p.pane_id.as_deref()).await)
@@ -530,6 +536,10 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
     if pane_id.is_empty() {
         return Err(RpcError::new(INVALID_PARAMS, "Missing pane_id parameter"));
     }
+    // Focusing the pane is looking at it: its activity recap starts again.
+    if let Some(a) = state.activity.lock().await.get_mut(&pane_id) {
+        a.mark_seen(crate::sys::unix_ms());
+    }
 
     let current_state = {
         let states = state.pane_states.lock().await;
@@ -549,7 +559,7 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
                 IncomingUpdate {
                     pane_id: pane_id.clone(),
                     state: AgentState::Idle,
-                    message: Some("dismissed by user focus".into()),
+                    message: Some(super::state::DISMISSED.into()),
                     timestamp: None,
                 },
             )
