@@ -2,7 +2,8 @@
 //! CLI. Each daemon gets its own runtime dir, HOME and tmux socket dir, so it never touches
 //! the developer's tmux server, sounds or token.
 
-use std::io::Write;
+use std::cell::Cell;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,7 +15,17 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 struct Sandbox {
     dir: PathBuf,
-    port: u16,
+    /// Re-picked when a daemon dies before answering: the free port found at setup can be taken
+    /// by another test before the daemon binds it.
+    port: Cell<u16>,
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
 
 impl Sandbox {
@@ -26,18 +37,22 @@ impl Sandbox {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("tmux")).unwrap();
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let sb = Sandbox {
+            dir,
+            port: Cell::new(free_port()),
+        };
+        sb.write_config();
+        sb
+    }
+
+    fn write_config(&self) {
+        let port = self.port.get();
         let config = format!(
             "listen_addr = \"127.0.0.1\"\nport = {port}\npid_file = \"{}\"\n\
              shutdown_timeout_secs = 1\nidle_debounce_ms = 0\n\n[sound]\nenabled = false\n",
-            dir.join("waymux.pid").display()
+            self.dir.join("waymux.pid").display()
         );
-        std::fs::write(dir.join("config.toml"), config).unwrap();
-        Sandbox { dir, port }
+        std::fs::write(self.dir.join("config.toml"), config).unwrap();
     }
 
     fn command(&self) -> Command {
@@ -45,7 +60,7 @@ impl Sandbox {
         cmd.env("HOME", &self.dir)
             .env("XDG_RUNTIME_DIR", &self.dir)
             .env("TMUX_TMPDIR", self.dir.join("tmux"))
-            .env("WAYMUX_PORT", self.port.to_string())
+            .env("WAYMUX_PORT", self.port.get().to_string())
             .env_remove("TMUX")
             .env_remove("TMUX_PANE")
             .env_remove("WAYMUX_COLORS");
@@ -75,24 +90,38 @@ impl Sandbox {
         child.wait_with_output().unwrap()
     }
 
+    /// Starts a daemon and waits for `health`. A daemon that exits first (its port was taken
+    /// meanwhile) is retried on a fresh port; its stderr goes to a file, so a chatty daemon never
+    /// blocks on a full pipe, and the file is quoted when the daemon never comes up.
     fn spawn_daemon(&self) -> Daemon {
-        let child = self
-            .command()
-            .args(["daemon", "--config"])
-            .arg(self.dir.join("config.toml"))
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let daemon = Daemon { child };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while Instant::now() < deadline {
-            if self.run(&["health"]).status.success() {
-                return daemon;
+        let log = self.dir.join("daemon.stderr");
+        for _attempt in 0..3 {
+            let mut child = self
+                .command()
+                .args(["daemon", "--config"])
+                .arg(self.dir.join("config.toml"))
+                .stdout(Stdio::null())
+                .stderr(std::fs::File::create(&log).unwrap())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if self.run(&["health"]).status.success() {
+                    return Daemon { child };
+                }
+                if child.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
             }
-            std::thread::sleep(Duration::from_millis(50));
+            let _ = child.kill();
+            let _ = child.wait();
+            self.port.set(free_port());
+            self.write_config();
         }
-        panic!("daemon did not become healthy on port {}", self.port);
+        let mut stderr = String::new();
+        let _ = std::fs::File::open(&log).and_then(|mut f| f.read_to_string(&mut stderr));
+        panic!("daemon did not become healthy after 3 ports; last stderr:\n{stderr}");
     }
 
     fn list(&self) -> String {
@@ -233,7 +262,7 @@ fn rpc_rejects_requests_without_the_token() {
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let mut stream = std::net::TcpStream::connect(("127.0.0.1", sb.port)).unwrap();
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", sb.port.get())).unwrap();
     stream.write_all(request.as_bytes()).unwrap();
     let mut response = String::new();
     std::io::Read::read_to_string(&mut stream, &mut response).unwrap();
