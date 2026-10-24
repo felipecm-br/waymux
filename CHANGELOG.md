@@ -9,6 +9,7 @@ All notable changes to **Waymux** are documented in this file.
 - **Sound tests leave `$HOME` alone (`src/adapters/sound.rs`)**: `test_resolve_sound_path_isolation` swapped `$HOME` with `unsafe { set_var }` while other tests ran on parallel threads, a data race under edition 2024. Path resolution now takes the home directory as an argument (`resolve_sound_path_in`), and `expand_home` rewrites only a leading `~/`.
 - **`log_level` in `config.toml` takes effect (`src/lib.rs`)**: tracing started before the config was read, so only `RUST_LOG` changed the log level. The daemon now reads the config first; `RUST_LOG` still wins, a bare level (`debug`) applies to Waymux and axum, and a value with `=` is a full filter directive.
 - **Dead code removed (`src/adapters/tmux.rs`, `src/config.rs`, `src/api/mod.rs`)**: three unused tmux helpers and the `#[allow(dead_code)]` that hid the ignored `log_level`.
+- **Flow events go to a configured hook (`src/api/state.rs`, `src/config.rs`)**: the daemon ran `~/.config/tmux/flow-log.sh` when it existed and otherwise appended to `~/.local/state/flow/events.tsv` for every user. It now runs only `flow_log_hook` from `config.toml` (`~/` expands), with the same `<event> <pane> <extra>` arguments, and writes nothing when unset. To keep the old behaviour, set `flow_log_hook = "~/.config/tmux/flow-log.sh"`.
 
 ### 󰀏 Triage Covers Review, Cockpit Flags Shared Repositories
 

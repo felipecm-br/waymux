@@ -19,6 +19,22 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// `path` with a leading `~/` replaced by `home`; anything else (`~user/`, absolute) is kept.
+pub fn expand_home_in(home: &str, path: &str) -> String {
+    match path.strip_prefix('~') {
+        Some(rest) if rest.starts_with('/') => format!("{}{}", home, rest),
+        _ => path.to_string(),
+    }
+}
+
+/// [`expand_home_in`] with `$HOME`; the path is returned unchanged when `$HOME` is unset.
+pub fn expand_home(path: &str) -> String {
+    match std::env::var("HOME") {
+        Ok(home) => expand_home_in(&home, path),
+        Err(_) => path.to_string(),
+    }
+}
+
 /// Audio players in preference order: PipeWire, PulseAudio, ALSA, macOS.
 const SOUND_PLAYERS: [&str; 4] = ["pw-play", "paplay", "aplay", "afplay"];
 
@@ -34,6 +50,13 @@ pub fn default_sound_player() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_expand_home_in_only_rewrites_a_leading_tilde_slash() {
+        assert_eq!(expand_home_in("/h", "~/a.wav"), "/h/a.wav");
+        assert_eq!(expand_home_in("/h", "~user/a.wav"), "~user/a.wav");
+        assert_eq!(expand_home_in("/h", "/abs/a.wav"), "/abs/a.wav");
+    }
 
     #[test]
     fn test_shell_quote_survives_sh_round_trip() {

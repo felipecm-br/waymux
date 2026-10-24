@@ -32,6 +32,8 @@ pub struct ApiState {
     pub next_seq: Arc<std::sync::atomic::AtomicU64>,
     pub state_broadcast: tokio::sync::broadcast::Sender<AgentUpdate>,
     pub stall_records: Arc<tokio::sync::Mutex<std::collections::HashMap<String, StallRecord>>>,
+    /// Program run on agent flow events (`flow_log_hook` in the config).
+    pub flow_log_hook: Option<Arc<str>>,
 }
 
 impl ApiState {
@@ -45,7 +47,13 @@ impl ApiState {
             next_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             state_broadcast,
             stall_records: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            flow_log_hook: None,
         }
+    }
+
+    pub fn with_flow_log_hook(mut self, hook: Option<String>) -> Self {
+        self.flow_log_hook = hook.map(Arc::from);
+        self
     }
 
     pub async fn clean_stale_panes(&self) {
@@ -360,39 +368,24 @@ fn get_process_tree_cpu_ticks(root_pid: u32) -> u64 {
     total_ticks
 }
 
-fn log_flow_event(event: &str, target: &str, extra: &str) {
-    let Ok(home) = std::env::var("HOME") else {
+/// Runs the user's `flow_log_hook` as `<hook> <event> <target> <extra>`, detached.
+/// Without a configured hook nothing runs and nothing is written.
+fn log_flow_event(hook: Option<&Arc<str>>, event: &str, target: &str, extra: &str) {
+    let Some(hook) = hook.cloned() else {
         return;
     };
-    let script = format!("{}/.config/tmux/flow-log.sh", home);
-    let event = event.to_string();
-    let target = target.to_string();
-    let extra = extra.to_string();
-
+    let args = [event.to_string(), target.to_string(), extra.to_string()];
     tokio::spawn(async move {
-        if std::path::Path::new(&script).exists() {
-            let _ = tokio::process::Command::new(&script)
-                .args([&event, &target, &extra])
-                .output()
-                .await;
-        } else {
-            let log_dir = format!("{}/.local/state/flow", home);
-            let _ = tokio::fs::create_dir_all(&log_dir).await;
-            let log_path = format!("{}/events.tsv", log_dir);
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let line = format!("{}\t{}\t{}\t{}\n", now, event, target, extra);
-            use tokio::io::AsyncWriteExt;
-            if let Ok(mut f) = tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-                .await
-            {
-                let _ = f.write_all(line.as_bytes()).await;
+        match tokio::process::Command::new(&*hook)
+            .args(&args)
+            .output()
+            .await
+        {
+            Ok(out) if !out.status.success() => {
+                tracing::debug!("flow_log_hook {} exited with {}", hook, out.status)
             }
+            Err(e) => tracing::debug!("flow_log_hook {} failed to start: {}", hook, e),
+            Ok(_) => {}
         }
     });
 }
@@ -475,17 +468,32 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     match (&prev_state, &update.state) {
         // Agent asks question / requests permission
         (prev, AgentState::AwaitingInput) if prev != &Some(AgentState::AwaitingInput) => {
-            log_flow_event("agent_question", &update.pane_id, "");
+            log_flow_event(
+                state.flow_log_hook.as_ref(),
+                "agent_question",
+                &update.pane_id,
+                "",
+            );
         }
         (prev, AgentState::Permission) if prev != &Some(AgentState::Permission) => {
-            log_flow_event("agent_question", &update.pane_id, "");
+            log_flow_event(
+                state.flow_log_hook.as_ref(),
+                "agent_question",
+                &update.pane_id,
+                "",
+            );
         }
         // Human answered question (transitioned from question/permission to working or idle)
         (Some(AgentState::AwaitingInput), AgentState::Working)
         | (Some(AgentState::AwaitingInput), AgentState::Idle)
         | (Some(AgentState::Permission), AgentState::Working)
         | (Some(AgentState::Permission), AgentState::Idle) => {
-            log_flow_event("human_reply", &update.pane_id, "");
+            log_flow_event(
+                state.flow_log_hook.as_ref(),
+                "human_reply",
+                &update.pane_id,
+                "",
+            );
         }
         _ => {}
     }
@@ -522,6 +530,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
         let broadcast_tx = state.state_broadcast.clone();
         let delay_ms = state.idle_debounce_ms;
         let prev_state_for_idle = prev_state.clone();
+        let flow_log_hook = state.flow_log_hook.clone();
 
         let task = tokio::spawn(async move {
             if delay_ms > 0 {
@@ -534,7 +543,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                 }
             }
             if prev_state_for_idle == Some(AgentState::Working) {
-                log_flow_event("agent_finished", &pane_id, "");
+                log_flow_event(flow_log_hook.as_ref(), "agent_finished", &pane_id, "");
             }
             for adapter in adapters.iter() {
                 if let Err(e) = adapter.update(&update_clone).await {
@@ -572,6 +581,36 @@ mod tests {
     use super::*;
     use crate::api::test_support::TestAdapter;
     use std::sync::Mutex as StdMutex;
+
+    #[tokio::test]
+    async fn test_flow_log_hook_gets_event_target_and_extra() {
+        let dir = std::env::temp_dir().join(format!("waymux-flow-hook-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("out");
+        let hook = dir.join("hook.sh");
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\nprintf '%s|' \"$@\" > '{}'\n", out.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let hook: Arc<str> = Arc::from(hook.to_string_lossy().as_ref());
+        log_flow_event(Some(&hook), "agent_finished", "%3", "x y");
+        let mut got = String::new();
+        for _ in 0..100 {
+            if let Ok(s) = std::fs::read_to_string(&out)
+                && !s.is_empty()
+            {
+                got = s;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(got, "agent_finished|%3|x y|");
+    }
 
     #[tokio::test]
     async fn test_stale_update_discarded() {

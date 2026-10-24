@@ -52,6 +52,9 @@ pub struct Config {
     pub sound: Option<SoundConfig>,
     /// Program/agent name -> Nerd Font glyph, merged over the built-ins in `icons`.
     pub icons: Option<HashMap<String, String>>,
+    /// Program run as `<hook> <event> <pane> <extra>` on agent_question, human_reply and
+    /// agent_finished. A leading `~/` expands to `$HOME`.
+    pub flow_log_hook: Option<String>,
 }
 
 fn default_listen_addr() -> String {
@@ -81,6 +84,7 @@ impl Default for Config {
                 error: None,
             }),
             icons: None,
+            flow_log_hook: None,
         }
     }
 }

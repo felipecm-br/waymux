@@ -6,7 +6,11 @@ port = 4040
 # Default: $XDG_RUNTIME_DIR/waymux/waymux.pid
 # pid_file = "/run/user/1000/waymux/waymux.pid"
 shutdown_timeout_secs = 30
+# A level, or a full tracing directive such as "waymux=debug,axum=warn". RUST_LOG overrides it.
 log_level = "info"
+# Program run as `<hook> <event> <pane> <extra>` on agent_question, human_reply and
+# agent_finished (e.g. a focus/time-tracking log). Unset: nothing runs.
+# flow_log_hook = "~/.config/tmux/flow-log.sh"
 
 # Delay in milliseconds before sending the 'idle' state.
 # This debouncing prevents status icon flickering when the AI issues tool calls in rapid succession.

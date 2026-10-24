@@ -109,13 +109,6 @@ impl SoundAdapter {
         }
     }
 
-    fn expand_home(home: &str, path: &str) -> String {
-        match path.strip_prefix('~') {
-            Some(rest) if rest.starts_with('/') => format!("{}{}", home, rest),
-            _ => path.to_string(),
-        }
-    }
-
     /// Per-user config directories searched for sound overrides, in priority order.
     /// `acpd` is the legacy (pre-waymux) directory, kept as a read-only fallback.
     const SOUND_CONFIG_DIRS: [&'static str; 2] = ["waymux", "acpd"];
@@ -186,7 +179,7 @@ impl SoundAdapter {
                     return None;
                 }
                 if !trimmed.is_empty() {
-                    let expanded = Self::expand_home(home, trimmed);
+                    let expanded = crate::sys::expand_home_in(home, trimmed);
                     if std::path::Path::new(&expanded).is_file() {
                         return Some(expanded);
                     }
@@ -218,7 +211,7 @@ impl SoundAdapter {
             };
 
             if let Some(p) = custom_path {
-                let expanded = Self::expand_home(home, p);
+                let expanded = crate::sys::expand_home_in(home, p);
                 if std::path::Path::new(&expanded).is_file() {
                     return Some(expanded);
                 }
@@ -455,16 +448,6 @@ mod tests {
         assert_eq!(resolved_resp, Some(resp_file.to_string_lossy().to_string()));
 
         let _ = std::fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn test_expand_home_only_rewrites_a_leading_tilde_slash() {
-        assert_eq!(SoundAdapter::expand_home("/h", "~/a.wav"), "/h/a.wav");
-        assert_eq!(
-            SoundAdapter::expand_home("/h", "~user/a.wav"),
-            "~user/a.wav"
-        );
-        assert_eq!(SoundAdapter::expand_home("/h", "/abs/a.wav"), "/abs/a.wav");
     }
 
     #[test]

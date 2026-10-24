@@ -40,7 +40,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             Box::new(SoundAdapter::new(config.sound.clone())),
         ],
         config.idle_debounce_ms.unwrap_or(650),
-    );
+    )
+    .with_flow_log_hook(config.flow_log_hook.as_deref().map(crate::sys::expand_home));
 
     adapters.rehydrate_from_tmux().await;
 
