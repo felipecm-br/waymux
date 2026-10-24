@@ -4,6 +4,10 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-24
+
+> **Upgrading:** install the binary and the systemd unit together (`install.sh`, or `waymux init --systemd` then `systemctl --user daemon-reload`): the new unit's watchdog restarts an older binary every 30s. The daemon no longer runs `~/.config/tmux/flow-log.sh` by itself; set `flow_log_hook = "~/.config/tmux/flow-log.sh"` in `config.toml` to keep it.
+
 ### 󰌌 Key Telemetry, A 7-Item Cockpit Footer
 
 - **`waymux keylog` (`src/keylog.rs`, `src/presets/cockpit-picker.toml`, `src/cockpit/mod.rs`)**: nothing showed which shortcuts were used and which were never pressed. `keylog <context> <key> [state] [target] [origin]` appends one TSV line to `$XDG_STATE_HOME/flow/keys.tsv` and always exits 0; `WAYMUX_KEYLOG=0` turns it off. Every Cockpit key starts with an `ExecuteAsync` keylog call carrying the row's state and `session:window`; `Enter` and `Esc` are logged by the Cockpit, and the picker gets the origin window in `WAYMUX_KEYLOG_ORIGIN`, so a report can tell when a shorter path existed (e.g. `Enter` on a waiting agent, `g` on the window the Cockpit came from).
