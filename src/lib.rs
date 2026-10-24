@@ -331,11 +331,7 @@ pub fn entry() -> anyhow::Result<()> {
         }
 
         // The config is read before tracing starts so that its `log_level` can set the filter.
-        let config_path = config_path.or_else(crate::config::Config::default_path);
-        let config = match &config_path {
-            Some(path) => crate::config::Config::load(path)?,
-            None => crate::config::Config::default(),
-        };
+        let (config, loaded_from) = crate::config::Config::resolve(config_path.as_deref())?;
 
         tracing_subscriber::registry()
             .with(
@@ -346,7 +342,7 @@ pub fn entry() -> anyhow::Result<()> {
             .init();
 
         tracing::info!("Starting Waymux Daemon...");
-        match &config_path {
+        match &loaded_from {
             Some(path) => tracing::info!("Loaded config from {}", path),
             None => tracing::info!("No external config file found, using built-in defaults"),
         }
@@ -368,7 +364,7 @@ pub fn entry() -> anyhow::Result<()> {
         tracing::info!("Creating PID file at {}", pid_path);
         let _pid_file = crate::pid::PidFile::create(&pid_path)?;
 
-        crate::daemon::run(config).await?;
+        crate::daemon::run(config, config_path).await?;
         Ok(())
     })
 }

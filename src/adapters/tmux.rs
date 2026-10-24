@@ -135,27 +135,44 @@ pub struct TmuxAdapter {
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,
     pane_windows: Arc<Mutex<HashMap<String, String>>>,
     window_panes: Arc<Mutex<HashMap<String, HashMap<String, AgentState>>>>,
+    display: std::sync::RwLock<Display>,
+}
+
+/// The settings a config reload replaces.
+struct Display {
     spinner_frames: Vec<String>,
     spinner_interval: u64,
     theme: Option<ThemeConfig>,
     mode: Mode,
 }
 
-impl TmuxAdapter {
-    pub fn new(theme: Option<ThemeConfig>, active_spinner: Option<Spinner>) -> Self {
-        let (frames, interval) = match active_spinner {
+impl Display {
+    fn new(theme: Option<ThemeConfig>, active_spinner: Option<Spinner>) -> Self {
+        let (spinner_frames, spinner_interval) = match active_spinner {
             Some(s) if !s.frames.is_empty() => (s.frames, s.interval),
             _ => (vec![], 0),
         };
+        Self {
+            spinner_frames,
+            spinner_interval,
+            theme,
+            mode: status_palette::detect_mode(),
+        }
+    }
+
+    fn icon_color(&self, state: &str) -> (String, String) {
+        state_icon_color(self.theme.as_ref(), state, self.mode)
+    }
+}
+
+impl TmuxAdapter {
+    pub fn new(theme: Option<ThemeConfig>, active_spinner: Option<Spinner>) -> Self {
         Self {
             spinners: Arc::new(Mutex::new(HashMap::new())),
             pane_states: Arc::new(Mutex::new(HashMap::new())),
             pane_windows: Arc::new(Mutex::new(HashMap::new())),
             window_panes: Arc::new(Mutex::new(HashMap::new())),
-            spinner_frames: frames,
-            spinner_interval: interval,
-            theme,
-            mode: status_palette::detect_mode(),
+            display: std::sync::RwLock::new(Display::new(theme, active_spinner)),
         }
     }
 
@@ -242,7 +259,7 @@ impl TmuxAdapter {
                 let (icon, color) = if raw.is_empty() {
                     (String::new(), String::new())
                 } else {
-                    state_icon_color(self.theme.as_ref(), raw, self.mode)
+                    super::read(&self.display).icon_color(raw)
                 };
                 set_tmux_window_state(window_id, &icon, raw, &color).await;
             }
@@ -265,9 +282,14 @@ impl TmuxAdapter {
         }
 
         let target_clone = target_id.clone();
-        let frames = self.spinner_frames.clone();
-        let interval = self.spinner_interval;
-        let (icon, color) = state_icon_color(self.theme.as_ref(), "busy", self.mode);
+        let (frames, interval, (icon, color)) = {
+            let display = super::read(&self.display);
+            (
+                display.spinner_frames.clone(),
+                display.spinner_interval,
+                display.icon_color("busy"),
+            )
+        };
 
         let task = tokio::spawn(async move {
             if frames.is_empty() {
@@ -394,6 +416,12 @@ impl TmuxAdapter {
 
 #[async_trait]
 impl OutputAdapter for TmuxAdapter {
+    /// Running spinners keep their frames; the next spinner a window starts uses the new ones.
+    fn reload(&self, config: &crate::config::Config) {
+        let (_, spinner) = config.active_spinner();
+        super::write(&self.display, Display::new(config.theme.clone(), spinner));
+    }
+
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()> {
         let window_id = self.resolve_window_id(&update.pane_id).await;
 
@@ -458,7 +486,7 @@ impl OutputAdapter for TmuxAdapter {
         };
 
         if let Some(state) = bell_state {
-            let (icon, _) = state_icon_color(self.theme.as_ref(), state, self.mode);
+            let (icon, _) = super::read(&self.display).icon_color(state);
             let msg = format!("{icon} {state}");
             self.trigger_bell(&update.pane_id, &msg, true).await;
         }
@@ -493,6 +521,28 @@ mod tests {
     use super::*;
     use crate::config::{AgentStateTheme, ThemeConfig};
     use std::collections::HashMap;
+
+    #[test]
+    fn test_reload_replaces_theme_and_spinner() {
+        let adapter = TmuxAdapter::new(None, None);
+        let config: crate::config::Config = toml::from_str(
+            r##"
+            [theme]
+            active_spinner = "line"
+            [theme.states.idle]
+            icon = "I"
+            color = "#112233"
+            [spinners]
+            line = { interval = 100, frames = ["|", "/"] }
+            "##,
+        )
+        .unwrap();
+        adapter.reload(&config);
+        let display = super::super::read(&adapter.display);
+        assert_eq!(display.spinner_frames, ["|", "/"]);
+        assert_eq!(display.spinner_interval, 100);
+        assert_eq!(display.icon_color("idle").0, "I");
+    }
 
     #[tokio::test]
     async fn test_tmux_adapter_updates() {

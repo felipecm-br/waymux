@@ -23,7 +23,7 @@
   - `state.rs`: `ApiState`, sequence-tracked 300ms idle debounce (`dispatch_update`), pane rehydration, the stale-pane reaper and the stall detector.
 - `src/health.rs`: unauthenticated `/health` and `/ready` probes.
 - `src/config.rs`: `config.toml` model (`Config`, `ThemeConfig`, `SoundConfig`, `Spinner`) with built-in defaults.
-- `src/signals.rs` & `src/pid.rs`: SIGTERM/SIGINT/SIGHUP listener feeding graceful shutdown, and the single-instance PID file.
+- `src/signals.rs` & `src/pid.rs`: SIGTERM/SIGINT listener feeding graceful shutdown, SIGHUP feeding the config reload in `daemon.rs` (`ApiState::reload` → `OutputAdapter::reload`), and the single-instance PID file.
 - `src/daemon.rs`: Background task supervisor, 30s stale pane reaper, and 5s proactive stall detector (20s zero-output + zero-CPU delta heuristic).
 - `src/adapters/`: Output sinks behind the `OutputAdapter` trait:
   - `mod.rs`: `AgentState`, `AgentUpdate`, `OutputAdapter`, and the urgency/icon helpers the sinks share.
@@ -89,7 +89,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **121 unit tests** (in `src/`, 15 of them `proptest` properties) and **8 integration tests** (`tests/cli.rs`) passing, with **0 Clippy warnings** and **56.9% line coverage** (CI fails below 55%: `cargo llvm-cov --summary-only --fail-under-lines 55`).
+> Current baseline: **124 unit tests** (in `src/`, 15 of them `proptest` properties) and **9 integration tests** (`tests/cli.rs`) passing, with **0 Clippy warnings** and **56.9% line coverage** (CI fails below 55%: `cargo llvm-cov --summary-only --fail-under-lines 55`).
 
 ### Dependency Audit & Performance Budgets (also run in CI)
 

@@ -94,7 +94,8 @@ async fn play_file(event_type: &'static str, player: String, sound_path: String)
 }
 
 pub struct SoundAdapter {
-    config: Option<SoundConfig>,
+    /// `[sound]` from the config, replaced on a config reload.
+    config: std::sync::RwLock<Option<SoundConfig>>,
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,
     /// Set while a deferred completion chime waits for a typing pause.
     response_pending: Arc<AtomicBool>,
@@ -103,7 +104,7 @@ pub struct SoundAdapter {
 impl SoundAdapter {
     pub fn new(config: Option<SoundConfig>) -> Self {
         Self {
-            config,
+            config: std::sync::RwLock::new(config),
             pane_states: Arc::new(Mutex::new(HashMap::new())),
             response_pending: Arc::new(AtomicBool::new(false)),
         }
@@ -195,7 +196,7 @@ impl SoundAdapter {
         }
 
         // 3. Check explicit config from toml
-        if let Some(sound_cfg) = &self.config {
+        if let Some(sound_cfg) = super::read(&self.config).as_ref() {
             let custom_path = match event_type {
                 "response" => sound_cfg.response.as_deref(),
                 "question" => sound_cfg
@@ -246,7 +247,8 @@ impl SoundAdapter {
 
     /// Player and sound file for an event, or None when sound is off or muted.
     fn sound_for(&self, event_type: &'static str) -> Option<(String, String)> {
-        if let Some(cfg) = &self.config
+        let config = super::read(&self.config).clone();
+        if let Some(cfg) = &config
             && !cfg.enabled
         {
             return None;
@@ -260,8 +262,7 @@ impl SoundAdapter {
             return None;
         };
 
-        let player = self
-            .config
+        let player = config
             .as_ref()
             .and_then(|c| c.player.clone())
             .unwrap_or_else(crate::sys::default_sound_player);
@@ -302,6 +303,10 @@ impl SoundAdapter {
 
 #[async_trait]
 impl OutputAdapter for SoundAdapter {
+    fn reload(&self, config: &crate::config::Config) {
+        super::write(&self.config, config.sound.clone());
+    }
+
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()> {
         let prev_state = {
             let mut states = self.pane_states.lock().await;
@@ -448,6 +453,14 @@ mod tests {
         assert_eq!(resolved_resp, Some(resp_file.to_string_lossy().to_string()));
 
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn test_reload_can_turn_sound_off() {
+        let adapter = SoundAdapter::new(None);
+        let config: crate::config::Config = toml::from_str("[sound]\nenabled = false\n").unwrap();
+        adapter.reload(&config);
+        assert_eq!(adapter.sound_for("error"), None);
     }
 
     #[test]

@@ -27,13 +27,31 @@ pub struct ApiState {
     pub adapters: Arc<Vec<Box<dyn OutputAdapter>>>,
     pub pending_idles:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
-    pub idle_debounce_ms: u64,
+    /// Settings a config reload (SIGHUP) replaces.
+    pub settings: Arc<std::sync::RwLock<Settings>>,
     pub pane_states: Arc<tokio::sync::Mutex<std::collections::HashMap<String, PaneStateInfo>>>,
     pub next_seq: Arc<std::sync::atomic::AtomicU64>,
     pub state_broadcast: tokio::sync::broadcast::Sender<AgentUpdate>,
     pub stall_records: Arc<tokio::sync::Mutex<std::collections::HashMap<String, StallRecord>>>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Settings {
+    pub idle_debounce_ms: u64,
     /// Program run on agent flow events (`flow_log_hook` in the config).
     pub flow_log_hook: Option<Arc<str>>,
+}
+
+impl Settings {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            idle_debounce_ms: config.idle_debounce_ms.unwrap_or(650),
+            flow_log_hook: config
+                .flow_log_hook
+                .as_deref()
+                .map(|hook| Arc::from(crate::sys::expand_home(hook))),
+        }
+    }
 }
 
 impl ApiState {
@@ -42,18 +60,27 @@ impl ApiState {
         Self {
             adapters: Arc::new(adapters),
             pending_idles: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            idle_debounce_ms,
+            settings: Arc::new(std::sync::RwLock::new(Settings {
+                idle_debounce_ms,
+                flow_log_hook: None,
+            })),
             pane_states: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             state_broadcast,
             stall_records: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-            flow_log_hook: None,
         }
     }
 
-    pub fn with_flow_log_hook(mut self, hook: Option<String>) -> Self {
-        self.flow_log_hook = hook.map(Arc::from);
-        self
+    pub fn settings(&self) -> Settings {
+        crate::adapters::read(&self.settings).clone()
+    }
+
+    /// Applies a (re)loaded config: daemon settings here, theme/spinner/sound in each adapter.
+    pub fn reload(&self, config: &crate::config::Config) {
+        crate::adapters::write(&self.settings, Settings::from_config(config));
+        for adapter in self.adapters.iter() {
+            adapter.reload(config);
+        }
     }
 
     pub async fn clean_stale_panes(&self) {
@@ -464,12 +491,15 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
         return;
     }
 
+    let settings = state.settings();
+    let flow_log_hook = settings.flow_log_hook.clone();
+
     // Telemetry instrumentation: measure human response latency
     match (&prev_state, &update.state) {
         // Agent asks question / requests permission
         (prev, AgentState::AwaitingInput) if prev != &Some(AgentState::AwaitingInput) => {
             log_flow_event(
-                state.flow_log_hook.as_ref(),
+                flow_log_hook.as_ref(),
                 "agent_question",
                 &update.pane_id,
                 "",
@@ -477,7 +507,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
         }
         (prev, AgentState::Permission) if prev != &Some(AgentState::Permission) => {
             log_flow_event(
-                state.flow_log_hook.as_ref(),
+                flow_log_hook.as_ref(),
                 "agent_question",
                 &update.pane_id,
                 "",
@@ -488,12 +518,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
         | (Some(AgentState::AwaitingInput), AgentState::Idle)
         | (Some(AgentState::Permission), AgentState::Working)
         | (Some(AgentState::Permission), AgentState::Idle) => {
-            log_flow_event(
-                state.flow_log_hook.as_ref(),
-                "human_reply",
-                &update.pane_id,
-                "",
-            );
+            log_flow_event(flow_log_hook.as_ref(), "human_reply", &update.pane_id, "");
         }
         _ => {}
     }
@@ -528,9 +553,8 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
         let pending_map = state.pending_idles.clone();
         let pane_states = state.pane_states.clone();
         let broadcast_tx = state.state_broadcast.clone();
-        let delay_ms = state.idle_debounce_ms;
+        let delay_ms = settings.idle_debounce_ms;
         let prev_state_for_idle = prev_state.clone();
-        let flow_log_hook = state.flow_log_hook.clone();
 
         let task = tokio::spawn(async move {
             if delay_ms > 0 {

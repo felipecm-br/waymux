@@ -6,32 +6,22 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::TcpListener;
 
-pub async fn run(config: Config) -> anyhow::Result<()> {
+/// `config_path` is the `--config` argument; without it a reload searches the default paths
+/// again, so a config file created after startup is picked up.
+pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<()> {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    // Capacity 1: SIGHUPs that arrive during a reload collapse into one more reload.
+    let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel(1);
 
-    let signal_handle = tokio::spawn(crate::signals::signal_listener(shutdown_tx));
+    let signal_handle = tokio::spawn(crate::signals::signal_listener(shutdown_tx, reload_tx));
 
     tracing::info!("Daemon binding to {}:{}", config.listen_addr, config.port);
     let listener = TcpListener::bind(format!("{}:{}", config.listen_addr, config.port)).await?;
 
     let start_time = Arc::new(Instant::now());
 
-    let active_spinner_name = config
-        .theme
-        .as_ref()
-        .map(|t| t.active_spinner.clone())
-        .unwrap_or_else(|| "arc".to_string());
-
-    let active_spinner = config
-        .spinners
-        .as_ref()
-        .and_then(|spinners| spinners.get(&active_spinner_name).cloned());
-    tokio::spawn(async move {
-        let _ = crate::tmux_cmd::async_command()
-            .args(["set", "-g", "@ai_agent_spinner", &active_spinner_name])
-            .output()
-            .await;
-    });
+    let (active_spinner_name, active_spinner) = config.active_spinner();
+    tokio::spawn(publish_spinner_name(active_spinner_name));
 
     let adapters = crate::api::ApiState::new(
         vec![
@@ -39,11 +29,19 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             Box::new(WaybarAdapter::new(config.theme.clone())),
             Box::new(SoundAdapter::new(config.sound.clone())),
         ],
-        config.idle_debounce_ms.unwrap_or(650),
-    )
-    .with_flow_log_hook(config.flow_log_hook.as_deref().map(crate::sys::expand_home));
+        0,
+    );
+    adapters.reload(&config);
 
     adapters.rehydrate_from_tmux().await;
+
+    let reload_state = adapters.clone();
+    let bound = (config.listen_addr.clone(), config.port);
+    tokio::spawn(async move {
+        while reload_rx.recv().await.is_some() {
+            reload(&reload_state, config_path.as_deref(), &bound).await;
+        }
+    });
 
     let cleanup_state = adapters.clone();
     let mut cleanup_shutdown_rx = shutdown_rx.clone();
@@ -110,4 +108,39 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     sd_notify::notify(false, &[sd_notify::NotifyState::Stopping])?;
 
     Ok(())
+}
+
+/// Tells tmux-side scripts which spinner the status bar animates.
+async fn publish_spinner_name(name: String) {
+    let _ = crate::tmux_cmd::async_command()
+        .args(["set", "-g", "@ai_agent_spinner", &name])
+        .output()
+        .await;
+}
+
+/// SIGHUP: re-read the config and apply what can change while running. A config that fails
+/// to load is logged and the running one kept. The listen address needs a restart.
+async fn reload(state: &crate::api::ApiState, config_path: Option<&str>, bound: &(String, u16)) {
+    let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Reloading]);
+    match Config::resolve(config_path) {
+        Ok((config, loaded_from)) => {
+            if (&config.listen_addr, config.port) != (&bound.0, bound.1) {
+                tracing::warn!(
+                    "listen address {}:{} takes effect after a restart; still on {}:{}",
+                    config.listen_addr,
+                    config.port,
+                    bound.0,
+                    bound.1
+                );
+            }
+            state.reload(&config);
+            publish_spinner_name(config.active_spinner().0).await;
+            tracing::info!(
+                "reloaded config from {}",
+                loaded_from.as_deref().unwrap_or("built-in defaults")
+            );
+        }
+        Err(e) => tracing::error!("config reload failed, keeping the running config: {e:#}"),
+    }
+    let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
 }

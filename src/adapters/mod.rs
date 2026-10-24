@@ -85,6 +85,21 @@ pub trait OutputAdapter: Send + Sync {
     async fn rehydrate(&self, _update: &AgentUpdate) -> anyhow::Result<()> {
         Ok(())
     }
+    /// Takes the theme, spinner or sound settings of a reloaded config (SIGHUP).
+    fn reload(&self, _config: &crate::config::Config) {}
+}
+
+/// Read a reloadable setting. A writer that panicked left a complete value behind (every
+/// write replaces the whole struct), so a poisoned lock is still safe to read.
+pub(crate) fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+pub(crate) fn write<T>(lock: &std::sync::RwLock<T>, value: T) {
+    *lock
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
 fn urgency_score(state: &AgentState) -> u8 {

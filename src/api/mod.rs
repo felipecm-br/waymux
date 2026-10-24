@@ -4,7 +4,7 @@ mod rpc;
 mod state;
 
 pub use rpc::{RpcError, RpcRequest, RpcResponse};
-pub use state::{ApiState, PaneStateInfo, StallRecord};
+pub use state::{ApiState, PaneStateInfo, Settings, StallRecord};
 
 use crate::adapters::AgentState;
 use axum::{Json, Router, extract::State, routing::post};

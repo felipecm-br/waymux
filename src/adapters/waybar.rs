@@ -15,16 +15,15 @@ fn get_waybar_state_path() -> String {
 }
 
 pub struct WaybarAdapter {
-    theme: Option<ThemeConfig>,
-    mode: Mode,
+    /// Theme and light/dark mode, replaced on a config reload.
+    display: std::sync::RwLock<(Option<ThemeConfig>, Mode)>,
     pane_updates: Arc<Mutex<HashMap<String, AgentUpdate>>>,
 }
 
 impl WaybarAdapter {
     pub fn new(theme: Option<ThemeConfig>) -> Self {
         Self {
-            theme,
-            mode: status_palette::detect_mode(),
+            display: std::sync::RwLock::new((theme, status_palette::detect_mode())),
             pane_updates: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -32,6 +31,13 @@ impl WaybarAdapter {
 
 #[async_trait]
 impl OutputAdapter for WaybarAdapter {
+    fn reload(&self, config: &crate::config::Config) {
+        super::write(
+            &self.display,
+            (config.theme.clone(), status_palette::detect_mode()),
+        );
+    }
+
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()> {
         let active_update = {
             let mut map = self.pane_updates.lock().await;
@@ -58,7 +64,10 @@ impl OutputAdapter for WaybarAdapter {
                 AgentState::Closed => ("idle", "Agent Closed"),
             };
 
-            let (icon, color) = state_icon_color(self.theme.as_ref(), raw_state, self.mode);
+            let (icon, color) = {
+                let (theme, mode) = &*super::read(&self.display);
+                state_icon_color(theme.as_ref(), raw_state, *mode)
+            };
 
             let json_payload = serde_json::json!({
                 "text": icon,
