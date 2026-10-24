@@ -64,6 +64,8 @@ pub struct Settings {
     pub flow_log_hook: Option<Arc<str>>,
     /// `[approvals]`; `None` holds nothing.
     pub approvals: Option<crate::config::ApprovalsConfig>,
+    /// Checkpoints kept per pane; `None` takes none.
+    pub checkpoint_keep: Option<usize>,
 }
 
 impl Settings {
@@ -75,6 +77,15 @@ impl Settings {
                 .as_deref()
                 .map(|hook| Arc::from(crate::sys::expand_home(hook))),
             approvals: config.approvals.clone().filter(|a| a.enabled),
+            checkpoint_keep: match &config.checkpoints {
+                None => Some(crate::checkpoint::DEFAULT_KEEP),
+                Some(c) if c.enabled => Some(
+                    c.keep
+                        .unwrap_or(crate::checkpoint::DEFAULT_KEEP)
+                        .clamp(1, 1000),
+                ),
+                Some(_) => None,
+            },
         }
     }
 }
@@ -89,6 +100,7 @@ impl ApiState {
                 idle_debounce_ms,
                 flow_log_hook: None,
                 approvals: None,
+                checkpoint_keep: None,
             })),
             pane_states: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
@@ -469,6 +481,28 @@ fn flow_event_for_transition(prev: Option<&AgentState>, next: &AgentState) -> Op
     }
 }
 
+/// One checkpoint at a time, off the event path: git on a large tree takes a moment.
+static CHECKPOINT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn spawn_checkpoint(pane: String, label: String, keep: usize) {
+    tokio::spawn(async move {
+        let _guard = CHECKPOINT_LOCK.lock().await;
+        let result = tokio::task::spawn_blocking(move || {
+            let dir = crate::checkpoint::pane_dir(&pane)?;
+            let repo = crate::checkpoint::Repo::open(&dir, None)?;
+            Some((pane.clone(), repo.create(&pane, &label, keep)))
+        });
+        match tokio::time::timeout(std::time::Duration::from_secs(30), result).await {
+            Ok(Ok(Some((pane, Ok(Some(c)))))) => {
+                tracing::info!("Checkpoint {} for pane {}: {}", c.n, pane, c.subject);
+            }
+            Ok(Ok(Some((pane, Err(e))))) => tracing::warn!("Checkpoint for pane {pane}: {e}"),
+            Err(_) => tracing::warn!("Checkpoint timed out after 30s"),
+            _ => {}
+        }
+    });
+}
+
 pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     let seq = state
         .next_seq
@@ -535,6 +569,24 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     }
 
     super::queue::on_state(state, &update.pane_id, &update.state).await;
+    // The end of a turn (or a stop on a prompt): save the pane's work tree.
+    if prev_state == Some(AgentState::Working)
+        && (update.state == AgentState::Permission
+            || update.state == AgentState::AwaitingInput
+            || (update.state == AgentState::Idle && update.message.as_deref() != Some(DISMISSED)))
+        && let Some(keep) = state.settings().checkpoint_keep
+    {
+        let label = format!(
+            "{}{}",
+            update.state.as_str(),
+            update
+                .message
+                .as_deref()
+                .map(|m| format!(" · {m}"))
+                .unwrap_or_default()
+        );
+        spawn_checkpoint(update.pane_id.clone(), label, keep);
+    }
     // The pane left its prompt (answered there, or the agent moved on): a held prompt is moot.
     if matches!(
         update.state,

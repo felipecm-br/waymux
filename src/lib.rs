@@ -2,6 +2,7 @@ pub mod activity;
 pub mod adapters;
 pub mod api;
 pub mod auth;
+pub mod checkpoint;
 pub mod cockpit;
 pub mod config;
 pub mod daemon;
@@ -100,6 +101,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "queue",
         usage: "queue <add <pane_id> <text> | ls [pane_id] | rm <pane_id> [id]>",
         about: "List, add or drop prompts held until an agent is at rest",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "checkpoint",
+        usage: "checkpoint <list | diff <n> | restore <n> [--force]> [-w <pane>]",
+        about: "List, diff or restore the work tree an agent turn left",
         plumbing: false,
     },
     CommandSpec {
@@ -306,6 +313,7 @@ pub fn entry() -> anyhow::Result<()> {
         "agent-action" => Some(cockpit::actions::run_agent_action(&args[2..])),
         "review-notes" => Some(cockpit::notes::run_cli(&args[2..])),
         "queue" => Some(delivery::run_cli(&args[2..])),
+        "checkpoint" | "checkpoints" => Some(checkpoint::run_cli(&args[2..])),
         "window-create" => Some(cockpit::actions::run_window_create()),
         "window-delete" => Some(cockpit::actions::run_window_delete()),
         "triage" => Some(triage::run_cli(&args[2..])),

@@ -53,6 +53,17 @@ pub struct ApprovalsConfig {
     pub hold_seconds: Option<u64>,
 }
 
+/// `[checkpoints]`: save each agent pane's work tree at the end of every turn (on by
+/// default; see `crate::checkpoint`).
+#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointsConfig {
+    #[serde(default = "default_sound_enabled")]
+    pub enabled: bool,
+    /// Checkpoints kept per pane (1 to 1000, default 50).
+    pub keep: Option<usize>,
+}
+
 impl ApprovalsConfig {
     pub fn hold_secs(&self) -> u64 {
         self.hold_seconds.unwrap_or(120).clamp(10, 300)
@@ -83,6 +94,7 @@ pub struct Config {
     /// Whether `waymux keylog` appends key presses to `$XDG_STATE_HOME/flow/keys.tsv`.
     #[serde(default)]
     pub keylog: bool,
+    pub checkpoints: Option<CheckpointsConfig>,
 }
 
 fn default_listen_addr() -> String {
@@ -115,6 +127,7 @@ impl Default for Config {
             icons: None,
             flow_log_hook: None,
             keylog: false,
+            checkpoints: None,
         }
     }
 }

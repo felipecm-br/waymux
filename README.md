@@ -99,6 +99,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
+| `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
 | `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
 | `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
 | `waymux init <--tmux\|--systemd\|--hooks>` | Print the tmux plugin line, the systemd unit, or a Claude Code hooks block |
@@ -209,6 +210,18 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 `y` in the Cockpit allows a shell call matching a risk rule only on a second press within 3 s, for the same prompt; the first press says which rule matched, and the preview shows a red `󰳌 risky:` line. The rules (a speed bump, not a sandbox: the harness's permission system stays the boundary) are recursive delete (`rm` with `-r` and `-f` in any form), force push (`--force`, `-f`, `--force-with-lease`, `+refspec`), `git reset --hard`, `git clean -f`, discard changes (`git checkout .`, `git checkout -- .`, `git restore .`) and pipe to shell (`curl`/`wget` piped to a shell, an interpreter or `sudo`, or run through `bash <(curl …)`, `sh -c "$(curl …)"`, `eval`, `source`). Every command of the call is checked: it is split on `;`, `&&`, `||`, `|`, `&`, newlines and subshells, and followed into `$( )`, backticks, `<( )`, `sh -c` and `eval`, past `sudo`, `env`, `timeout`, `xargs` and `VAR=value`. The hook keeps the call's full command (`$XDG_RUNTIME_DIR/waymux/pane-cmd-*`, `0600`) so a command longer than the one-line reason is still checked.
 
 Answer keys: on Claude Code `y` sends `1` (approve once) and `n` sends `Esc`. `y` and `n` are not hotkeys there and its highlighted option is "1. Yes", so the former `n` + `Enter` approved the call (verified on Claude Code 2.1.310). Other harnesses get `y` + `Enter` and `Esc`.
+
+### Turn checkpoints
+
+At the end of every agent turn (`working` → `idle`, `permission` or `question`) the daemon saves the pane's work tree: tracked files as they are on disk and untracked files git does not ignore (an untracked file over 50 MB is left out), with `HEAD` as parent. A turn that changed nothing gets no checkpoint; each pane keeps the newest 50 (`[checkpoints] keep`, 1 to 1000; `enabled = false` turns them off).
+
+```bash
+waymux checkpoint list              # one row per saved turn of this pane ($TMUX_PANE), or -w %12
+waymux checkpoint diff 2            # what turn 2 changed
+waymux checkpoint restore 1         # files back as turn 1 left them; prints how to undo
+```
+
+Checkpoints never touch your repository: they live in a bare store per repository (`$XDG_STATE_HOME/waymux/checkpoints/<name>-<hash>.git`) that reads your objects through `objects/info/alternates` and writes only its own, through a temporary index. No refs are added to your repository, so `git log --all` and lazygitrs's graph stay as they are, and your index, `HEAD`, branch and stash are left alone. `restore` first saves the work tree as a safety checkpoint (or reuses the latest when nothing changed), writes the files that differ, removes the files the checkpoint does not have, and leaves ignored files, the index and `HEAD` untouched; `git status` then shows the restored files as changes. It refuses while the agent is working or on a prompt unless `--force`. Objects your repository later drops (a rewritten history plus `git gc`) can make an old checkpoint unrestorable.
 
 ### Held approvals
 
