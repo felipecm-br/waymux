@@ -17,6 +17,7 @@ All notable changes to **Waymux** are documented in this file.
 - **CI least privilege (`.github/workflows/`)**: workflows default to `contents: read`, and only the two release jobs that publish assets get `contents: write`. Every action is pinned to a commit SHA with its version in a comment, and checkouts no longer leave the job token in `.git/config` (`persist-credentials: false`).
 - **Dependabot (`.github/dependabot.yml`)**: weekly PRs for Cargo crates and GitHub Actions, minor and patch bumps grouped into one PR per ecosystem, majors one at a time.
 - **Signed releases and an SBOM (`.github/workflows/release.yml`, `install.sh`)**: every release archive gets a GitHub build-provenance attestation, checked with `gh attestation verify <archive> --repo felipecm-br/waymux` or by `install.sh` under `WAYMUX_VERIFY_ATTESTATION=1`; a CycloneDX SBOM (`waymux-<tag>.cdx.json`) is attached to each release.
+- **macOS CI (`.github/workflows/ci.yml`)**: Clippy and the full test suite run on `macos-latest`, matching the macOS binaries the release ships.
 - **Declared MSRV (`Cargo.toml`, CI)**: `rust-version = "1.88"`, the first release with stable `let` chains (the README said 1.85, which fails with 65 errors). A CI job builds with exactly 1.88.
 
 ### 󰀏 Triage Covers Review, Cockpit Flags Shared Repositories

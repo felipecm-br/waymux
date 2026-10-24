@@ -33,6 +33,24 @@ jobs:
       - name: Run Unit Test Suite
         run: cargo test --all-targets
 
+  macos:
+    # Releases ship macOS binaries; /proc-based stall detection and Cockpit CPU are Linux-only
+    # and skip themselves, everything else must pass here too.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: clippy
+      - name: Run Clippy Lints
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Run Test Suite
+        run: cargo test --all-targets
+
   msrv:
     # Builds with the oldest supported compiler (`rust-version` in Cargo.toml).
     runs-on: ubuntu-latest

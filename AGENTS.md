@@ -107,6 +107,8 @@ WAYMUX_BIN=$PWD/target/release/waymux ./scripts/docker-sandbox.sh test
 
 ---
 
+CI also runs Clippy and the tests on macOS, a `cargo check` on the MSRV (Rust 1.88) and the Docker suite.
+
 ## Engineering Conventions
 
 1. **Preserve the Synchronous Fast-Path:** Never initialize Tokio or heavy global state before matching CLI subcommands in `src/lib.rs`. CLI subcommands (`hook`, `dismiss`, `cockpit-items`, `triage`) are invoked on interactive hot-paths and must start in `<1.5ms`.
