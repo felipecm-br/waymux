@@ -23,13 +23,13 @@ const DEFAULT_PROGRAMS: &[(&str, &str)] = &[
 ];
 
 const DEFAULT_STATES: &[(&str, &str)] = &[
-    ("idle", "󱥂"),
+    ("idle", "󰗡"),
     ("busy", "󰑮"),
     ("working", "󰑮"),
     ("question", "󱜻"),
-    ("permission", "󱅭"),
-    ("stalled", "󱥁"),
-    ("error", "󰨄"),
+    ("permission", "󰳌"),
+    ("stalled", "󰔟"),
+    ("error", ""),
     ("review", "󰷋"),
 ];
 
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(reg.program("claude"), Some(""));
         assert_eq!(reg.state("question"), Some("Q"));
         assert_eq!(reg.state("awaiting_input"), Some("Q"));
-        assert_eq!(reg.state("hanging"), Some("󱥁"));
+        assert_eq!(reg.state("hanging"), Some("󰔟"));
     }
 
     #[test]
@@ -249,7 +249,7 @@ mod tests {
         let reg = Registry::builtin();
         let sh = render(&reg, "sh").unwrap();
         assert!(sh.contains("ICON_AGY_BIN=''\n"));
-        assert!(sh.contains("ICON_STATE_IDLE='󱥂'\n"));
+        assert!(sh.contains("ICON_STATE_IDLE='󰗡'\n"));
         let tmux = render(&reg, "tmux").unwrap();
         assert!(tmux.starts_with("icons:\n"));
         assert!(tmux.contains("  devin: \"\"\n"));

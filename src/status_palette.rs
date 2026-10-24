@@ -271,7 +271,7 @@ mod tests {
         states.insert(
             "permission".to_string(),
             AgentStateTheme {
-                icon: "󱅭".to_string(),
+                icon: "󰳌".to_string(),
                 color: "#123456".to_string(),
             },
         );

@@ -550,7 +550,7 @@ mod tests {
         states.insert(
             "idle".to_string(),
             AgentStateTheme {
-                icon: "󱥂".to_string(),
+                icon: "󰗡".to_string(),
                 color: "#94e2d5".to_string(),
             },
         );

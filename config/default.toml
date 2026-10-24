@@ -20,7 +20,7 @@ active_spinner = "dot"
 # distinguishable on every theme. Add `color = "#rrggbb"` to a state only to override it.
 
 [theme.states.idle]
-icon = "󱥂"
+icon = "󰗡"
 
 [theme.states.busy]
 icon = "󰝲"
@@ -29,13 +29,13 @@ icon = "󰝲"
 icon = "󱜻"
 
 [theme.states.permission]
-icon = "󱅭"
+icon = "󰳌"
 
 [theme.states.stalled]
-icon = "󱥁"
+icon = "󰔟"
 
 [theme.states.error]
-icon = "󰨄"
+icon = ""
 # Program/agent name -> Nerd Font glyph, merged over the built-ins (agent, agy, claude, codex,
 # devin, muse, opencode). `agent` is the fallback for agents without an entry.
 # Shell and tmux consumers read the merged registry with `waymux icon` / `waymux icons`.

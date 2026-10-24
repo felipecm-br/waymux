@@ -123,7 +123,7 @@ mod tests {
         states.insert(
             "permission".to_string(),
             AgentStateTheme {
-                icon: "󱅭".to_string(),
+                icon: "󰳌".to_string(),
                 color: String::new(),
             },
         );
@@ -134,12 +134,12 @@ mod tests {
         // Icon from config, color from the built-in palette when the config leaves it empty.
         assert_eq!(
             state_icon_color(Some(&theme), "permission", Mode::Dark),
-            ("󱅭".to_string(), "#ff9e57".to_string())
+            ("󰳌".to_string(), "#ff9e57".to_string())
         );
         // Missing state: built-in registry icon, semantic color.
         assert_eq!(
             state_icon_color(Some(&theme), "stalled", Mode::Light),
-            ("󱥁".to_string(), "#a21caf".to_string())
+            ("󰔟".to_string(), "#a21caf".to_string())
         );
     }
 

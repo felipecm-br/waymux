@@ -133,13 +133,13 @@ case "$cmd" in
     set_pane_state "$p_opencode" working "Update dashboard theme"
     sleep 1
     set_pane_state "$p_claude" permission
-    echo "  • claude ($p_claude) -> permission (󱅭)"
+    echo "  • claude ($p_claude) -> permission (󰳌)"
     sleep 1
     set_pane_state "$p_codex" question
     echo "  • codex ($p_codex) -> awaiting_input (󱜻)"
     sleep 1
     set_pane_state "$p_opencode" idle
-    echo "  • opencode ($p_opencode) -> idle (󱥂)"
+    echo "  • opencode ($p_opencode) -> idle (󰗡)"
     echo "✓ Done! Try:"
     echo "  • Prefix + Space  (Cockpit HUD)"
     echo "  • Prefix + i      (Alert Triage Popup)"

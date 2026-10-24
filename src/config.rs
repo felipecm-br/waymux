@@ -132,7 +132,7 @@ mod tests {
             active_spinner = "minidot"
 
             [theme.states.idle]
-            icon = "󱥂"
+            icon = "󰗡"
             color = "#94e2d5"
 
             [spinners]
@@ -163,13 +163,13 @@ mod tests {
             active_spinner = "minidot"
 
             [theme.states.permission]
-            icon = "󱅭"
+            icon = "󰳌"
         "##,
         )
         .unwrap();
         let theme = config.theme.unwrap();
         let permission = theme.states.get("permission").unwrap();
-        assert_eq!(permission.icon, "󱅭");
+        assert_eq!(permission.icon, "󰳌");
         assert!(permission.color.is_empty());
     }
 
