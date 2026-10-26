@@ -1,0 +1,3 @@
+# ai-memory routing: see docs/architecture/ai-memory-workflow.md in the dotfiles repo
+workspace = "cockpit"
+project   = "felipecm-br.waymux"
