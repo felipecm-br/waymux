@@ -313,12 +313,14 @@ fn run_checks() -> Vec<Check> {
         "review notes",
         "install lazygitrs: https://github.com/felipecm-br/lazygitrs",
     ));
-    checks.push(tool(
-        "delta",
-        Level::Warn,
-        "side-by-side diffs",
-        "install git-delta (falls back to bat or plain git diff)",
-    ));
+    if find_in_path("lazygitrs").is_none() && find_in_path("bat").is_none() {
+        checks.push(tool(
+            "delta",
+            Level::Warn,
+            "side-by-side diffs",
+            "install git-delta (falls back to bat or plain git diff)",
+        ));
+    }
     checks.push(tool(
         "gh",
         Level::Warn,

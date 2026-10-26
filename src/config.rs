@@ -41,6 +41,28 @@ fn default_sound_enabled() -> bool {
     true
 }
 
+fn default_hold_seconds() -> u64 {
+    120
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_hold_seconds")]
+    pub hold_seconds: u64,
+}
+
+impl Default for ApprovalsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hold_seconds: default_hold_seconds(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -55,6 +77,8 @@ pub struct Config {
     pub theme: Option<ThemeConfig>,
     pub spinners: Option<HashMap<String, Spinner>>,
     pub sound: Option<SoundConfig>,
+    /// Hook-held approval settings (`[approvals]`).
+    pub approvals: Option<ApprovalsConfig>,
     /// Program/agent name -> Nerd Font glyph, merged over the built-ins in `icons`.
     pub icons: Option<HashMap<String, String>>,
     /// Program run as `<hook> <event> <pane> <extra>` on `agent_question`, `human_reply` and
@@ -91,6 +115,7 @@ impl Default for Config {
                 permission: None,
                 error: None,
             }),
+            approvals: None,
             icons: None,
             flow_log_hook: None,
             keylog: false,

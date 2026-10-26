@@ -14,6 +14,10 @@ log_level = "info"
 # Append Cockpit and wrapped tmux key presses to $XDG_STATE_HOME/flow/keys.tsv (default: false).
 # keylog = true
 
+# [approvals]
+# enabled = true
+# hold_seconds = 120
+
 # Delay in milliseconds before sending the 'idle' state.
 # This debouncing prevents status icon flickering when the AI issues tool calls in rapid succession.
 idle_debounce_ms = 0
