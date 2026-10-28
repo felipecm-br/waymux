@@ -62,6 +62,9 @@ impl Sandbox {
             .env("XDG_RUNTIME_DIR", &self.dir)
             .env("TMUX_TMPDIR", self.dir.join("tmux"))
             .env("WAYMUX_PORT", self.port.get().to_string())
+            .env_remove("XDG_CONFIG_HOME")
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_DATA_HOME")
             .env_remove("TMUX")
             .env_remove("TMUX_PANE")
             .env_remove("WAYMUX_COLORS");
