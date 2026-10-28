@@ -4,8 +4,11 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-28
+
 > **Upgrading:** key telemetry (`waymux keylog`) is now opt-in; set `keylog = true` in `~/.config/waymux/config.toml` (or `WAYMUX_KEYLOG=1`) to keep writing `$XDG_STATE_HOME/flow/keys.tsv`.
 
+- **Test sandbox isolates `XDG_*` variables (`tests/cli.rs`)**: the CLI test sandbox overrode `HOME` but not `XDG_CONFIG_HOME`, so `doctor_names_the_missing_daemon_and_fails` read the real user config on machines that export it.
 - **Mutation testing across core logic modules (`.cargo/mutants.toml`, `.github/workflows/ci.yml`, `src/triage.rs`, `src/cockpit/items.rs`, `src/api/rpc.rs`, `src/api/state.rs`, `src/hook.rs`)**: configured `cargo-mutants` over the 5 core logic modules (338 mutants, 0 surviving), extracted testable helpers (`flow_event_for_transition`, `wait_outcome`, `worktree_needs_review`, `pane_tool_memo_in`), raised total crate line coverage to 82.5% (CI floor raised to 80%), and added a CI job running `cargo mutants --in-diff` on PRs and full mutation runs weekly.
 - **Daemon version in `/health` and `doctor` mismatch warning (`src/health.rs`, `src/doctor.rs`)**: `/health` now includes `version`, and `waymux doctor` warns when the running daemon's version does not match the CLI binary.
 - **Architectural decision records (`docs/decisions/`)**: documented the rationale for the systemd user-unit sandboxing boundary (`6.1` exposure), pinned `RUST_STABLE` in CI, single-maintainer branch protection, and `tmux -u` on every invocation.
