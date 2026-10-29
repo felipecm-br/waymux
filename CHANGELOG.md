@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-29
+
 - **Agent sessions tagged on their pane (`src/hook.rs`, `src/api/mod.rs`, `/api/status`)**: on `SessionStart` and `UserPromptSubmit` the `claude` and `codex` hooks send the agent's session id with the pane state, and the daemon sets the pane option `@ai_session` (`claude:<id>`). `cockpit restore` resumes that conversation after a reboot. The daemon sets it rather than the hook because a jailed hook cannot reach tmux; a hook token still names only its own pane, and ids other than 8 to 64 letters, digits, `-` or `_` are ignored, since restore types them into a shell.
 
 ## [0.6.0] - 2026-10-29
