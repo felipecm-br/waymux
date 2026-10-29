@@ -55,6 +55,8 @@ pub struct ApiState {
     pub activity:
         Arc<tokio::sync::Mutex<std::collections::HashMap<String, crate::activity::Activity>>>,
     pub next_queue_id: Arc<std::sync::atomic::AtomicU64>,
+    /// Pane-scoped tokens for hooks in a sandbox (see `super::hook_tokens`).
+    pub hook_tokens: Arc<super::hook_tokens::HookTokens>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -110,6 +112,7 @@ impl ApiState {
             approvals: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             activity: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_queue_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            hook_tokens: Arc::default(),
         }
     }
 

@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Pane-scoped hook tokens for sandboxed agents (`src/api/hook_tokens.rs`, `src/api/mod.rs`, `hook/token`, `waymux hook-token <pane>`)**: an agent in `ai-jail` cannot read the daemon token, so its hooks never reached the daemon and its pane had no state, held approvals or checkpoints; handing it the daemon token would let it type into every pane through `tmux.*` and `inject`. `waymux hook-token <pane>` (daemon token only) mints a token that reaches `/api/status` and `approval/hold` for that pane and nothing else (403 otherwise, checked before the call runs). Hooks read it from `WAYMUX_HOOK_TOKEN`. Tokens live in daemon memory and are lost on restart.
+
 ## [0.4.0] - 2026-10-29
 
 > **Upgrading:** prompts from `inject`, `review-notes send` and the Cockpit's `I` now wait in the delivery queue and are typed only when the agent is at rest, never into a running turn or a prompt; the Cockpit's `n` now sends `Esc`. Restart the daemon after installing (`systemctl --user restart waymux.service`).

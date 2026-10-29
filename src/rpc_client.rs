@@ -6,6 +6,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 pub fn read_token() -> Option<String> {
+    // Set only inside a sandbox, by the launcher (`waymux hook-token`): it reaches the hook
+    // routes for one pane and nothing else.
+    if let Ok(tok) = std::env::var("WAYMUX_HOOK_TOKEN")
+        && !tok.trim().is_empty()
+    {
+        return Some(tok.trim().to_string());
+    }
     let uid = nix::unistd::getuid();
     let mut candidates = Vec::new();
     if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
@@ -285,6 +292,34 @@ pub fn dismiss_pane_cli(args: &[String]) -> i32 {
 
     let _ = http_post_json(daemon_port(), "/rpc", Some(&token), &payload, 200);
     0
+}
+
+/// `waymux hook-token <pane_id>`: prints a token that lets a sandboxed agent's hooks report
+/// that pane's state and hold its prompts, and nothing else (`api::hook_tokens`).
+pub fn hook_token_cli(args: &[String]) -> i32 {
+    let Some(pane) = args.first().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+        eprintln!("Usage: waymux hook-token <pane_id>");
+        return 2;
+    };
+    match rpc_call("hook/token", &serde_json::json!({ "pane_id": pane }), 1000) {
+        Ok(result) => {
+            if let Some(token) = result["token"].as_str() {
+                println!("{token}");
+                0
+            } else {
+                eprintln!("waymux hook-token: the daemon returned no token");
+                1
+            }
+        }
+        Err(CallError::Rejected(reason)) => {
+            eprintln!("waymux hook-token: {reason}");
+            1
+        }
+        Err(CallError::Unreachable) => {
+            eprintln!("waymux hook-token: the daemon is not running");
+            1
+        }
+    }
 }
 
 pub fn list_agents_cli() -> i32 {

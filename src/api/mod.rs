@@ -1,6 +1,7 @@
 //! HTTP control plane: the authenticated `/rpc` and `/api/status` routes.
 
 pub(crate) mod approvals;
+pub mod hook_tokens;
 mod queue;
 mod rpc;
 mod state;
@@ -64,34 +65,64 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+#[derive(Clone)]
+pub struct AuthState {
+    token: Arc<String>,
+    hook_tokens: Arc<hook_tokens::HookTokens>,
+}
+
+/// Largest body a hook token may send; a status or a held prompt is far smaller.
+const HOOK_BODY_LIMIT: usize = 64 * 1024;
+
 pub async fn auth_middleware(
-    State(token): State<Arc<String>>,
+    State(auth): State<AuthState>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, axum::http::StatusCode> {
-    let authenticated = req
+    let bearer = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
-        .is_some_and(|b| constant_time_eq(b.trim().as_bytes(), token.as_bytes()));
-
-    if authenticated {
-        Ok(next.run(req).await)
-    } else {
+        .map(|b| b.trim().to_string());
+    let Some(bearer) = bearer else {
         tracing::warn!("Unauthorized HTTP request to {}", req.uri().path());
-        Err(axum::http::StatusCode::UNAUTHORIZED)
+        return Err(axum::http::StatusCode::UNAUTHORIZED);
+    };
+
+    if constant_time_eq(bearer.as_bytes(), auth.token.as_bytes()) {
+        return Ok(next.run(req).await);
     }
+    let Some(pane) = auth.hook_tokens.pane_of(&bearer) else {
+        tracing::warn!("Unauthorized HTTP request to {}", req.uri().path());
+        return Err(axum::http::StatusCode::UNAUTHORIZED);
+    };
+
+    // A hook token: read the body to check it only touches its own pane, then pass it on.
+    let path = req.uri().path().to_string();
+    let (parts, body) = req.into_parts();
+    let bytes = axum::body::to_bytes(body, HOOK_BODY_LIMIT)
+        .await
+        .map_err(|_| axum::http::StatusCode::PAYLOAD_TOO_LARGE)?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
+    if !hook_tokens::allowed(&path, &json, &pane) {
+        tracing::warn!("Hook token for {pane} refused on {path}");
+        return Err(axum::http::StatusCode::FORBIDDEN);
+    }
+    let req = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
+    Ok(next.run(req).await)
 }
 
 pub fn api_router(adapters: ApiState, auth_token: Arc<String>) -> Router {
+    let auth = AuthState {
+        token: auth_token,
+        hook_tokens: adapters.hook_tokens.clone(),
+    };
     let protected = Router::new()
         .route("/rpc", post(handle_rpc))
         .route("/api/status", post(handle_status))
-        .route_layer(axum::middleware::from_fn_with_state(
-            auth_token,
-            auth_middleware,
-        ))
+        .route_layer(axum::middleware::from_fn_with_state(auth, auth_middleware))
         .with_state(adapters);
 
     Router::new().merge(protected)
@@ -156,6 +187,91 @@ mod tests {
             call(Some("Bearer secret-token-123")).await,
             axum::http::StatusCode::OK
         );
+    }
+
+    #[tokio::test]
+    async fn test_hook_token_reaches_only_its_own_pane() {
+        use axum::http::StatusCode;
+        use tower::ServiceExt;
+
+        let state = ApiState::new(Vec::new(), 0);
+        let send = |auth: String, uri: &'static str, body: String| {
+            let router = api_router(state.clone(), Arc::new("daemon".into()));
+            async move {
+                let req = axum::http::Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("content-type", "application/json")
+                    .header("Authorization", format!("Bearer {auth}"))
+                    .body(axum::body::Body::from(body))
+                    .unwrap();
+                let res = router.oneshot(req).await.unwrap();
+                let status = res.status();
+                let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                (
+                    status,
+                    serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+                )
+            }
+        };
+        let rpc = |method: &str, pane: &str| {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{"pane_id":"{pane}","tool":"Bash","line":"ls"}}}}"#
+            )
+        };
+        let status = |pane: &str| format!(r#"{{"pane_id":"{pane}","state":"working"}}"#);
+
+        let (code, minted) = send("daemon".into(), "/rpc", rpc("hook/token", "%7")).await;
+        assert_eq!(code, StatusCode::OK);
+        let hook = minted["result"]["token"].as_str().unwrap().to_string();
+
+        // Its own pane: status and held prompts get through.
+        assert_eq!(
+            send(hook.clone(), "/api/status", status("%7")).await.0,
+            StatusCode::OK
+        );
+        let (code, held) = send(hook.clone(), "/rpc", rpc("approval/hold", "%7")).await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(held.get("result").is_some(), "{held}");
+
+        // Anything else is refused before it runs.
+        assert_eq!(
+            send(hook.clone(), "/api/status", status("%8")).await.0,
+            StatusCode::FORBIDDEN
+        );
+        for method in ["approval/hold", "queue/push", "agentState/update"] {
+            let pane = if method == "approval/hold" {
+                "%8"
+            } else {
+                "%7"
+            };
+            assert_eq!(
+                send(hook.clone(), "/rpc", rpc(method, pane)).await.0,
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert_eq!(
+            send(hook.clone(), "/rpc", rpc("hook/token", "%7")).await.0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            send(hook.clone(), "/rpc", "not json".into()).await.0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            send("guess".into(), "/api/status", status("%7")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+
+        // The daemon token still reaches everything, and a bad pane id mints nothing.
+        assert_eq!(
+            send("daemon".into(), "/api/status", status("%8")).await.0,
+            StatusCode::OK
+        );
+        let (_, bad) = send("daemon".into(), "/rpc", rpc("hook/token", "api:1")).await;
+        assert_eq!(bad["error"]["code"], -32602);
     }
 
     #[test]

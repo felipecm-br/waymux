@@ -314,6 +314,18 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
                 super::approvals::hold(state, &p.pane_id, &p.tool, &p.line).await;
             Ok(json!({ "decision": decision, "reason": reason }))
         }
+        // Daemon token only: a hook token cannot reach this method (`super::hook_tokens::allowed`).
+        "hook/token" => {
+            let p: QueueListParams = lenient(params)?;
+            let pane = p.pane_id.unwrap_or_default();
+            match state.hook_tokens.mint(&pane) {
+                Some(token) => Ok(json!({ "token": token, "pane_id": pane })),
+                None => Err(RpcError::new(
+                    INVALID_PARAMS,
+                    "pane_id must be a tmux pane id (%N)",
+                )),
+            }
+        }
         "approval/get" => {
             let p: QueueListParams = lenient(params)?;
             match p.pane_id {

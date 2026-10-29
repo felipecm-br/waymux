@@ -62,15 +62,19 @@ fn write_token_file(token_path: &std::path::Path, token: &str) -> anyhow::Result
     Ok(())
 }
 
-pub fn generate_and_save_token_to(token_path: &std::path::Path) -> anyhow::Result<String> {
+/// 128 random bits as hex, from `/dev/urandom`.
+pub fn random_token() -> std::io::Result<String> {
     let mut bytes = [0u8; 16];
     let mut file = fs::File::open("/dev/urandom")?;
     file.read_exact(&mut bytes)?;
-
-    let token = bytes.iter().fold(String::with_capacity(64), |mut hex, b| {
+    Ok(bytes.iter().fold(String::with_capacity(32), |mut hex, b| {
         let _ = write!(hex, "{b:02x}");
         hex
-    });
+    }))
+}
+
+pub fn generate_and_save_token_to(token_path: &std::path::Path) -> anyhow::Result<String> {
+    let token = random_token()?;
 
     write_token_file(token_path, &token)?;
     tracing::info!("Generated session token at {}", token_path.display());

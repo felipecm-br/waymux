@@ -105,6 +105,12 @@ const COMMANDS: &[CommandSpec] = &[
         plumbing: false,
     },
     CommandSpec {
+        name: "hook-token",
+        usage: "hook-token <pane_id>",
+        about: "Print a token for a sandboxed agent's hooks, limited to that pane",
+        plumbing: true,
+    },
+    CommandSpec {
         name: "checkpoint",
         usage: "checkpoint <list | diff <n> | restore <n> [--force]> [-w <pane>]",
         about: "List, diff or restore the work tree an agent turn left",
@@ -306,6 +312,7 @@ pub fn entry() -> anyhow::Result<()> {
         "status" => Some(rpc_client::status_cli()),
         "list" => Some(rpc_client::list_agents_cli()),
         "dismiss" => Some(rpc_client::dismiss_pane_cli(&args[2..])),
+        "hook-token" => Some(rpc_client::hook_token_cli(&args[2..])),
         "cockpit" => Some(cockpit::run_cockpit(&args[2..])),
         "cockpit-items" => Some(cockpit::items::run_cli(&args[2..])),
         "cockpit-preview" => Some(cockpit::preview::run_cli(&args[2..])),
