@@ -322,6 +322,24 @@ pub fn hook_token_cli(args: &[String]) -> i32 {
     }
 }
 
+/// `waymux phone-alert`: sends a test alert to the `[phone] ntfy` topic.
+pub fn phone_alert_cli() -> i32 {
+    match rpc_call("phone/alert", &serde_json::json!({}), 15000) {
+        Ok(_) => {
+            println!("Sent; the phone should show it within seconds.");
+            0
+        }
+        Err(CallError::Rejected(reason)) => {
+            eprintln!("waymux phone-alert: {reason}");
+            1
+        }
+        Err(CallError::Unreachable) => {
+            eprintln!("waymux phone-alert: the daemon is not running");
+            1
+        }
+    }
+}
+
 /// `waymux phone-token [--rotate] [--url]`: the phone surface's token, or with `--url` the link
 /// that pairs a phone (`https://<tailscale name>/m#t=<token>`; the fragment never reaches a server).
 pub fn phone_token_cli(args: &[String]) -> i32 {
@@ -346,17 +364,7 @@ pub fn phone_token_cli(args: &[String]) -> i32 {
         println!("{token}");
         return 0;
     }
-    let host = std::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        .ok()
-        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
-        .and_then(|v| {
-            v["Self"]["DNSName"]
-                .as_str()
-                .map(|n| n.trim_end_matches('.').to_string())
-        });
-    if let Some(host) = host {
+    if let Some(host) = crate::api::phone::tailscale_host() {
         println!("https://{host}/m#t={token}");
         eprintln!(
             "Serve the daemon on the tailnet first: tailscale serve --bg {}",

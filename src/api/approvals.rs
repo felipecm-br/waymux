@@ -129,6 +129,7 @@ pub async fn hold(
     } else {
         Vec::new()
     };
+    let risky = !rules.is_empty();
     let (tx, rx) = oneshot::channel();
     {
         let mut held = state.approvals.lock().await;
@@ -146,6 +147,15 @@ pub async fn hold(
         {
             let _ = old_tx.send(None);
         }
+    }
+    if let Some(phone) = state.settings().phone {
+        tokio::spawn(super::phone::alert_if_still_held(
+            state.clone(),
+            pane_id.to_string(),
+            id,
+            risky,
+            phone,
+        ));
     }
     let wait = std::time::Duration::from_secs(cfg.hold_secs());
     let outcome = tokio::time::timeout(wait, rx).await;

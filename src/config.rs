@@ -64,6 +64,24 @@ pub struct CheckpointsConfig {
     pub keep: Option<usize>,
 }
 
+/// `[phone]`: an ntfy alert when a held prompt is still unanswered after `alert_after_seconds`.
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PhoneConfig {
+    /// ntfy topic URL, `https://ntfy.sh/<topic>`; the topic name is the only secret.
+    pub ntfy: Option<String>,
+    /// How long a prompt stays held before the alert (5 to 120 s, default 15).
+    pub alert_after_seconds: Option<u64>,
+    /// The page the alert opens; default `https://<tailscale name>/m`.
+    pub url: Option<String>,
+}
+
+impl PhoneConfig {
+    pub fn alert_after_secs(&self) -> u64 {
+        self.alert_after_seconds.unwrap_or(15).clamp(5, 120)
+    }
+}
+
 impl ApprovalsConfig {
     pub fn hold_secs(&self) -> u64 {
         self.hold_seconds.unwrap_or(120).clamp(10, 300)
@@ -86,6 +104,8 @@ pub struct Config {
     pub sound: Option<SoundConfig>,
     /// Hook-held approval settings (`[approvals]`).
     pub approvals: Option<ApprovalsConfig>,
+    /// Phone alerts for held prompts (`[phone]`).
+    pub phone: Option<PhoneConfig>,
     /// Program/agent name -> Nerd Font glyph, merged over the built-ins in `icons`.
     pub icons: Option<HashMap<String, String>>,
     /// Program run as `<hook> <event> <pane> <extra>` on `agent_question`, `human_reply` and
@@ -124,6 +144,7 @@ impl Default for Config {
                 error: None,
             }),
             approvals: None,
+            phone: None,
             icons: None,
             flow_log_hook: None,
             keylog: false,

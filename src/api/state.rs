@@ -68,6 +68,8 @@ pub struct Settings {
     pub flow_log_hook: Option<Arc<str>>,
     /// `[approvals]`; `None` holds nothing.
     pub approvals: Option<crate::config::ApprovalsConfig>,
+    /// `[phone]` with an ntfy topic; `None` sends no alert.
+    pub phone: Option<crate::config::PhoneConfig>,
     /// Checkpoints kept per pane; `None` takes none.
     pub checkpoint_keep: Option<usize>,
 }
@@ -81,6 +83,7 @@ impl Settings {
                 .as_deref()
                 .map(|hook| Arc::from(crate::sys::expand_home(hook))),
             approvals: config.approvals.clone().filter(|a| a.enabled),
+            phone: config.phone.clone().filter(|p| p.ntfy.is_some()),
             checkpoint_keep: match &config.checkpoints {
                 None => Some(crate::checkpoint::DEFAULT_KEEP),
                 Some(c) if c.enabled => Some(
@@ -104,6 +107,7 @@ impl ApiState {
                 idle_debounce_ms,
                 flow_log_hook: None,
                 approvals: None,
+                phone: None,
                 checkpoint_keep: None,
             })),
             pane_states: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),

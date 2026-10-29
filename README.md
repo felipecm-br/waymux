@@ -101,6 +101,8 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
 | `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
 | `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
+| `waymux phone-token [--rotate] [--url]` | Print the phone page's token, the link that pairs a phone, or replace it to unpair every phone (see [Phone](#phone)) |
+| `waymux phone-alert` | Send a test alert to the `[phone]` ntfy topic |
 | `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
 | `waymux init <--tmux\|--systemd\|--hooks>` | Print the tmux plugin line, the systemd unit, or a Claude Code hooks block |
 | `waymux doctor` | Check the setup and print a fix for each gap |
@@ -251,6 +253,21 @@ Blocking alerts (permission, question, stalled, error) within 1.5 s of each othe
 A typed prompt stays at the head until the pane shows `working`. One the agent does not take within 5 s is marked `stalled`, never typed again, and announced with a tmux message; it holds the prompts behind it until the pane next works or `waymux queue rm <pane> <id>` drops it. A queue holds 8 prompts of at most 16 KiB each (`queue_full`, `too_large`), lives in daemon memory only, and is dropped when the pane closes.
 
 Before queuing, invisible characters (Unicode tags, bidi controls, zero-width spaces) are removed, and a prompt over 12 KB is written to `$XDG_RUNTIME_DIR/waymux/paste/` (`0600`, removed after 24 h) and replaced by `[Pasted text: <path>, N lines]` for the agent to read. Without a daemon, the prompt is typed directly unless the hook last saw the agent working or on a prompt.
+
+### Phone
+
+The daemon serves a page at `/m` for a phone on your tailnet: every agent with its state, age and recap, held prompts first, answered with **Allow** or **Deny** (a call matching a [risk rule](#risk-rules) asks to confirm). Serve the daemon with `tailscale serve --bg 4040`, then open the link `waymux phone-token --url` prints. The page reads its token from the URL fragment, which a browser never sends to a server, and keeps it in local storage. A phone token reaches `phone/snapshot` and `approval/answer` only (403 otherwise); it is saved `0600` in `$XDG_STATE_HOME/waymux/phone-token`, and `waymux phone-token --rotate` unpairs every phone.
+
+With an [ntfy](https://ntfy.sh) topic in `[phone]`, a prompt still held after `alert_after_seconds` (5 to 120, default 15), so one you did not answer at the desk, sends an alert that names the window (`api:2 build waits for you`, plus `(risky call)` when a rule matched) and opens `/m` when tapped:
+
+```toml
+[phone]
+ntfy = "https://ntfy.sh/waymux-<random>"   # subscribe to the same topic in the ntfy app
+# alert_after_seconds = 15
+# url = "https://host.tailnet.ts.net/m"    # default: this machine's Tailscale name
+```
+
+The alert never carries the command: it passes through the ntfy server, and anyone who knows the topic can read it, so pick a long random name (`openssl rand -hex 12`) or run ntfy on your tailnet. `waymux phone-alert` sends a test alert. The topic URL reaches `curl` on stdin, not in its arguments. One alert per held prompt; none when the hold ends first.
 
 ---
 

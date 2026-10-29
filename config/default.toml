@@ -18,6 +18,11 @@ log_level = "info"
 # enabled = true
 # hold_seconds = 120
 
+# Phone alert when a held prompt stays unanswered (README "Phone"); the topic name is a secret.
+# [phone]
+# ntfy = "https://ntfy.sh/waymux-<random>"
+# alert_after_seconds = 15
+
 # Delay in milliseconds before sending the 'idle' state.
 # This debouncing prevents status icon flickering when the AI issues tool calls in rapid succession.
 idle_debounce_ms = 0

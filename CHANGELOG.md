@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Phone alerts for held prompts (`src/api/phone.rs`, `src/api/approvals.rs`, `[phone]`, `waymux phone-alert`)**: with `[phone] ntfy` set to an ntfy topic, a prompt still held after `alert_after_seconds` (5 to 120 s, default 15) sends a high-priority alert naming the window (`api:2 build waits for you`, `(risky call)` when a rule matched); tapping it opens `/m`. No alert when the hold ends first, and the alert never carries the command, since it passes through the ntfy server. The topic URL reaches `curl` on stdin, never its arguments. `waymux phone-alert` sends a test alert.
+
 ## [0.6.0] - 2026-10-29
 
 - **Hook tokens survive a daemon restart (`src/api/hook_tokens.rs`)**: they lived in daemon memory, so restarting the daemon (an upgrade, for one) cut every jailed agent already running off from state, held approvals and checkpoints until it was launched again. They are now saved 0600 in `$XDG_STATE_HOME/waymux/hook-tokens` with the tmux server's PID; a different tmux server numbers its panes from `%0` again, so a file written for another one is ignored.

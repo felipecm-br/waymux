@@ -337,6 +337,19 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
                 .map(|token| json!({ "token": token }))
                 .ok_or_else(|| RpcError::new(INTERNAL_ERROR, "cannot save the phone token"))
         }
+        // Daemon token only, like `phone/token`.
+        "phone/alert" => {
+            let Some(cfg) = state.settings().phone else {
+                return Err(RpcError::new(
+                    INVALID_PARAMS,
+                    "no [phone] ntfy in the config",
+                ));
+            };
+            super::phone::send_alert(&cfg, "Test alert from waymux")
+                .await
+                .map(|()| json!({ "sent": true }))
+                .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))
+        }
         "approval/get" => {
             let p: QueueListParams = lenient(params)?;
             match p.pane_id {
