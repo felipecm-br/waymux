@@ -225,7 +225,14 @@ pub fn rpc_call(
     val.get("result").cloned().ok_or(CallError::Unreachable)
 }
 
-pub fn post_agent_status(pane_id: &str, state: &str, message: Option<&str>) -> bool {
+/// Posts the pane's state; `session` (`(agent, id)`) also lets the daemon tag the pane for
+/// `cockpit restore`.
+pub fn post_agent_status_with_session(
+    pane_id: &str,
+    state: &str,
+    message: Option<&str>,
+    session: Option<(&str, &str)>,
+) -> bool {
     let token = read_token();
     let now_ms = crate::sys::unix_ms();
 
@@ -234,6 +241,8 @@ pub fn post_agent_status(pane_id: &str, state: &str, message: Option<&str>) -> b
         "state": state,
         "message": message,
         "timestamp": now_ms,
+        "agent": session.map(|(agent, _)| agent),
+        "session": session.map(|(_, id)| id),
     });
 
     matches!(

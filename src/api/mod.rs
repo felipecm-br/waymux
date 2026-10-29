@@ -24,6 +24,9 @@ pub struct StatusRequest {
     pub state: String,
     pub message: Option<String>,
     pub timestamp: Option<u64>,
+    /// The agent's own session id (`agent` names the harness), kept on the pane so
+    /// `cockpit restore` can resume the conversation after a reboot.
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +48,9 @@ async fn handle_status(
                 timestamp: payload.timestamp,
             };
             dispatch_update(&adapters, update).await;
+            if let (Some(agent), Some(session)) = (&payload.agent, &payload.session) {
+                tag_session(&payload.pane_id, agent, session).await;
+            }
             Ok(Json(StatusResponse { success: true }))
         }
         Err(err_msg) => Err((
@@ -55,6 +61,30 @@ async fn handle_status(
             })),
         )),
     }
+}
+
+/// Harnesses whose sessions `cockpit restore` knows how to resume.
+const RESUMABLE: [&str; 2] = ["claude", "codex"];
+
+/// A session id that is safe to type back into a shell: a UUID or similar, nothing else.
+fn valid_session(id: &str) -> bool {
+    (8..=64).contains(&id.len())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Sets the pane option `@ai_session` to `agent:id`. The daemon sets it rather than the hook
+/// because a jailed hook cannot reach tmux; a hook token can only name its own pane.
+async fn tag_session(pane: &str, agent: &str, id: &str) {
+    if !hook_tokens::valid_pane(pane) || !RESUMABLE.contains(&agent) || !valid_session(id) {
+        return;
+    }
+    let _ = crate::tmux_cmd::async_command()
+        .args(["set-option", "-p", "-t", pane, "@ai_session"])
+        .arg(format!("{agent}:{id}"))
+        .output()
+        .await;
 }
 
 /// Compares without an early exit, so response time does not reveal how much of a
@@ -183,6 +213,22 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_valid_session_takes_only_what_is_safe_to_type() {
+        assert!(super::valid_session("0d5f3c1e-8a2b-4c6d-9e0f-1a2b3c4d5e6f"));
+        assert!(super::valid_session("019a2b3c_session"));
+        for id in [
+            "",
+            "short",
+            "a b c d e f",
+            "id;rm -rf ~",
+            "$(reboot)xx",
+            &"x".repeat(65),
+        ] {
+            assert!(!super::valid_session(id), "{id}");
+        }
+    }
+
     use super::*;
 
     #[tokio::test]

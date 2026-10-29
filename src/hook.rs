@@ -1,6 +1,6 @@
 use crate::icons::{self, Registry};
 use crate::inject::sanitize_workspace_key;
-use crate::rpc_client::{http_get_json, http_post_json, post_agent_status};
+use crate::rpc_client::{http_get_json, http_post_json, post_agent_status_with_session};
 use crate::tmux_cmd::{tmux_out, tmux_status};
 use std::fs;
 use std::io::{self, IsTerminal, Read};
@@ -386,11 +386,20 @@ fn recall_pane_tool(pane_id: &str) -> Option<String> {
 }
 
 fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
+    send_acp_state_with_session(pane_id, state, message, None);
+}
+
+fn send_acp_state_with_session(
+    pane_id: &str,
+    state: &str,
+    message: Option<&str>,
+    session: Option<(&str, &str)>,
+) {
     if pane_id.is_empty() {
         return;
     }
     write_pane_state_file(pane_id, state);
-    if !post_agent_status(pane_id, state, message) && state == "idle" {
+    if !post_agent_status_with_session(pane_id, state, message, session) && state == "idle" {
         let _ = Command::new("ai-sound-notify")
             .arg("response")
             .stdin(Stdio::null())
@@ -398,6 +407,18 @@ fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
             .stderr(Stdio::null())
             .spawn();
     }
+}
+
+/// The harness and session id to resume this conversation with, for the hinted agents
+/// `cockpit restore` can resume. Devin imports Claude's hooks with the `claude` hint, so the
+/// restore side also checks how the pane was launched.
+fn session_of<'a>(
+    ctx: &'a serde_json::Value,
+    agent_hint: Option<&'a str>,
+) -> Option<(&'a str, &'a str)> {
+    let agent = agent_hint.filter(|a| matches!(*a, "claude" | "codex"))?;
+    let id = ctx.get("session_id").and_then(|v| v.as_str())?;
+    Some((agent, id))
 }
 
 /// `SessionStart` fires before any turn, except `compact`, which can land mid-turn.
@@ -492,13 +513,14 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
             if let Some(title) = extract_session_title(&ctx) {
                 set_ai_agent_title(&tmux_pane, Some(&title));
             }
+            let session = session_of(&ctx, agent_hint);
             if event_type != "SessionStart" {
-                send_acp_state(&tmux_pane, "working", None);
+                send_acp_state_with_session(&tmux_pane, "working", None, session);
             } else if session_start_awaits_prompt(&ctx) && !tmux_pane.is_empty() {
                 // A fresh, resumed or cleared session sits at the prompt: no Stop follows until
                 // a turn runs, so "working" would spin forever. Skip the offline chime fallback.
                 write_pane_state_file(&tmux_pane, "idle");
-                post_agent_status(&tmux_pane, "idle", None);
+                post_agent_status_with_session(&tmux_pane, "idle", None, session);
             }
         }
         "PreToolUse" => {
@@ -699,6 +721,18 @@ pub fn run_cli(args: &[String]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_session_of_only_for_resumable_hints() {
+        let ctx = serde_json::json!({ "session_id": "0d5f3c1e-8a2b" });
+        assert_eq!(
+            session_of(&ctx, Some("claude")),
+            Some(("claude", "0d5f3c1e-8a2b"))
+        );
+        assert_eq!(session_of(&ctx, Some("agy")), None);
+        assert_eq!(session_of(&ctx, None), None);
+        assert_eq!(session_of(&serde_json::json!({}), Some("claude")), None);
+    }
+
     use super::*;
 
     #[test]
