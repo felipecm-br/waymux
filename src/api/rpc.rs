@@ -342,7 +342,7 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
             let Some(cfg) = state.settings().phone else {
                 return Err(RpcError::new(
                     INVALID_PARAMS,
-                    "no [phone] ntfy in the config",
+                    "no [phone] ntfy or ntfy_file in the config",
                 ));
             };
             super::phone::send_alert(&cfg, "Test alert from waymux")

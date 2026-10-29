@@ -70,6 +70,8 @@ pub struct CheckpointsConfig {
 pub struct PhoneConfig {
     /// ntfy topic URL, `https://ntfy.sh/<topic>`; the topic name is the only secret.
     pub ntfy: Option<String>,
+    /// A file holding the topic URL instead, for a config kept in a public repository.
+    pub ntfy_file: Option<String>,
     /// How long a prompt stays held before the alert (5 to 120 s, default 15).
     pub alert_after_seconds: Option<u64>,
     /// The page the alert opens; default `https://<tailscale name>/m`.
@@ -79,6 +81,22 @@ pub struct PhoneConfig {
 impl PhoneConfig {
     pub fn alert_after_secs(&self) -> u64 {
         self.alert_after_seconds.unwrap_or(15).clamp(5, 120)
+    }
+
+    pub fn has_topic(&self) -> bool {
+        self.ntfy.is_some() || self.ntfy_file.is_some()
+    }
+
+    /// The topic URL: `ntfy`, else the first line of `ntfy_file` (a leading `~/` expands).
+    pub fn topic(&self) -> Option<String> {
+        self.ntfy.clone().or_else(|| {
+            let path = crate::sys::expand_home(self.ntfy_file.as_deref()?);
+            let text = std::fs::read_to_string(path).ok()?;
+            text.lines()
+                .next()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+        })
     }
 }
 
@@ -232,6 +250,30 @@ mod tests {
         let err = Config::resolve(path.to_str()).unwrap_err().to_string();
         let _ = std::fs::remove_dir_all(&dir);
         assert!(err.contains("config.toml"), "{err}");
+    }
+
+    #[test]
+    fn test_phone_topic_from_the_config_or_a_file() {
+        let dir = std::env::temp_dir().join(format!("waymux-ntfy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("ntfy-topic");
+        std::fs::write(&file, "  https://ntfy.sh/secret  \nignored\n").unwrap();
+        let from_file = PhoneConfig {
+            ntfy_file: Some(file.to_string_lossy().into_owned()),
+            ..PhoneConfig::default()
+        };
+        assert!(from_file.has_topic());
+        assert_eq!(from_file.topic().as_deref(), Some("https://ntfy.sh/secret"));
+        let inline = PhoneConfig {
+            ntfy: Some("https://ntfy.sh/inline".into()),
+            ..from_file.clone()
+        };
+        assert_eq!(inline.topic().as_deref(), Some("https://ntfy.sh/inline"));
+        std::fs::write(&file, "\n").unwrap();
+        assert_eq!(from_file.topic(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(!PhoneConfig::default().has_topic());
+        assert_eq!(PhoneConfig::default().alert_after_secs(), 15);
     }
 
     #[test]

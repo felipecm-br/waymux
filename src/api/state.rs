@@ -83,7 +83,10 @@ impl Settings {
                 .as_deref()
                 .map(|hook| Arc::from(crate::sys::expand_home(hook))),
             approvals: config.approvals.clone().filter(|a| a.enabled),
-            phone: config.phone.clone().filter(|p| p.ntfy.is_some()),
+            phone: config
+                .phone
+                .clone()
+                .filter(crate::config::PhoneConfig::has_topic),
             checkpoint_keep: match &config.checkpoints {
                 None => Some(crate::checkpoint::DEFAULT_KEEP),
                 Some(c) if c.enabled => Some(

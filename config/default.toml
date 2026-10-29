@@ -21,6 +21,7 @@ log_level = "info"
 # Phone alert when a held prompt stays unanswered (README "Phone"); the topic name is a secret.
 # [phone]
 # ntfy = "https://ntfy.sh/waymux-<random>"
+# ntfy_file = "~/.local/state/waymux/ntfy-topic"   # instead of ntfy, for a public config
 # alert_after_seconds = 15
 
 # Delay in milliseconds before sending the 'idle' state.

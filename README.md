@@ -267,7 +267,7 @@ ntfy = "https://ntfy.sh/waymux-<random>"   # subscribe to the same topic in the 
 # url = "https://host.tailnet.ts.net/m"    # default: this machine's Tailscale name
 ```
 
-The alert never carries the command: it passes through the ntfy server, and anyone who knows the topic can read it, so pick a long random name (`openssl rand -hex 12`) or run ntfy on your tailnet. `waymux phone-alert` sends a test alert. The topic URL reaches `curl` on stdin, not in its arguments. One alert per held prompt; none when the hold ends first.
+The alert never carries the command: it passes through the ntfy server, and anyone who knows the topic can read it, so pick a long random name (`openssl rand -hex 12`) or run ntfy on your tailnet. When the config lives in a public repository, set `ntfy_file = "~/.local/state/waymux/ntfy-topic"` instead of `ntfy`: the first line of that file is the topic URL, read at each alert. `waymux phone-alert` sends a test alert. The topic URL reaches `curl` on stdin, not in its arguments. One alert per held prompt; none when the hold ends first.
 
 ---
 

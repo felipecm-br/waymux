@@ -167,8 +167,11 @@ pub async fn alert_if_still_held(
 /// users cannot read it in the process list.
 pub async fn send_alert(cfg: &crate::config::PhoneConfig, text: &str) -> anyhow::Result<()> {
     use tokio::io::AsyncWriteExt;
-    let topic = cfg.ntfy.as_deref().unwrap_or_default();
-    anyhow::ensure!(plain_url(topic), "[phone] ntfy must be an http(s) URL");
+    let topic = cfg.topic().unwrap_or_default();
+    anyhow::ensure!(
+        plain_url(&topic),
+        "[phone] ntfy (or the first line of ntfy_file) must be an http(s) URL"
+    );
     let page = match &cfg.url {
         Some(url) => Some(url.clone()),
         None => tokio::task::spawn_blocking(tailscale_host)
