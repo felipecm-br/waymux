@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>waymux agents</title>
+<style>
+  /* ds-allow-hardcode: the state colors mirror waymux's built-in palette (src/status_palette.rs),
+     contrast-checked against Omarchy backgrounds; the page has no other design system. */
+  :root {
+    --bg: #11131a; --surface: #1a1d27; --text: #d6dbe5; --muted: #8b93a5; --line: #2a2f3d;
+    --permission: #ff9e57; --question: #f9e2af; --stalled: #f5c2e7; --error: #ff6b7a;
+    --busy: #89b4fa; --idle: #8aa4b8; --accent: #94e2d5;
+    --space-1: 6px; --space-2: 8px; --space-3: 10px; --space-4: 12px; --space-5: 16px; --space-6: 24px; --space-7: 40px;
+    --radius-s: 6px; --radius-m: 8px; --radius-l: 10px;
+    --dot: 10px; --tap: 44px; --border: 1px; --disabled: .5;
+    --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif; --font-mono: ui-monospace, "JetBrains Mono", monospace;
+    --text-s: 13px; --text-m: 14px; --text-l: 16px; --text-xl: 18px; --leading: 1.4; --leading-code: 1.35;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9; --surface: #ffffff; --text: #1d2330; --muted: #5b6475; --line: #dde1e8;
+      --permission: #c2410c; --question: #7c6a00; --stalled: #a21caf; --error: #be123c;
+      --busy: #2563eb; --idle: #4f6b5f; --accent: #0f766e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: var(--text-l)/var(--leading) var(--font-ui);
+    padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-5) var(--space-6);
+  }
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: var(--space-4); }
+  h1 { font-size: var(--text-xl); margin: 0; }
+  #status { color: var(--muted); font-size: var(--text-s); }
+  .agent { background: var(--surface); border: var(--border) solid var(--line); border-radius: var(--radius-l); padding: var(--space-4); margin-bottom: var(--space-3); }
+  .row { display: flex; align-items: center; gap: var(--space-3); }
+  .dot { width: var(--dot); height: var(--dot); border-radius: 50%; flex: none; }
+  .label { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .age { color: var(--muted); font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+  .detail { color: var(--muted); font-size: var(--text-m); margin-top: var(--space-1); overflow-wrap: anywhere; }
+  .held { margin-top: var(--space-3); border-top: var(--border) solid var(--line); padding-top: var(--space-3); }
+  .call { font: var(--text-m)/var(--leading-code) var(--font-mono); background: var(--bg); border-radius: var(--radius-s); padding: var(--space-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+  .risky { color: var(--error); font-weight: 600; font-size: var(--text-m); margin-top: var(--space-2); }
+  .actions { display: flex; gap: var(--space-3); margin-top: var(--space-3); }
+  button { flex: 1; min-height: var(--tap); border-radius: var(--radius-m); font: 600 var(--text-l) var(--font-ui); border: var(--border) solid var(--line); background: var(--surface); color: var(--text); }
+  button.allow { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: var(--disabled); }
+  #empty, #pair { color: var(--muted); text-align: center; margin-top: var(--space-7); }
+  code { font-family: var(--font-mono); }
+</style>
+</head>
+<body>
+<header><h1>Agents</h1><span id="status" aria-live="polite"></span></header>
+<p id="pair" hidden>Not paired. On the computer run <code>waymux phone-token --url</code> and open the link it prints.</p>
+<main id="list" aria-live="polite"></main>
+<p id="empty" hidden>No agents.</p>
+<script>
+"use strict";
+const KEY = "waymux-phone-token";
+const hash = new URLSearchParams(location.hash.slice(1));
+if (hash.get("t")) {
+  try { localStorage.setItem(KEY, hash.get("t")); } catch (_) {}
+  history.replaceState(null, "", location.pathname);
+}
+let token = null;
+try { token = localStorage.getItem(KEY); } catch (_) {}
+const $ = (id) => document.getElementById(id);
+const color = (s, held) => held ? "var(--permission)" : ({
+  permission: "var(--permission)", question: "var(--question)", awaiting_input: "var(--question)",
+  stalled: "var(--stalled)", error: "var(--error)", working: "var(--busy)",
+})[s] || "var(--idle)";
+
+async function rpc(method, params) {
+  const res = await fetch("rpc", {
+    method: "POST",
+    headers: { "content-type": "application/json", "authorization": "Bearer " + token },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params || {} }),
+  });
+  if (res.status === 401 || res.status === 403) throw new Error("unpaired");
+  const body = await res.json();
+  if (body.error) throw new Error(body.error.message);
+  return body.result;
+}
+
+function age(ms, now) {
+  if (!ms) return "";
+  const m = Math.floor((now - ms) / 60000);
+  return m < 1 ? "now" : m < 60 ? m + "m" : Math.floor(m / 60) + "h";
+}
+
+// Window names often carry Nerd Font icons (private-use code points) that a phone draws as boxes.
+const plain = (s) => (s || "").replace(/[\uE000-\uF8FF]|[\u{F0000}-\u{10FFFD}]/gu, "").replace(/\s+/g, " ").trim();
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+async function answer(a, decision, buttons) {
+  const h = a.held;
+  let risk = [];
+  if (decision === "allow" && h.rules && h.rules.length) {
+    if (!confirm("Risky call (" + h.rules.join(", ") + "):\n\n" + h.line + "\n\nAllow it?")) return;
+    risk = h.rules;
+  }
+  buttons.forEach((b) => (b.disabled = true));
+  try {
+    await rpc("approval/answer", { pane_id: a.pane_id, id: h.id, decision, line: h.line, risk_ack: risk });
+    $("status").textContent = decision === "allow" ? "allowed" : "denied";
+  } catch (e) {
+    $("status").textContent = "not sent: " + e.message;
+  }
+  refresh();
+}
+
+function render(snap) {
+  const list = $("list");
+  list.replaceChildren();
+  $("empty").hidden = snap.agents.length > 0;
+  for (const a of snap.agents) {
+    const card = el("section", "agent");
+    const row = el("div", "row");
+    const dot = el("span", "dot");
+    dot.style.background = color(a.state, a.held);
+    row.append(dot, el("span", "label", plain(a.label) || a.pane_id), el("span", "age", age(a.changed_at, snap.now)));
+    card.append(row);
+    const what = a.held ? "waits for you" : a.message || a.state;
+    card.append(el("div", "detail", what));
+    if (a.recap && a.recap.turns) {
+      card.append(el("div", "detail", a.recap.turns + " turns · " + (a.recap.commands || 0) + " commands since you looked"));
+    }
+    if (a.held) {
+      const held = el("div", "held");
+      held.append(el("div", "call", a.held.tool + ": " + a.held.line));
+      if (a.held.rules && a.held.rules.length) held.append(el("div", "risky", "risky: " + a.held.rules.join(", ")));
+      const actions = el("div", "actions");
+      const deny = el("button", "deny", "Deny");
+      const allow = el("button", "allow", "Allow");
+      const both = [deny, allow];
+      deny.onclick = () => answer(a, "deny", both);
+      allow.onclick = () => answer(a, "allow", both);
+      actions.append(deny, allow);
+      held.append(actions);
+      card.append(held);
+    }
+    list.append(card);
+  }
+}
+
+let busy = false;
+async function refresh() {
+  if (!token) { $("pair").hidden = false; return; }
+  if (busy || document.hidden) return;
+  busy = true;
+  try {
+    render(await rpc("phone/snapshot"));
+    $("status").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch (e) {
+    if (e.message === "unpaired") { $("pair").hidden = false; $("list").replaceChildren(); }
+    $("status").textContent = "offline";
+  } finally {
+    busy = false;
+  }
+}
+document.addEventListener("visibilitychange", refresh);
+setInterval(refresh, 3000);
+refresh();
+</script>
+</body>
+</html>

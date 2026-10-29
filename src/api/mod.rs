@@ -2,6 +2,7 @@
 
 pub(crate) mod approvals;
 pub mod hook_tokens;
+pub mod phone;
 mod queue;
 mod rpc;
 mod state;
@@ -69,6 +70,15 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 pub struct AuthState {
     token: Arc<String>,
     hook_tokens: Arc<hook_tokens::HookTokens>,
+    phone_token: Arc<phone::PhoneToken>,
+}
+
+/// What a token other than the daemon's may reach.
+enum Scope {
+    /// A sandboxed agent's hooks, for one pane.
+    Hook(String),
+    /// The phone surface: list agents, answer held prompts.
+    Phone,
 }
 
 /// Largest body a hook token may send; a status or a held prompt is far smaller.
@@ -93,12 +103,16 @@ pub async fn auth_middleware(
     if constant_time_eq(bearer.as_bytes(), auth.token.as_bytes()) {
         return Ok(next.run(req).await);
     }
-    let Some(pane) = auth.hook_tokens.pane_of(&bearer) else {
+    let scope = if let Some(pane) = auth.hook_tokens.pane_of(&bearer) {
+        Scope::Hook(pane)
+    } else if auth.phone_token.matches(&bearer) {
+        Scope::Phone
+    } else {
         tracing::warn!("Unauthorized HTTP request to {}", req.uri().path());
         return Err(axum::http::StatusCode::UNAUTHORIZED);
     };
 
-    // A hook token: read the body to check it only touches its own pane, then pass it on.
+    // A scoped token: read the body to check what it asks for, then pass it on.
     let path = req.uri().path().to_string();
     let (parts, body) = req.into_parts();
     let bytes = axum::body::to_bytes(body, HOOK_BODY_LIMIT)
@@ -106,8 +120,12 @@ pub async fn auth_middleware(
         .map_err(|_| axum::http::StatusCode::PAYLOAD_TOO_LARGE)?;
     let json: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
-    if !hook_tokens::allowed(&path, &json, &pane) {
-        tracing::warn!("Hook token for {pane} refused on {path}");
+    let allowed = match &scope {
+        Scope::Hook(pane) => hook_tokens::allowed(&path, &json, pane),
+        Scope::Phone => phone::allowed(&path, &json),
+    };
+    if !allowed {
+        tracing::warn!("Scoped token refused on {path}");
         return Err(axum::http::StatusCode::FORBIDDEN);
     }
     let req = axum::extract::Request::from_parts(parts, axum::body::Body::from(bytes));
@@ -118,6 +136,7 @@ pub fn api_router(adapters: ApiState, auth_token: Arc<String>) -> Router {
     let auth = AuthState {
         token: auth_token,
         hook_tokens: adapters.hook_tokens.clone(),
+        phone_token: adapters.phone_token.clone(),
     };
     let protected = Router::new()
         .route("/rpc", post(handle_rpc))
@@ -125,7 +144,21 @@ pub fn api_router(adapters: ApiState, auth_token: Arc<String>) -> Router {
         .route_layer(axum::middleware::from_fn_with_state(auth, auth_middleware))
         .with_state(adapters);
 
-    Router::new().merge(protected)
+    // The page carries no data; everything it shows comes through /rpc with the phone token.
+    let page = Router::new().route(
+        "/m",
+        axum::routing::get(|| async {
+            (
+                [
+                    (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                    (axum::http::header::CACHE_CONTROL, "no-store"),
+                ],
+                phone::PAGE,
+            )
+        }),
+    );
+
+    Router::new().merge(protected).merge(page)
 }
 
 #[cfg(test)]
@@ -272,6 +305,83 @@ mod tests {
         );
         let (_, bad) = send("daemon".into(), "/rpc", rpc("hook/token", "api:1")).await;
         assert_eq!(bad["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn test_phone_token_reads_and_answers_only() {
+        use axum::http::StatusCode;
+        use tower::ServiceExt;
+
+        let state = ApiState::new(Vec::new(), 0);
+        let send = |auth: Option<String>, method: &'static str, uri: &'static str, body: String| {
+            let router = api_router(state.clone(), Arc::new("daemon".into()));
+            async move {
+                let mut req = axum::http::Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header("content-type", "application/json");
+                if let Some(auth) = auth {
+                    req = req.header("Authorization", format!("Bearer {auth}"));
+                }
+                let res = router
+                    .oneshot(req.body(axum::body::Body::from(body)).unwrap())
+                    .await
+                    .unwrap();
+                let status = res.status();
+                let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                (status, String::from_utf8_lossy(&bytes).into_owned())
+            }
+        };
+        let rpc = |method: &str| {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{"pane_id":"%1","id":1,"decision":"deny","line":"ls","risk_ack":[]}}}}"#
+            )
+        };
+
+        let (code, body) = send(Some("daemon".into()), "POST", "/rpc", rpc("phone/token")).await;
+        assert_eq!(code, StatusCode::OK);
+        let token = serde_json::from_str::<serde_json::Value>(&body).unwrap()["result"]["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (_, again) = send(Some("daemon".into()), "POST", "/rpc", rpc("phone/token")).await;
+        assert!(
+            again.contains(&token),
+            "issuing again keeps the paired token"
+        );
+
+        let (code, body) = send(Some(token.clone()), "POST", "/rpc", rpc("phone/snapshot")).await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(body.contains(r#""agents":[]"#), "{body}");
+        // Reaches the handler: nothing is held, so the answer is refused there, not by auth.
+        let (code, body) = send(Some(token.clone()), "POST", "/rpc", rpc("approval/answer")).await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(body.contains("error"), "{body}");
+
+        for method in [
+            "queue/push",
+            "tmux.send_keys",
+            "phone/token",
+            "hook/token",
+            "agentState/list",
+        ] {
+            let (code, _) = send(Some(token.clone()), "POST", "/rpc", rpc(method)).await;
+            assert_eq!(code, StatusCode::FORBIDDEN, "{method}");
+        }
+        let status = r#"{"pane_id":"%1","state":"idle"}"#.to_string();
+        assert_eq!(
+            send(Some(token.clone()), "POST", "/api/status", status)
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+
+        // The page needs no token and carries no data.
+        let (code, page) = send(None, "GET", "/m", String::new()).await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(page.contains("phone/snapshot") && !page.contains(&token));
     }
 
     #[test]

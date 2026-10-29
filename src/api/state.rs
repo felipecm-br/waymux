@@ -57,6 +57,8 @@ pub struct ApiState {
     pub next_queue_id: Arc<std::sync::atomic::AtomicU64>,
     /// Pane-scoped tokens for hooks in a sandbox (see `super::hook_tokens`).
     pub hook_tokens: Arc<super::hook_tokens::HookTokens>,
+    /// The phone surface's token (see `super::phone`).
+    pub phone_token: Arc<super::phone::PhoneToken>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -113,6 +115,7 @@ impl ApiState {
             activity: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_queue_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             hook_tokens: Arc::default(),
+            phone_token: Arc::default(),
         }
     }
 

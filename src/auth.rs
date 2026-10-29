@@ -32,7 +32,7 @@ pub fn get_legacy_token_path() -> PathBuf {
     }
 }
 
-fn write_token_file(token_path: &std::path::Path, token: &str) -> anyhow::Result<()> {
+pub(crate) fn write_token_file(token_path: &std::path::Path, token: &str) -> anyhow::Result<()> {
     if let Some(parent) = token_path.parent() {
         fs::create_dir_all(parent)?;
         #[cfg(unix)]

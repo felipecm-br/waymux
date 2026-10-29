@@ -322,6 +322,56 @@ pub fn hook_token_cli(args: &[String]) -> i32 {
     }
 }
 
+/// `waymux phone-token [--rotate] [--url]`: the phone surface's token, or with `--url` the link
+/// that pairs a phone (`https://<tailscale name>/m#t=<token>`; the fragment never reaches a server).
+pub fn phone_token_cli(args: &[String]) -> i32 {
+    let rotate = args.iter().any(|a| a == "--rotate");
+    let url = args.iter().any(|a| a == "--url");
+    let token = match rpc_call(
+        "phone/token",
+        &serde_json::json!({ "rotate": rotate }),
+        1000,
+    ) {
+        Ok(result) => result["token"].as_str().unwrap_or_default().to_string(),
+        Err(CallError::Rejected(reason)) => {
+            eprintln!("waymux phone-token: {reason}");
+            return 1;
+        }
+        Err(CallError::Unreachable) => {
+            eprintln!("waymux phone-token: the daemon is not running");
+            return 1;
+        }
+    };
+    if !url {
+        println!("{token}");
+        return 0;
+    }
+    let host = std::process::Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+        .and_then(|v| {
+            v["Self"]["DNSName"]
+                .as_str()
+                .map(|n| n.trim_end_matches('.').to_string())
+        });
+    if let Some(host) = host {
+        println!("https://{host}/m#t={token}");
+        eprintln!(
+            "Serve the daemon on the tailnet first: tailscale serve --bg {}",
+            daemon_port()
+        );
+        0
+    } else {
+        eprintln!(
+            "waymux phone-token: no Tailscale name; open http://<host>:{}/m#t={token} on a trusted network",
+            daemon_port()
+        );
+        1
+    }
+}
+
 pub fn list_agents_cli() -> i32 {
     let states = fetch_agent_states();
     let mut entries: Vec<_> = states.into_iter().collect();

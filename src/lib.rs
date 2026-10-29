@@ -111,6 +111,12 @@ const COMMANDS: &[CommandSpec] = &[
         plumbing: true,
     },
     CommandSpec {
+        name: "phone-token",
+        usage: "phone-token [--rotate] [--url]",
+        about: "Print the phone surface's token, or the link that pairs a phone (/m)",
+        plumbing: false,
+    },
+    CommandSpec {
         name: "checkpoint",
         usage: "checkpoint <list | diff <n> | restore <n> [--force]> [-w <pane>]",
         about: "List, diff or restore the work tree an agent turn left",
@@ -313,6 +319,7 @@ pub fn entry() -> anyhow::Result<()> {
         "list" => Some(rpc_client::list_agents_cli()),
         "dismiss" => Some(rpc_client::dismiss_pane_cli(&args[2..])),
         "hook-token" => Some(rpc_client::hook_token_cli(&args[2..])),
+        "phone-token" => Some(rpc_client::phone_token_cli(&args[2..])),
         "cockpit" => Some(cockpit::run_cockpit(&args[2..])),
         "cockpit-items" => Some(cockpit::items::run_cli(&args[2..])),
         "cockpit-preview" => Some(cockpit::preview::run_cli(&args[2..])),

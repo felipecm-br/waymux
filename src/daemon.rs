@@ -23,7 +23,7 @@ pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<
     let (active_spinner_name, active_spinner) = config.active_spinner();
     tokio::spawn(publish_spinner_name(active_spinner_name));
 
-    let adapters = crate::api::ApiState::new(
+    let mut adapters = crate::api::ApiState::new(
         vec![
             Box::new(TmuxAdapter::new(config.theme.clone(), active_spinner)),
             Box::new(WaybarAdapter::new(config.theme.clone())),
@@ -31,6 +31,7 @@ pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<
         ],
         0,
     );
+    adapters.phone_token = Arc::new(crate::api::phone::PhoneToken::load());
     adapters.reload(&config);
 
     adapters.rehydrate_from_tmux().await;

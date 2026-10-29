@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Phone surface (`src/api/phone.rs`, `src/api/phone.html`, `GET /m`, `phone/snapshot`, `waymux phone-token [--rotate] [--url]`)**: a mobile page lists every agent (label, state, age, recap) with held prompts on top, and answers them with Allow or Deny; a risky call shows its rules and needs a confirmation. The page carries no data; it reads its token from the URL fragment, which a browser never sends to a server. A phone token reaches `phone/snapshot` and `approval/answer` only (403 otherwise): no typing into panes, no queue, no file paths from the client. One token at a time, saved 0600 in `$XDG_STATE_HOME/waymux/phone-token` so pairing survives a restart; `--rotate` unpairs every device. Meant for a tailnet: `tailscale serve --bg 4040`, then open the link `--url` prints. Labels drop Nerd Font icons, which phones draw as boxes.
+
 ## [0.5.0] - 2026-10-29
 
 - **Pane-scoped hook tokens for sandboxed agents (`src/api/hook_tokens.rs`, `src/api/mod.rs`, `hook/token`, `waymux hook-token <pane>`)**: an agent in `ai-jail` cannot read the daemon token, so its hooks never reached the daemon and its pane had no state, held approvals or checkpoints; handing it the daemon token would let it type into every pane through `tmux.*` and `inject`. `waymux hook-token <pane>` (daemon token only) mints a token that reaches `/api/status` and `approval/hold` for that pane and nothing else (403 otherwise, checked before the call runs). Hooks read it from `WAYMUX_HOOK_TOKEN`. Tokens live in daemon memory and are lost on restart.

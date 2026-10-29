@@ -205,6 +205,7 @@ const PARSE_ERROR: i32 = -32700;
 const INVALID_REQUEST: i32 = -32600;
 const INVALID_PARAMS: i32 = -32602;
 const METHOD_NOT_FOUND: i32 = -32601;
+const INTERNAL_ERROR: i32 = -32603;
 const SERVER_ERROR: i32 = -32000;
 
 type RpcResult = Result<Value, RpcError>;
@@ -325,6 +326,16 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
                     "pane_id must be a tmux pane id (%N)",
                 )),
             }
+        }
+        "phone/snapshot" => Ok(super::phone::snapshot(state).await),
+        // Daemon token only (a phone token reaches snapshot and answer, `super::phone::allowed`).
+        "phone/token" => {
+            let rotate = params["rotate"].as_bool().unwrap_or(false);
+            state
+                .phone_token
+                .issue(rotate)
+                .map(|token| json!({ "token": token }))
+                .ok_or_else(|| RpcError::new(INTERNAL_ERROR, "cannot save the phone token"))
         }
         "approval/get" => {
             let p: QueueListParams = lenient(params)?;
