@@ -218,13 +218,26 @@ run_smoke_tests() {
   echo "  Pending notes before send: $note_count"
   [[ "$note_count" == "2" ]]
   waymux review-notes send /home/dev/workspace/api-service api-service 2 "$p_claude"
-  sleep 0.2
-  local captured
-  captured="$(tmux capture-pane -p -t "$p_claude")"
-  echo "$captured" | grep -q "Please review and address the following 2 code review comments"
-  echo "  ✓ Bracketed-paste prompt verified inside claude pane ($p_claude)"
+  local want="Please review and address the following 2 code review comments" captured
+  # The agent waits on a permission prompt: the note is held, never typed into the prompt.
+  sleep 1.5
+  ! tmux capture-pane -p -t "$p_claude" | grep -q "$want"
+  waymux queue ls "$p_claude" | grep -q "$p_claude"
+  echo "  ✓ Note held in the delivery queue while claude waits on a prompt ($p_claude)"
+  # The turn ends: the queue types the note after 1 s at rest.
+  echo '{}' | TMUX_PANE="$p_claude" waymux hook tmux Stop >/dev/null
+  for _ in $(seq 40); do
+    captured="$(tmux capture-pane -p -t "$p_claude")"
+    grep -q "$want" <<<"$captured" && break
+    sleep 0.25
+  done
+  grep -q "$want" <<<"$captured"
+  echo "  ✓ Bracketed-paste prompt delivered once claude was at rest"
 
   echo "[8/8] Verifying guarded agent-action & badge dismissal..."
+  # Back on a permission prompt, older than the 400 ms dwell, for the guarded approve.
+  echo '{"toolCall":{"name":"request_permission"}}' | TMUX_PANE="$p_claude" waymux hook tmux PreToolUse >/dev/null
+  sleep 0.6
   waymux agent-action approve permission "$p_claude"
   waymux dismiss "$p_claude"
   echo "  ✓ Guarded approve & dismiss succeeded"
