@@ -32,6 +32,15 @@ pub fn get_legacy_token_path() -> PathBuf {
     }
 }
 
+/// `$XDG_STATE_HOME/waymux/<name>`, for what must outlive the daemon (tokens it issued).
+pub(crate) fn state_file(name: &str) -> Option<PathBuf> {
+    std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+        .map(|s| s.join("waymux").join(name))
+}
+
 pub(crate) fn write_token_file(token_path: &std::path::Path, token: &str) -> anyhow::Result<()> {
     if let Some(parent) = token_path.parent() {
         fs::create_dir_all(parent)?;

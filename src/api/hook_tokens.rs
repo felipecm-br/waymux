@@ -7,20 +7,67 @@
 //! what a hook does for that pane: report its state (`/api/status`) and hold its permission prompt
 //! (`approval/hold`). The worst an agent can do with its own is misreport its own pane.
 //!
-//! Tokens live in daemon memory: a restarted daemon forgets them, and the jailed agent's hooks fail
-//! silently until it is launched again.
+//! Tokens are saved in `$XDG_STATE_HOME/waymux/hook-tokens` (0600), so a restarted daemon still
+//! knows the jailed agents already running. The file names the tmux server it was written for: a new
+//! server numbers its panes from `%0` again, so its panes would inherit old tokens, and a file from
+//! another server is ignored.
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
+/// `Default` keeps the tokens in memory only (tests); the daemon uses [`HookTokens::load`].
 #[derive(Debug, Default)]
 pub struct HookTokens {
     /// Token → pane. One token per pane: minting again replaces the old one.
     by_token: Mutex<HashMap<String, String>>,
+    path: Option<PathBuf>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    /// `#{pid}` of the tmux server the panes belong to.
+    tmux_pid: String,
+    tokens: HashMap<String, String>,
+}
+
+fn tmux_pid() -> Option<String> {
+    crate::tmux_cmd::tmux_out(&["display-message", "-p", "#{pid}"]).filter(|p| !p.is_empty())
 }
 
 impl HookTokens {
+    /// The tokens saved by an earlier daemon for the running tmux server, if any.
+    pub fn load() -> Self {
+        let path = crate::auth::state_file("hook-tokens");
+        let by_token = path
+            .as_ref()
+            .zip(tmux_pid())
+            .map(|(p, pid)| saved_for(p, &pid))
+            .unwrap_or_default();
+        Self {
+            by_token: Mutex::new(by_token),
+            path,
+        }
+    }
+
+    /// Writes the tokens for the running tmux server; without one there is nothing to keep.
+    fn save(&self, by_token: &HashMap<String, String>) {
+        let (Some(path), Some(pid)) = (&self.path, tmux_pid()) else {
+            return;
+        };
+        let saved = Saved {
+            tmux_pid: pid,
+            tokens: by_token.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&saved)
+            && let Err(e) = crate::auth::write_token_file(path, &json)
+        {
+            tracing::warn!("cannot save hook tokens to {}: {e}", path.display());
+        }
+    }
+
     /// A new token for `pane`, or `None` when `pane` is not a tmux pane id or randomness fails.
     pub fn mint(&self, pane: &str) -> Option<String> {
         if !valid_pane(pane) {
@@ -33,6 +80,7 @@ impl HookTokens {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         by_token.retain(|_, p| p != pane);
         by_token.insert(token.clone(), pane.to_string());
+        self.save(&by_token);
         Some(token)
     }
 
@@ -50,6 +98,21 @@ impl HookTokens {
         }
         found
     }
+}
+
+/// The tokens in `path` when it was written for tmux server `pid`, with every pane id checked.
+fn saved_for(path: &std::path::Path, pid: &str) -> HashMap<String, String> {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Saved>(&s).ok())
+        .filter(|s| s.tmux_pid == pid)
+        .map(|s| {
+            s.tokens
+                .into_iter()
+                .filter(|(t, p)| !t.is_empty() && valid_pane(p))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `%` followed by digits, as tmux names panes.
@@ -83,6 +146,24 @@ mod tests {
         assert_eq!(tokens.pane_of(&first), None);
         assert_eq!(tokens.pane_of(&second).as_deref(), Some("%3"));
         assert_eq!(tokens.pane_of(""), None);
+    }
+
+    #[test]
+    fn test_saved_tokens_hold_only_for_the_same_tmux_server() {
+        let dir = std::env::temp_dir().join(format!("waymux-hook-tokens-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hook-tokens");
+        let saved = json!({ "tmux_pid": "4242",
+                            "tokens": { "abc": "%3", "def": "not-a-pane", "": "%4" } });
+        std::fs::write(&path, saved.to_string()).unwrap();
+
+        let same = saved_for(&path, "4242");
+        assert_eq!(same.len(), 1);
+        assert_eq!(same["abc"], "%3");
+        assert!(saved_for(&path, "4243").is_empty());
+        std::fs::write(&path, "not json").unwrap();
+        assert!(saved_for(&path, "4242").is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -27,18 +27,10 @@ pub struct PhoneToken {
     path: Option<PathBuf>,
 }
 
-fn token_path() -> Option<PathBuf> {
-    std::env::var_os("XDG_STATE_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
-        .map(|s| s.join("waymux").join("phone-token"))
-}
-
 impl PhoneToken {
     /// The token saved by an earlier daemon, if any.
     pub fn load() -> Self {
-        let path = token_path();
+        let path = crate::auth::state_file("phone-token");
         let saved = path
             .as_ref()
             .and_then(|p| std::fs::read_to_string(p).ok())
