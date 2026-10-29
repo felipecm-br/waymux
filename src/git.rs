@@ -154,7 +154,7 @@ mod tests {
             .arg(p.repo())
             .args(["diff", "HEAD"])
             .output();
-        assert!(!p.ran().is_empty());
+        assert_ne!(p.ran(), Vec::<String>::new());
     }
 
     #[test]
