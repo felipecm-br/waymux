@@ -203,8 +203,8 @@ impl CockpitOps for RealOps {
         if !is_git {
             return None;
         }
-        let porcelain = Command::new("git")
-            .args(["-C", dir, "status", "--porcelain"])
+        let porcelain = crate::git::safe(Path::new(dir))
+            .args(["status", "--porcelain"])
             .stderr(Stdio::null())
             .output()
             .ok()

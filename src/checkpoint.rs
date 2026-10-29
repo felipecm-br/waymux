@@ -124,7 +124,8 @@ impl Repo {
     /// git against your repository, writing new objects to the store only.
     fn main_git(&self, index: &Path) -> Command {
         let mut cmd = Command::new("git");
-        cmd.current_dir(&self.top)
+        cmd.args(crate::git::neutralize(&self.top))
+            .current_dir(&self.top)
             .env("GIT_DIR", &self.git_dir)
             .env("GIT_WORK_TREE", &self.top)
             .env("GIT_INDEX_FILE", index)
@@ -140,15 +141,12 @@ impl Repo {
         cmd
     }
 
-    /// git against the store; your repository's config is included for filters.
+    /// git against the store. Your repository's config is left out on purpose: filters it
+    /// defines would run outside the agent's sandbox (see [`crate::git`]), so checkpoints hold
+    /// files as they are on disk. Global filters, such as Git LFS, still apply.
     fn store_git(&self) -> Command {
         let mut cmd = Command::new("git");
-        cmd.arg("-c")
-            .arg(format!(
-                "include.path={}",
-                self.common_dir.join("config").display()
-            ))
-            .arg("--git-dir")
+        cmd.args(["-c", "core.hooksPath=/dev/null", "--git-dir"])
             .arg(&self.store);
         cmd
     }

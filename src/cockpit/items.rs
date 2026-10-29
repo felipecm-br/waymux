@@ -276,7 +276,9 @@ fn parse_shortstat(shortstat: &str, dirty_files: usize) -> String {
 
 fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     let mut meta = GitMetadata::default();
+    let hardened = crate::git::neutralize(Path::new(ppath));
     let out = match Command::new("git")
+        .args(&hardened)
         .args([
             "-C",
             ppath,
@@ -301,6 +303,7 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
     let dirty_files = parse_porcelain_status(&out, &mut meta);
     if dirty_files > 0 {
         let shortstat = Command::new("git")
+            .args(&hardened)
             .args([
                 "-C",
                 ppath,
@@ -309,6 +312,7 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
                 "--no-optional-locks",
                 "diff",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--shortstat",
                 "HEAD",
             ])
@@ -462,9 +466,7 @@ fn review_min_secs() -> u64 {
 /// HEAD plus the porcelain status: any stage, commit or discard during the review changes it.
 pub fn review_snapshot(worktree: &Path) -> String {
     let git = |args: &[&str]| {
-        Command::new("git")
-            .arg("-C")
-            .arg(worktree)
+        crate::git::safe(worktree)
             .args(args)
             .stderr(Stdio::null())
             .output()
@@ -529,8 +531,8 @@ pub fn pane_needs_review(ppath: &str, finished_at: u64) -> bool {
 }
 
 fn is_dirty(repo: &str) -> bool {
-    Command::new("git")
-        .args(["-C", repo, "status", "--porcelain"])
+    crate::git::safe(Path::new(repo))
+        .args(["status", "--porcelain"])
         .stderr(Stdio::null())
         .output()
         .is_ok_and(|o| !o.stdout.is_empty())

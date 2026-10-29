@@ -3,6 +3,7 @@ use crate::cockpit::preview::box_line;
 use crate::theme::{BOLD, DIM, RESET, ThemePalette};
 use crate::tmux_cmd::tmux_out;
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn truncate_str(s: &str, max_chars: usize) -> String {
@@ -17,10 +18,8 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
 }
 
 fn git_out(ppath: &str, args: &[&str]) -> String {
-    let mut full = vec!["-C", ppath];
-    full.extend_from_slice(args);
-    Command::new("git")
-        .args(&full)
+    crate::git::safe(Path::new(ppath))
+        .args(args)
         .stderr(Stdio::null())
         .output()
         .ok()

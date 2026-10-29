@@ -8,6 +8,7 @@ pub mod config;
 pub mod daemon;
 pub mod delivery;
 pub mod doctor;
+pub mod git;
 pub mod health;
 pub mod hook;
 pub mod icons;
