@@ -7,7 +7,6 @@ All notable changes to **Waymux** are documented in this file.
 ## [0.6.0] - 2026-10-29
 
 - **Hook tokens survive a daemon restart (`src/api/hook_tokens.rs`)**: they lived in daemon memory, so restarting the daemon (an upgrade, for one) cut every jailed agent already running off from state, held approvals and checkpoints until it was launched again. They are now saved 0600 in `$XDG_STATE_HOME/waymux/hook-tokens` with the tmux server's PID; a different tmux server numbers its panes from `%0` again, so a file written for another one is ignored.
-
 - **Phone surface (`src/api/phone.rs`, `src/api/phone.html`, `GET /m`, `phone/snapshot`, `waymux phone-token [--rotate] [--url]`)**: a mobile page lists every agent (label, state, age, recap) with held prompts on top, and answers them with Allow or Deny; a risky call shows its rules and needs a confirmation. The page carries no data; it reads its token from the URL fragment, which a browser never sends to a server. A phone token reaches `phone/snapshot` and `approval/answer` only (403 otherwise): no typing into panes, no queue, no file paths from the client. One token at a time, saved 0600 in `$XDG_STATE_HOME/waymux/phone-token` so pairing survives a restart; `--rotate` unpairs every device. Meant for a tailnet: `tailscale serve --bg 4040`, then open the link `--url` prints. Labels drop Nerd Font icons, which phones draw as boxes.
 
 ## [0.5.0] - 2026-10-29
