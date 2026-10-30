@@ -568,3 +568,19 @@ fn launch_keeps_its_settings_out_of_the_agent() {
     let out = sb.run_with_stdin(&["launch", "other"], &envs, "");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "unset|unset");
 }
+
+#[test]
+fn quota_popup_outside_tmux_refreshes_and_closes_on_keys() {
+    let sb = Sandbox::new();
+    let out = sb.run_with_stdin(&["quota", "--popup", "/tmp"], &[], "rq");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let screen = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        screen.contains("Recommended") && screen.contains("refreshing"),
+        "{screen}"
+    );
+    assert!(
+        sb.dir.join(".local/state/waymux/quota/badge").exists(),
+        "r ran --refresh"
+    );
+}

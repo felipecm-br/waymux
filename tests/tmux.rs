@@ -305,3 +305,148 @@ fn hook_and_inject_paste_into_the_workspace_agent_pane_and_clear_on_session_end(
     );
     let _ = std::fs::remove_file(&answer);
 }
+
+/// A fake agent named `name` (the kernel names a `#!/bin/bash` script's process after the
+/// file): it draws `screen`, then appends every line it reads to `<env>/<name>.in`.
+fn fake_agent(env: &Env, name: &str, screen: &str) -> std::path::PathBuf {
+    // tmux reports a script's interpreter (`bash`); switch then finds the agent with `ps`.
+    let ps = env.dir.join("bin/ps");
+    if !ps.exists() {
+        std::os::unix::fs::symlink(common::which("ps"), ps).unwrap();
+    }
+    let path = env.dir.join("bin").join(name);
+    let input = env.dir.join(format!("{name}.in"));
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/bash\nprintf '%b\\n' '{screen}'\nwhile IFS= read -r l; do printf '%s\\n' \"$l\" >> '{}'; done\n",
+            input.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    input
+}
+
+/// `switch --agent` for a pane, empty until an agent runs there.
+fn agent_line(env: &Env, pane: &str) -> String {
+    let out = env
+        .command(&["switch", "-t", pane, "--agent"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim_end().to_string()
+}
+
+#[test]
+fn switch_detects_the_pane_agent_and_types_its_slash_command() {
+    let env = Env::new();
+    let input = fake_agent(&env, "claude", "  Opus 5.5 · ctx 1%\\n❯ ");
+    let Some(tmux) = env.tmux(&env.dir.join("bin/claude").display().to_string()) else {
+        eprintln!("tmux not installed; skipping");
+        return;
+    };
+    let pane = first_pane(&tmux);
+    assert!(eventually(|| agent_line(&env, &pane) == "claude\topus"));
+    let rows = env.run(&["switch", "-t", &pane, "--peek"]);
+    assert!(
+        rows.lines().any(|l| l.starts_with("opus\t/model opus\t⠛")),
+        "{rows}"
+    );
+
+    env.run(&["switch", "-t", &pane, "haiku"]);
+    assert!(eventually(|| std::fs::read_to_string(&input)
+        .unwrap_or_default()
+        == "/model haiku\n"));
+}
+
+#[test]
+fn switch_stops_on_a_half_typed_prompt() {
+    let env = Env::new();
+    let input = fake_agent(&env, "claude", "  Sonnet 5.5\\n❯ half typed");
+    let Some(tmux) = env.tmux(&env.dir.join("bin/claude").display().to_string()) else {
+        eprintln!("tmux not installed; skipping");
+        return;
+    };
+    let pane = first_pane(&tmux);
+    assert!(eventually(|| agent_line(&env, &pane) == "claude\tsonnet"));
+    let out = env
+        .command(&["switch", "-t", &pane, "high"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(!input.exists(), "typed into a pane with a draft");
+    let none = env
+        .command(&["switch", "-t", "%99", "--agent"])
+        .output()
+        .unwrap();
+    assert_eq!(none.status.code(), Some(1));
+}
+
+/// A provider with one agent, `other`, recommended on `--model m1`.
+const PROVIDER: &str = r#"printf '[{"agent":"other","available":true,"level":"green","launch":[{"args":"--model m1","model":"M1","rec":true}]}]'"#;
+
+#[test]
+fn launch_tags_the_pane_and_the_popup_starts_the_pick_in_a_new_window() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    std::os::unix::fs::symlink("/bin/sh", env.dir.join("bin/sh")).unwrap();
+    // A fake agent that records its directory and arguments.
+    let started = env.dir.join("started");
+    let agent = env.dir.join("bin/other");
+    std::fs::write(
+        &agent,
+        format!("#!/bin/sh\necho \"$PWD $*\" > '{}'\n", started.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let pane = first_pane(&tmux);
+
+    // The pane records how its agent started.
+    let out = env
+        .command(&["launch", "other", "--model", "x"])
+        .env("TMUX_PANE", &pane)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_file(&started);
+    let tag = tmux.run(&["show-options", "-p", "-t", &pane, "-v", "@ai_launch"]);
+    assert_eq!(tag, "other --model x");
+
+    // Inside the popup: no terminal, so the pick is the recommended row; it starts in a new
+    // window of the origin session, rooted at the directory.
+    let before = tmux.window_count("main");
+    let dir = env.repo();
+    let out = env
+        .command(&["launch", "--popup", &dir.display().to_string()])
+        .env(
+            "TMUX",
+            format!(
+                "{},0,0",
+                tmux.run(&["display-message", "-p", "#{socket_path}"])
+            ),
+        )
+        .env("TMUX_POPUP", "1")
+        .env("TMUX_ORIGIN_SESSION", "main")
+        .env("WAYMUX_QUOTA_PROVIDERS", PROVIDER)
+        .env("WAYMUX_QUOTA_PREFERENCE", "other")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        eventually(|| std::fs::read_to_string(&started).unwrap_or_default()
+            == format!("{} --model m1\n", dir.display())),
+        "the new window never ran the pick: {:?}",
+        std::fs::read_to_string(&started)
+    );
+    assert!(tmux.window_count("main") >= before);
+}
