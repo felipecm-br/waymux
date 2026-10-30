@@ -67,7 +67,18 @@ impl Sandbox {
             .env_remove("XDG_DATA_HOME")
             .env_remove("TMUX")
             .env_remove("TMUX_PANE")
-            .env_remove("WAYMUX_COLORS");
+            .env_remove("WAYMUX_COLORS")
+            .env_remove("CLAUDE_CONFIG_DIR");
+        // A wrapper's quota, launch and switch settings (an agent started by `waymux launch`
+        // through one) would point the tests at the developer's state files.
+        for (name, _) in std::env::vars() {
+            if ["WAYMUX_QUOTA_", "WAYMUX_LAUNCH_", "WAYMUX_SWITCH_"]
+                .iter()
+                .any(|p| name.starts_with(p))
+            {
+                cmd.env_remove(name);
+            }
+        }
         cmd
     }
 
@@ -542,4 +553,18 @@ fn switch_maps_choices_to_the_agent_slash_command() {
         Some(1),
         "no rows command: no agent menu"
     );
+}
+
+#[test]
+fn launch_keeps_its_settings_out_of_the_agent() {
+    let sb = Sandbox::new();
+    let envs = [
+        ("WAYMUX_QUOTA_STATE_DIR", "/elsewhere"),
+        (
+            "WAYMUX_LAUNCH_EXEC",
+            r#"printf '%s|%s' "${WAYMUX_QUOTA_STATE_DIR-unset}" "${WAYMUX_LAUNCH_EXEC-unset}" #"#,
+        ),
+    ];
+    let out = sb.run_with_stdin(&["launch", "other"], &envs, "");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "unset|unset");
 }

@@ -215,6 +215,14 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 }
 
+/// Names of the `WAYMUX_LAUNCH_*` and `WAYMUX_QUOTA_*` settings in this environment.
+fn launcher_env() -> Vec<String> {
+    std::env::vars()
+        .map(|(name, _)| name)
+        .filter(|n| n.starts_with("WAYMUX_LAUNCH_") || n.starts_with("WAYMUX_QUOTA_"))
+        .collect()
+}
+
 fn forwarded_env() -> Vec<String> {
     FORWARDED_ENV
         .iter()
@@ -455,23 +463,32 @@ fn finish(print_only: bool, cfg: &LaunchConfig, agent: &str, args: &[String]) ->
     }
     mark_launch(agent, &line);
     let _ = std::io::stdout().flush();
-    let err = if agent == "shell" {
+    let hook = env_or("WAYMUX_LAUNCH_EXEC", cfg.exec.as_ref());
+    let mut cmd = if agent == "shell" {
         let shell = std::env::var("SHELL")
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "bash".into());
-        Command::new(shell).exec()
-    } else if let Some(hook) = env_or("WAYMUX_LAUNCH_EXEC", cfg.exec.as_ref()) {
-        Command::new("sh")
-            .arg("-c")
+        Command::new(shell)
+    } else if let Some(hook) = &hook {
+        let mut c = Command::new("sh");
+        c.arg("-c")
             .arg(format!("{hook} \"$@\""))
             .arg("sh")
             .arg(agent)
-            .args(args)
-            .exec()
+            .args(args);
+        c
     } else {
-        Command::new(agent).args(args).exec()
+        let mut c = Command::new(agent);
+        c.args(args);
+        c
     };
+    // The launcher's own settings stop here: the agent and anything it runs (a test suite, a
+    // nested launch) must not inherit another session's quota state or armed choice.
+    for name in launcher_env() {
+        cmd.env_remove(name);
+    }
+    let err = cmd.exec();
     eprintln!("waymux launch: {agent}: {err}");
     127
 }
