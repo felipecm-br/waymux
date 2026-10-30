@@ -201,7 +201,9 @@ fn run_loop(dir: &str, cfg: &QuotaConfig) -> i32 {
                 let choice = Command::new("sh")
                     .args(["-c", pick])
                     .env("WAYMUX_QUOTA_AGENT", &snap.recommend)
+                    .stdin(Stdio::inherit())
                     .stdout(Stdio::piped())
+                    .stderr(Stdio::inherit())
                     .output()
                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                     .unwrap_or_default();

@@ -288,9 +288,12 @@ fn run_popup(dir: Option<&str>) -> i32 {
     }
     let _ = std::env::set_current_dir(&dir);
     // Inside the popup: the pick ("<agent> [args]", empty on Esc) as `launch --pick` prints it.
+    // `output()` would close stdin, and Waymaker would read EOF and pick without showing the menu.
     let Ok(out) = Command::new(exe())
         .args(["launch", "--pick"])
+        .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
         .output()
     else {
         return 1;
