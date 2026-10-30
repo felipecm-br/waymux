@@ -7,6 +7,15 @@ wt_path="$2"
 branch_raw="$3"
 shift 3 2>/dev/null || true
 
+usage() {
+    echo "Usage: awt-delete.sh <session> <worktree_path> <branch> [-f|--force] [--no-delete-branch] [--no-tmux] [--no-hooks] [-i]"
+}
+# A flag where the branch belongs (`awt rm --help`) must never delete anything.
+case "$branch_raw" in
+    -h|--help) usage; exit 0 ;;
+    -*) echo "awt-delete.sh: '$branch_raw' is not a branch; nothing was deleted (--help)" >&2; exit 2 ;;
+esac
+
 wt_path="${wt_path/#\~/$HOME}"
 
 # Parse flags
@@ -23,6 +32,8 @@ for arg in "$@"; do
         --no-delete-branch) keep_branch=1 ;;
         --no-tmux) no_tmux=1 ;;
         --no-hooks|--skip-pre-remove|-H) no_hooks=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "awt-delete.sh: unknown flag '$arg'; nothing was deleted (--help)" >&2; exit 2 ;;
     esac
 done
 

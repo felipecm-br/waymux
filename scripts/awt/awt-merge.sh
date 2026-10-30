@@ -8,6 +8,17 @@ selected_session="$3"
 selected_base="$4"
 shift 4 2>/dev/null || true
 
+usage() {
+    echo "Usage: awt-merge.sh <branch> <worktree_path> <session> <base> [flags]"
+    echo "Flags: --squash --no-squash --no-commit --no-remove --no-tmux --rebase --no-rebase"
+    echo "       --push --no-push --no-hooks --into <branch> -y -i"
+}
+# A flag where the branch belongs (`awt ship --help`) must never start a merge.
+case "$selected_raw" in
+    -h|--help) usage; exit 0 ;;
+    -*) echo "awt-merge.sh: '$selected_raw' is not a branch; nothing was merged (--help)" >&2; exit 2 ;;
+esac
+
 # Parse flags
 squash=0
 no_commit=0
@@ -37,6 +48,8 @@ while [[ $# -gt 0 ]]; do
         --no-hooks|--skip-pre-merge|-H) no_hooks=1 ;;
         --into=*) explicit_target="${1#*=}" ;;
         --into) shift; explicit_target="${1:-}" ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "awt-merge.sh: unknown flag '$1'; nothing was merged (--help)" >&2; exit 2 ;;
     esac
     shift
 done

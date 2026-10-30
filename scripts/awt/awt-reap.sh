@@ -46,6 +46,10 @@ FLAGS:
 HELP
       exit 0
       ;;
+    *)
+      echo "awt-reap.sh: unknown argument '$1'; nothing was reaped (--help)" >&2
+      exit 2
+      ;;
   esac
   shift
 done

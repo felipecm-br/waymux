@@ -6,6 +6,17 @@ branch_raw="$1"
 wt_path="$2"
 base_raw="$3"
 
+usage() { echo "Usage: awt-rebase.sh <branch> <worktree_path> <base_branch|-> [-i|--confirm]"; }
+# A flag where a branch belongs (`awt rebase --help`) must never start a rebase; `-` alone means
+# the branch's configured base.
+for a in "$branch_raw" "$base_raw"; do
+    case "$a" in
+        -h|--help) usage; exit 0 ;;
+        -) ;;
+        -*) echo "awt-rebase.sh: '$a' is not a branch; nothing was rebased (--help)" >&2; exit 2 ;;
+    esac
+done
+
 branch=$(echo "$branch_raw" | sed -E 's/^[^a-zA-Z0-9._/-]+//; s/[[:space:]].*//')
 base=$(echo "$base_raw" | sed -E 's/^[^a-zA-Z0-9._/-]+//; s/[[:space:]].*//')
 
@@ -32,6 +43,8 @@ confirm_prompt=0
 for arg in "$@"; do
     case "$arg" in
         --confirm|-i) confirm_prompt=1 ;;
+        -) ;;
+        -*) echo "awt-rebase.sh: unknown flag '$arg'; nothing was rebased (--help)" >&2; exit 2 ;;
     esac
 done
 
