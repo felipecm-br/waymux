@@ -507,7 +507,10 @@ mod tests {
         fs::write(&path, body).unwrap();
         let tail = tail_lines(&path, 3);
         assert_eq!(tail, vec!["line 4997", "line 4998", "line 4999"]);
-        assert!(tail_lines(Path::new("/nonexistent/x"), 3).is_empty());
+        assert_eq!(
+            tail_lines(Path::new("/nonexistent/x"), 3),
+            Vec::<String>::new()
+        );
         let _ = fs::remove_file(&path);
     }
 }

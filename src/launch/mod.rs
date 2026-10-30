@@ -682,7 +682,10 @@ mod tests {
         assert!(rows[0].rec);
         let mut gone = claude("green");
         gone["available"] = json!(false);
-        assert!(build_rows(&snap(vec![gone], "claude"), &models(), &[], |_| true).is_empty());
+        assert_eq!(
+            build_rows(&snap(vec![gone], "claude"), &models(), &[], |_| true),
+            Vec::<Row>::new()
+        );
     }
 
     #[test]
