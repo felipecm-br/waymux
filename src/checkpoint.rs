@@ -164,6 +164,18 @@ impl Repo {
         let tmp = self.temp_index();
         if self.index.exists() {
             std::fs::copy(&self.index, &tmp).ok()?;
+            // Keep the index's mtime: git re-reads a file whose stat matches its entry only when
+            // the entry is as new as the index ("racy git"). A fresh mtime on the copy hid a
+            // same-size edit made in the second the index was written, and the snapshot kept
+            // the old contents.
+            let mtime = std::fs::metadata(&self.index)
+                .and_then(|m| m.modified())
+                .ok()?;
+            std::fs::File::options()
+                .write(true)
+                .open(&tmp)
+                .and_then(|f| f.set_modified(mtime))
+                .ok()?;
         }
         let tree = (|| {
             let untracked =
@@ -548,6 +560,45 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.dir);
         }
+    }
+
+    #[test]
+    fn test_snapshot_sees_a_same_size_edit_from_the_index_second() {
+        // An edit that keeps the size, made in the second the index was written: git must
+        // re-read the file, which it only does when the index copy keeps the index's mtime.
+        let sb = Sandbox::new("racy");
+        sb.git(&["config", "core.trustctime", "false"]);
+        let then = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+        let touch = |path: &std::path::Path| {
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(then)
+                .unwrap();
+        };
+        sb.write("a.txt", "one\n");
+        touch(&sb.repo().join("a.txt"));
+        sb.git(&["add", "-A"]);
+        sb.git(&["commit", "-qm", "init"]);
+        touch(&sb.repo().join(".git/index"));
+        sb.write("a.txt", "two\n");
+        touch(&sb.repo().join("a.txt"));
+
+        let repo = sb.open();
+        let c = repo.create("%1", "idle", 50).unwrap().unwrap();
+        let blob = Command::new("git")
+            .arg("--git-dir")
+            .arg(&repo.store)
+            .args(["show", &format!("{}:a.txt", c.commit)])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&blob.stdout),
+            "two\n",
+            "{}",
+            String::from_utf8_lossy(&blob.stderr)
+        );
     }
 
     #[test]
