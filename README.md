@@ -29,6 +29,22 @@ Running multiple autonomous AI coding agents (`agy`, `claude`, `codex`, `opencod
 - **~17ms Native `/proc` Cockpit HUD**: Scans `/proc/<pid>/stat` and `/proc/<pid>/comm` directly in Rust to render a 12-column TUI fleet dashboard via **Waymaker (`wm`)** with embedded presets and live `delta` side-by-side diffs.
 - **Zero-Node Agent Hooks & Bracketed-Paste Injection**: Native `waymux hook {tmux|lazygit}` (~8ms) and `waymux inject` deliver multi-line review notes atomically via `tmux load-buffer` + `paste-buffer -p`.
 - **Git Worktree Orchestrator (`waymux wt` / `awt`)**: Provisions sibling `.bare` worktrees, copies untracked `.env*` secrets, and binds 1 worktree to 1 Tmux session, using the bundled `awt-*.sh` helpers.
+- **Quota-aware launch and in-place switching**: `waymux quota` tracks Claude Code's 5h/7d windows (burn rate, projection at the reset, weekly pace) plus any agent a provider reports; `waymux launch` starts the agent and model with headroom, and `waymux switch` changes the model or effort of a running agent without leaving the conversation.
+
+### Waymux and workmux
+
+[workmux](https://github.com/raine/workmux) is the closest tool: one tmux window per git worktree with an agent in it. The two overlap on worktrees and agent status, and differ in what they do once agents are running:
+
+| | workmux | Waymux |
+| :--- | :--- | :--- |
+| Worktree lifecycle | Core: `add`, `merge`, `rebase`, `remove`, file sync, post-create hooks, session mode, `resurrect` | `waymux wt` (`awt`): create, switch, rebase, ship, sweep, through bundled helpers |
+| Agent status | Hooks set working / waiting / done; dashboard and sidebar | Hooks plus a daemon: debounced states, stall detection from output and CPU, urgency per window, status bar without polling |
+| Waiting on you | Jump to the next completed or waiting agent | Triage queue (permission, question, error/stalled, oldest first); held approvals answered from the Cockpit or a phone, with risk rules on dangerous calls |
+| Undoing a turn | Git | Turn checkpoints: every turn's work tree saved outside the repository, `checkpoint diff` / `restore` |
+| Quota | Not built in ([tmux-agent-usage](https://github.com/raine/tmux-agent-usage) shows usage) | `quota` ranks agents by headroom; `launch` starts the one with room on the right model; `switch` changes model or effort in place |
+| Isolation | Containers or Lima VMs per worktree | Leaves sandboxing to your launcher (`[launch] exec`), and keeps sandboxed agents supervised through pane-scoped hook tokens |
+| Away from the desk | – | Phone page and ntfy alerts for held prompts |
+
 
 ---
 
