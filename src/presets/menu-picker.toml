@@ -1,4 +1,4 @@
-# `waymux launch` menu: one row per agent × model with its quota, cursor on the recommended row.
+# `waymux launch` and `waymux switch` menus: one row per choice, cursor on the marked row.
 [ui.nav]
 active = true
 basic = true
@@ -34,7 +34,7 @@ status_inline = true
 show = true
 
 [footer]
-content = " {cyan,bold:Enter} {__MUTED_TEXT__:Launch} {__MUTED_LINE__:│} {white,bold:⠛} {__MUTED_TEXT__:Recommended} {__MUTED_LINE__:│} {cyan,bold:type} {__MUTED_TEXT__:Filter} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:__ESC_LABEL__}"
+content = " {cyan,bold:Enter} {__MUTED_TEXT__:__ACTION__} {__MUTED_LINE__:│} {white,bold:⠛} {__MUTED_TEXT__:__MARK__} {__MUTED_LINE__:│} {cyan,bold:type} {__MUTED_TEXT__:Filter} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:__ESC_LABEL__}"
 row_connection = "Full"
 match_indent = false
 separator = "light"
@@ -71,7 +71,7 @@ sides = ""
 "q"   = "Quit"
 
 [binds]
-# The cursor starts on the recommended row; typing jumps back to the best match
+# The cursor starts on the marked row; typing jumps back to the best match
 "QueryChange" = "Pos(0)"
 "esc"    = "Quit"
 "ctrl-c" = "Quit"

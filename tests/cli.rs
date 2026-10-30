@@ -498,3 +498,48 @@ fn launch_rows_come_from_providers_filters_and_the_exec_hook() {
     let out = sb.run_with_stdin(&["launch", "other", "--model", "x y"], &hooked, "");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "other|--model|x y|");
 }
+
+#[test]
+fn switch_maps_choices_to_the_agent_slash_command() {
+    let sb = Sandbox::new();
+    let claude = [("WAYMUX_SWITCH_AGENT", "claude")];
+    let out = sb.run_with_stdin(&["switch", "--peek", "high"], &claude, "");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "claude\t/effort high\n"
+    );
+    let out = sb.run_with_stdin(&["switch", "--peek", "sonnet"], &claude, "");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "claude\t/model sonnet\n"
+    );
+    let rows = sb.run_with_stdin(&["switch", "--peek"], &claude, "");
+    let rows = String::from_utf8_lossy(&rows.stdout).to_string();
+    assert!(
+        rows.starts_with("opus\t/model opus\t") && rows.contains("auto\t/effort auto\t"),
+        "{rows}"
+    );
+    let bad = sb.run_with_stdin(&["switch", "--peek", "nope"], &claude, "");
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(stderr(&bad).contains("'nope' is not a model or effort of claude"));
+
+    let hooked = [
+        ("WAYMUX_SWITCH_AGENT", "other"),
+        (
+            "WAYMUX_SWITCH_ROWS",
+            r#"printf '{"agent":"other","current":"M","rows":[{"id":"m","command":"/model m","name":"M","active":true}]}' #"#,
+        ),
+    ];
+    let out = sb.run_with_stdin(&["switch", "--agent"], &hooked, "");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "other\tM\n");
+    let none = sb.run_with_stdin(
+        &["switch", "--agent"],
+        &[("WAYMUX_SWITCH_AGENT", "other")],
+        "",
+    );
+    assert_eq!(
+        none.status.code(),
+        Some(1),
+        "no rows command: no agent menu"
+    );
+}

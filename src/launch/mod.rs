@@ -556,8 +556,12 @@ fn wm_bin() -> Option<PathBuf> {
 
 fn preset_args(pick_only: bool, cfg: &LaunchConfig) -> Vec<String> {
     let Some(preset) = env_or("WAYMUX_LAUNCH_PRESET", cfg.preset.as_ref()) else {
-        let label = if pick_only { "Close" } else { "Shell" };
-        let path = crate::presets::materialize_launch_toml(label);
+        let (name, esc) = if pick_only {
+            ("launch-picker-close", "Close")
+        } else {
+            ("launch-picker-shell", "Shell")
+        };
+        let path = crate::presets::materialize_menu_toml(name, "Launch", "Recommended", esc);
         return vec!["-o".to_string(), path.to_string_lossy().to_string()];
     };
     let mut args = vec!["-o".to_string(), crate::sys::expand_home(&preset)];

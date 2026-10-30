@@ -99,6 +99,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
 | `waymux quota [--visual\|--popup\|--json\|--badge\|--badge-min\|--recommend\|--refresh]` | Agent quota and the agent a new session should launch: Claude Code's 5h/7d windows, burn rate and projection, plus any agents your providers report (see [Agent quota](#agent-quota)) |
 | `waymux launch [--peek\|--pick] [--auto\|--menu\|shell\|<agent> [args]]` | Start an agent CLI in this pane: a Waymaker menu of agent × model rows with their quota, cursor on the recommended row, or that row directly (`--auto`); `--next <choice>` arms the next launch (see [Agent launch](#agent-launch)) |
+| `waymux switch [-t pane] [--peek\|--agent\|--popup] [choice]` | Change the model or effort of the agent in a pane, in place, by typing its own `/model` or `/effort`; a half-typed prompt is never submitted (see [Agent switch](#agent-switch)) |
 | `waymux quota statusline` | Claude Code `statusLine` command: records `rate_limits` from stdin and prints model, context and quota in one line |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
@@ -306,6 +307,15 @@ exec = "~/bin/start-agent"                   # optional: run as <exec> <agent> [
 rows_filter = "~/bin/launch-rows"            # optional: JSON rows on stdin, JSON rows on stdout
 ```
 
+**Agent switch.** <a id="agent-switch"></a>`waymux switch` changes the model or effort of the agent in a pane without leaving the conversation: it types the agent's own slash command. Claude Code (`/model` for each `[launch] claude_models` alias, `/effort low` to `auto`, the current model and effort read from its status line and settings), Devin (`/model <name>`) and Codex (`/model`, its own picker) are built in. Other agents come from `rows_command`, run as `<cmd> <process> <pane>` with the bottom of the pane on stdin for the process names in `agents`; it prints `{"agent", "current", "rows": [{id, command, kind, name, tier, active}]}`. Text typed after the prompt marker (not a dim placeholder) stops the switch, unless `draft` (run as `<draft> -t <pane> --ready|take|put`) can set it aside and bring it back. `--popup` opens the menu over the pane.
+
+```toml
+[switch]
+agents = ["my-agent"]                  # process names rows_command handles
+rows_command = "~/bin/my-agent-rows"   # prints that agent's rows as JSON
+draft = "~/bin/draft-tool"             # optional: keeps a typed prompt aside during the switch
+```
+
 **Flow events & key telemetry.** `flow_log_hook = "~/bin/flow-log.sh"` runs that program as `<hook> <event> <pane> <extra>` whenever an agent asks a question (`agent_question`), you reply (`human_reply`) or a working agent finishes (`agent_finished`), e.g. to keep a focus or time-tracking log. `keylog = true` makes `waymux keylog` append Cockpit and wrapped tmux key presses to `$XDG_STATE_HOME/flow/keys.tsv`. Both are off unless configured.
 
 | Variable | Default | Purpose |
@@ -317,6 +327,8 @@ rows_filter = "~/bin/launch-rows"            # optional: JSON rows on stdin, JSO
 | `WAYMUX_LAUNCH_DEFAULT`, `WAYMUX_LAUNCH_EXEC`, `WAYMUX_LAUNCH_FILTER` | unset | Replace `[launch] default`, `exec` and `rows_filter` |
 | `WAYMUX_LAUNCH_NEXT` | `$XDG_RUNTIME_DIR/waymux/launch.next` | File `launch --next` arms |
 | `WAYMUX_LAUNCH_PRESET`, `WAYMUX_LAUNCH_PICK_PRESET` | built-in | Waymaker preset for the menu, and one layered over it for `--pick` |
+| `WAYMUX_SWITCH_ROWS`, `WAYMUX_SWITCH_AGENTS`, `WAYMUX_SWITCH_DRAFT`, `WAYMUX_SWITCH_PRESET` | unset | Replace `[switch] rows_command`, `agents` (space-separated), `draft` and `preset` |
+| `WAYMUX_SWITCH_AGENT` | unset | Agent to build the switch menu for, skipping pane detection (tests, scripts) |
 | `WAYMUX_QUOTA_PROVIDERS` | unset | Quota providers, one command per line; replaces `[quota] providers` |
 | `WAYMUX_QUOTA_PREFERENCE` | unset | Space-separated launch order; replaces `[quota] preference` |
 | `WAYMUX_QUOTA_SESSION_RATE` | `10` | Replaces `[quota] session_rate` |

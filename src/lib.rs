@@ -23,6 +23,7 @@ pub mod risk;
 pub mod rpc_client;
 pub mod signals;
 pub mod status_palette;
+pub mod switch;
 pub mod sys;
 #[cfg(test)]
 pub(crate) mod test_strategies;
@@ -92,6 +93,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "launch",
         usage: "launch [--peek] [--pick] [--auto | --menu | shell | <agent> [args]] | launch --next <choice>",
         about: "Start an agent CLI: menu of agent × model rows with quota, or the recommended one",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "switch",
+        usage: "switch [-t pane] [--peek | --agent | --popup] [choice]",
+        about: "Change the model or effort of the agent in a pane, in place",
         plumbing: false,
     },
     CommandSpec {
@@ -256,7 +263,7 @@ fn print_command_help(bin_name: &str, c: &CommandSpec) {
 
 /// Commands whose own parser prints richer help than the shared one-liner.
 fn has_own_help(name: &str) -> bool {
-    matches!(name, "wt" | "awt" | "init" | "quota" | "launch")
+    matches!(name, "wt" | "awt" | "init" | "quota" | "launch" | "switch")
 }
 
 fn is_help_flag(arg: &str) -> bool {
@@ -355,6 +362,7 @@ pub fn entry() -> anyhow::Result<()> {
         "triage" => Some(triage::run_cli(&args[2..])),
         "quota" => Some(quota::run_cli(&args[2..])),
         "launch" => Some(launch::run_cli(&args[2..])),
+        "switch" => Some(switch::run_cli(&args[2..])),
         "hook" => Some(hook::run_cli(&args[2..])),
         "inject" => Some(inject::run_cli(&args[2..])),
         "wt" | "awt" => Some(wt::run_cli(&args[2..])),

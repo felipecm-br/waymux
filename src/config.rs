@@ -146,6 +146,20 @@ pub struct LaunchConfig {
     pub pick_preset: Option<String>,
 }
 
+/// `[switch]`: `waymux switch`, the in-place model and effort switch (see `crate::switch`).
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchConfig {
+    /// Process names, besides claude, codex and devin, that `rows_command` handles.
+    pub agents: Option<Vec<String>>,
+    /// Command run as `<cmd> <process> <pane>` (pane bottom on stdin) for those agents' rows.
+    pub rows_command: Option<String>,
+    /// Draft tool run as `<draft> -t <pane> --ready|take|put` to keep a typed prompt aside.
+    pub draft: Option<String>,
+    /// Waymaker preset for the menu instead of the built-in one.
+    pub preset: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -177,6 +191,8 @@ pub struct Config {
     pub quota: Option<QuotaConfig>,
     /// Agent × model launch menu (`[launch]`).
     pub launch: Option<LaunchConfig>,
+    /// In-place model and effort switch (`[switch]`).
+    pub switch: Option<SwitchConfig>,
 }
 
 fn default_listen_addr() -> String {
@@ -213,6 +229,7 @@ impl Default for Config {
             checkpoints: None,
             quota: None,
             launch: None,
+            switch: None,
         }
     }
 }
