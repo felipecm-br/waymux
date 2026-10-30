@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-30
+
 - **`awt` helpers refuse unknown flags (`scripts/awt/awt-merge.sh`, `awt-delete.sh`, `awt-rebase.sh`, `awt-reap.sh`)**: a flag they did not know was silently skipped, and one in the branch position was taken as the branch, so `awt ship --help` started a merge (it amended the last commit of `main` in the author's checkout) and a typo such as `awt reap --dryrun -y` ran for real. `-h`/`--help` now prints the usage, and an unknown flag, or a flag where the branch belongs, exits 2 before anything changes.
 
 ## [0.8.0] - 2026-10-30
