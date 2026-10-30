@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/felipecm-br/waymux/main/install.sh 
 
 Then:
 
-1. tmux: add `run-shell "~/.local/share/waymux/tmux/waymux.tmux"` to `~/.tmux.conf` (`waymux init --tmux` prints it with the bindings). Keys: `prefix+Space` Cockpit, `prefix+i` triage popup, `prefix+I` or `C-S-i` jump to the next waiting agent, `C-g` lazygitrs. Override with `@waymux_key_*` options.
+1. tmux: add `run-shell "~/.local/share/waymux/tmux/waymux.tmux"` to `~/.tmux.conf` (`waymux init --tmux` prints it with the bindings). Keys: `prefix+Space` Cockpit, `prefix+i` triage popup, `prefix+I` or `C-S-i` jump to the next waiting agent, `C-g` lazygitrs, `prefix+u` quota popup, `prefix+a` launcher, `prefix+A` model/effort switch. Override with `@waymux_key_*` options (`off` unbinds `quota`, `launch`, `switch`).
 2. Hooks: `waymux init --hooks` prints a Claude Code `hooks` block. Merge it into `~/.claude/settings.json`; never overwrite the user's existing hooks, append the `waymux hook ...` commands to the matching events.
 3. Daemon: `systemctl --user enable --now waymux` (installed by `install.sh`). On macOS run `waymux daemon` yourself.
 

@@ -33,6 +33,7 @@ usage: waymux launch [--peek] [--pick] [--auto | --menu | shell | <agent> [args.
   --peek            Print what would start (\"<agent> [args]\", \"shell\" or \"menu\") instead
   --pick            Show the menu and print the pick instead of starting it
   --next <choice>   Arm a one-shot choice for the next launch (a picker that creates the pane)
+  --popup [dir]     The menu in a tmux popup; the pick starts in a new window rooted at dir
 
 Environment: WAYMUX_LAUNCH_DEFAULT, WAYMUX_LAUNCH_EXEC, WAYMUX_LAUNCH_FILTER,
 WAYMUX_LAUNCH_NEXT (armed-choice file), WAYMUX_LAUNCH_PRESET, WAYMUX_LAUNCH_PICK_PRESET,
@@ -42,6 +43,21 @@ plus the WAYMUX_QUOTA_* settings of `waymux quota`.";
 const NEXT_TTL_SECS: u64 = 30;
 const CLAUDE_MODELS: [&str; 3] = ["opus", "sonnet", "haiku"];
 const EXTRA: [&str; 2] = ["devin", "codex"];
+const POPUP_BADGE: &str = " 󰚩 ";
+/// Settings a wrapper may set; a popup and a new window start with the tmux server's
+/// environment, so they are passed with `-e`.
+const FORWARDED_ENV: [&str; 10] = [
+    "WAYMUX_LAUNCH_EXEC",
+    "WAYMUX_LAUNCH_FILTER",
+    "WAYMUX_LAUNCH_NEXT",
+    "WAYMUX_LAUNCH_PRESET",
+    "WAYMUX_LAUNCH_PICK_PRESET",
+    "WAYMUX_QUOTA_PROVIDERS",
+    "WAYMUX_QUOTA_PREFERENCE",
+    "WAYMUX_QUOTA_SESSION_RATE",
+    "WAYMUX_QUOTA_STATE_DIR",
+    "CLAUDE_CONFIG_DIR",
+];
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Row {
@@ -152,6 +168,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             println!("{USAGE}");
             return 0;
         }
+        Some("--popup") => return run_popup(args.get(1).map(String::as_str)),
         Some("--next") => {
             if args.len() < 2 {
                 eprintln!("waymux launch: --next needs a choice");
@@ -196,6 +213,102 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
         agent => finish(peek, &cfg, agent, &rest),
     }
+}
+
+fn forwarded_env() -> Vec<String> {
+    FORWARDED_ENV
+        .iter()
+        .filter_map(|n| std::env::var(n).ok().map(|v| format!("{n}={v}")))
+        .collect()
+}
+
+fn exe() -> String {
+    std::env::current_exe().map_or_else(|_| "waymux".into(), |p| p.to_string_lossy().to_string())
+}
+
+/// `--popup`: the menu in a popup over the pane; the pick starts in a new window of the session
+/// the popup was opened from, rooted at `dir`. Outside tmux it is the menu in this terminal.
+fn run_popup(dir: Option<&str>) -> i32 {
+    let dir = dir.map_or_else(
+        || {
+            std::env::current_dir()
+                .map(|d| d.to_string_lossy().to_string())
+                .unwrap_or_default()
+        },
+        str::to_string,
+    );
+    let in_tmux = std::env::var_os("TMUX").is_some_and(|v| !v.is_empty());
+    let in_popup = std::env::var_os("TMUX_POPUP").is_some_and(|v| !v.is_empty());
+    if !in_tmux {
+        return run_cli(&["--menu".to_string()]);
+    }
+    let env = forwarded_env();
+    if !in_popup {
+        let origin = crate::tmux_cmd::tmux_out(&["display-message", "-p", "#{session_id}"])
+            .unwrap_or_default();
+        let cmd = format!(
+            "TMUX_POPUP=1 TMUX_ORIGIN_SESSION={} {} launch --popup {}",
+            crate::sys::shell_quote(origin.trim()),
+            crate::sys::shell_quote(&exe()),
+            crate::sys::shell_quote(&dir)
+        );
+        let theme = crate::theme::ThemePalette::load();
+        let border = format!("fg={}", theme.magenta);
+        let text_col = std::env::var("TMUX_POPUP_TEXT_COLOR")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "default".into());
+        let text = format!("fg={text_col}");
+        let mut args = vec![
+            "display-popup",
+            "-S",
+            &border,
+            "-s",
+            &text,
+            "-b",
+            "rounded",
+            "-T",
+            POPUP_BADGE,
+            "-d",
+            &dir,
+        ];
+        for pair in &env {
+            args.extend(["-e", pair.as_str()]);
+        }
+        args.extend(["-E", "-w", "75%", "-h", "60%", &cmd]);
+        return i32::from(!crate::tmux_cmd::tmux_status(&args));
+    }
+    let _ = std::env::set_current_dir(&dir);
+    // Inside the popup: the pick ("<agent> [args]", empty on Esc) as `launch --pick` prints it.
+    let Ok(out) = Command::new(exe())
+        .args(["launch", "--pick"])
+        .stdout(Stdio::piped())
+        .output()
+    else {
+        return 1;
+    };
+    let choice = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if choice.is_empty() {
+        return 0;
+    }
+    let words: Vec<String> = std::iter::once(exe())
+        .chain(std::iter::once("launch".to_string()))
+        .chain(choice.split_whitespace().map(str::to_string))
+        .map(|w| crate::sys::shell_quote(&w))
+        .collect();
+    let command = format!("exec {}", words.join(" "));
+    let origin = std::env::var("TMUX_ORIGIN_SESSION").unwrap_or_default();
+    let target = format!("{origin}:");
+    let mut args = vec!["new-window"];
+    if !origin.is_empty() {
+        args.extend(["-t", &target]);
+    }
+    args.extend(["-c", &dir]);
+    for pair in &env {
+        args.extend(["-e", pair.as_str()]);
+    }
+    args.push(&command);
+    i32::from(!crate::tmux_cmd::tmux_status(&args))
 }
 
 fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {

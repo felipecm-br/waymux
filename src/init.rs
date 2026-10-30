@@ -12,7 +12,10 @@ run-shell \"~/.local/share/waymux/tmux/waymux.tmux\"
 # bind-key Space if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-shell \"waymux cockpit\"'
 # bind-key i     if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-shell \"waymux triage --popup\"'
 # bind-key I     run-shell \"waymux triage --jump\"
-# bind-key -n C-S-i run-shell \"waymux triage --jump\"";
+# bind-key -n C-S-i run-shell \"waymux triage --jump\"
+# bind-key u     run-shell \"waymux quota --popup '#{pane_current_path}'\"
+# bind-key a     run-shell \"waymux launch --popup '#{pane_current_path}'\"
+# bind-key A     run-shell \"waymux switch --popup '#{pane_id}'\"";
 
 /// `(event, matcher, commands)` for Claude Code's `hooks` block. The `claude` hint names the
 /// agent where the hook JSON alone cannot (window icon, wait reasons).

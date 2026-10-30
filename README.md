@@ -98,7 +98,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux triage --popup` | Cycle notifying AI agent panes inside an isolated `_popups` overlay |
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
 | `waymux quota [--visual\|--popup\|--json\|--badge\|--badge-min\|--recommend\|--refresh]` | Agent quota and the agent a new session should launch: Claude Code's 5h/7d windows, burn rate and projection, plus any agents your providers report (see [Agent quota](#agent-quota)) |
-| `waymux launch [--peek\|--pick] [--auto\|--menu\|shell\|<agent> [args]]` | Start an agent CLI in this pane: a Waymaker menu of agent × model rows with their quota, cursor on the recommended row, or that row directly (`--auto`); `--next <choice>` arms the next launch (see [Agent launch](#agent-launch)) |
+| `waymux launch [--peek\|--pick] [--auto\|--menu\|shell\|<agent> [args]]` | Start an agent CLI in this pane: a Waymaker menu of agent × model rows with their quota, cursor on the recommended row, or that row directly (`--auto`); `--next <choice>` arms the next launch; `--popup [dir]` shows the menu in a popup and starts the pick in a new window (see [Agent launch](#agent-launch)) |
 | `waymux switch [-t pane] [--peek\|--agent\|--popup] [choice]` | Change the model or effort of the agent in a pane, in place, by typing its own `/model` or `/effort`; a half-typed prompt is never submitted (see [Agent switch](#agent-switch)) |
 | `waymux quota statusline` | Claude Code `statusLine` command: records `rate_limits` from stdin and prints model, context and quota in one line |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
@@ -135,7 +135,12 @@ bind-key Space if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-
 bind-key "i"   if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-shell "waymux triage --popup"'
 bind-key "I"   run-shell "waymux triage --jump"
 bind-key -n 'C-S-i' run-shell "waymux triage --jump"
+bind-key "u"   run-shell "waymux quota --popup '#{pane_current_path}'"
+bind-key "a"   run-shell "waymux launch --popup '#{pane_current_path}'"
+bind-key "A"   run-shell "waymux switch --popup '#{pane_id}'"
 ```
+
+The plugin's keys: `prefix+Space` Cockpit, `prefix+i` triage popup, `prefix+I` / `C-S-i` jump to the next waiting agent, `C-g` lazygitrs, `prefix+u` quota, `prefix+a` launcher (the pick opens in a new window), `prefix+A` model/effort switch for the pane's agent. Change one with its option before loading the plugin, e.g. `set -g @waymux_key_launch "C-a"`; `@waymux_key_quota`, `@waymux_key_launch` and `@waymux_key_switch` take `off` to stay unbound.
 
 ### 2. Agent Hooks
 
