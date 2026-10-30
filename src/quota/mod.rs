@@ -92,7 +92,7 @@ pub struct Snapshot {
 impl Snapshot {
     /// `line_only` reads Claude alone (the statusLine path never waits on providers);
     /// `force` asks providers to skip their caches.
-    fn collect(line_only: bool, force: bool) -> Self {
+    pub(crate) fn collect(line_only: bool, force: bool) -> Self {
         let now = chrono::Utc::now().timestamp();
         let cfg = quota_config();
         let state = state_dir();

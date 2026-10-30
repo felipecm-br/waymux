@@ -1,0 +1,77 @@
+# `waymux launch` menu: one row per agent × model with its quota, cursor on the recommended row.
+[ui.nav]
+active = true
+basic = true
+passthrough = true
+bar = "Plain"
+color = "black"
+prompt = ""
+focus_on_start = "picker"
+hints = false
+
+[start]
+sort = false
+ansi = true
+
+[preview]
+show = false
+
+[tui]
+mouse = true
+percentage = 100
+max = 9999
+
+[matcher.sort]
+threshold = false
+
+[ui.border]
+sides = ""
+
+[query]
+prompt = " "
+prompt_style.fg = "blue"
+status_inline = true
+show = true
+
+[footer]
+content = " {cyan,bold:Enter} {__MUTED_TEXT__:Launch} {__MUTED_LINE__:│} {white,bold:⠛} {__MUTED_TEXT__:Recommended} {__MUTED_LINE__:│} {cyan,bold:type} {__MUTED_TEXT__:Filter} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:__ESC_LABEL__}"
+row_connection = "Full"
+match_indent = false
+separator = "light"
+
+[footer.separator_style]
+fg = "__MUTED_LINE__"
+
+[results]
+multi = false
+spinner_inline = true
+current_prefix = ""
+unselected_prefix = "  "
+current_nav_bar = "Plain"
+row_connection = "Full"
+column_spacing = 1
+
+[results.style]
+fg = "gray"
+
+[results.current_style]
+fg = "white"
+bg = "reset"
+modifier = "BOLD"
+
+[results.current_nav_bar_style]
+fg = "lightcyan"
+modifier = "BOLD"
+
+[results.border]
+sides = ""
+
+[ui.nav.binds]
+"esc" = "Quit"
+"q"   = "Quit"
+
+[binds]
+# The cursor starts on the recommended row; typing jumps back to the best match
+"QueryChange" = "Pos(0)"
+"esc"    = "Quit"
+"ctrl-c" = "Quit"

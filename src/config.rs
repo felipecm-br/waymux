@@ -126,6 +126,26 @@ pub struct QuotaConfig {
     pub pick: Option<String>,
 }
 
+/// `[launch]`: `waymux launch`, the agent × model menu (see `crate::launch`).
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchConfig {
+    /// Choice without an argument or an armed one: `menu` (default), `auto`, `shell` or an agent.
+    pub default: Option<String>,
+    /// Claude Code `--model` aliases offered as rows (default `opus`, `sonnet`, `haiku`).
+    pub claude_models: Option<Vec<String>>,
+    /// Agent CLIs without quota telemetry offered when installed (default `devin`, `codex`).
+    pub extra: Option<Vec<String>>,
+    /// Command that starts the pick as `<exec> <agent> [args...]` (default: the agent itself).
+    pub exec: Option<String>,
+    /// Command that rewrites the rows: a JSON array on stdin, a JSON array on stdout.
+    pub rows_filter: Option<String>,
+    /// Waymaker preset for the menu instead of the built-in one.
+    pub preset: Option<String>,
+    /// Preset layered over `preset` when `--pick` shows the menu.
+    pub pick_preset: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -155,6 +175,8 @@ pub struct Config {
     pub checkpoints: Option<CheckpointsConfig>,
     /// Agent quota report and launch recommendation (`[quota]`).
     pub quota: Option<QuotaConfig>,
+    /// Agent × model launch menu (`[launch]`).
+    pub launch: Option<LaunchConfig>,
 }
 
 fn default_listen_addr() -> String {
@@ -190,6 +212,7 @@ impl Default for Config {
             keylog: false,
             checkpoints: None,
             quota: None,
+            launch: None,
         }
     }
 }

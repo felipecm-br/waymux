@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 pub const COCKPIT_PICKER_TOML_TEMPLATE: &str = include_str!("cockpit-picker.toml");
+pub const LAUNCH_PICKER_TOML_TEMPLATE: &str = include_str!("launch-picker.toml");
 
 fn runtime_dir_from(xdg: Option<&std::ffi::OsStr>) -> PathBuf {
     if let Some(xdg) = xdg.filter(|v| !v.is_empty()) {
@@ -79,6 +80,31 @@ pub fn materialize_cockpit_toml() -> PathBuf {
     target
 }
 
+/// Fills the launch menu preset. `esc_label` names what `Esc` does: `Shell` in a pane that
+/// becomes a shell, `Close` when a caller (a popup) closes.
+pub fn render_launch_toml(muted_text: &str, muted_line: &str, esc_label: &str) -> String {
+    LAUNCH_PICKER_TOML_TEMPLATE
+        .replace("__MUTED_TEXT__", muted_text)
+        .replace("__MUTED_LINE__", muted_line)
+        .replace("__ESC_LABEL__", esc_label)
+}
+
+/// Writes the launch menu preset to the runtime dir (only when it changed) and returns its path.
+pub fn materialize_launch_toml(esc_label: &str) -> PathBuf {
+    let dir = runtime_dir();
+    let _ = fs::create_dir_all(&dir);
+    let target = dir.join(format!(
+        "launch-picker-{}.toml",
+        esc_label.to_ascii_lowercase()
+    ));
+    let theme = crate::theme::ThemePalette::load();
+    let rendered = render_launch_toml(&theme.muted, &theme.muted_line, esc_label);
+    if fs::read_to_string(&target).ok().as_deref() != Some(rendered.as_str()) {
+        let _ = fs::write(&target, rendered);
+    }
+    target
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,6 +118,16 @@ mod tests {
         assert!(!toml.contains("\"DIM\""), "rows must not be dimmed");
         assert!(!toml.to_ascii_lowercase().contains("darkgray"));
         assert!(toml.contains("{#7f9bb3:Jump}"));
+        assert!(toml.parse::<toml::Table>().is_ok());
+    }
+
+    #[test]
+    fn test_launch_preset_is_filled_and_valid() {
+        let toml = render_launch_toml("#7f9bb3", "#5d7a92", "Close");
+        assert!(!toml.contains("__"), "unfilled placeholder");
+        assert!(!toml.contains("\"DIM\""), "rows must not be dimmed");
+        assert!(!toml.to_ascii_lowercase().contains("darkgray"));
+        assert!(toml.contains("{#7f9bb3:Close}"));
         assert!(toml.parse::<toml::Table>().is_ok());
     }
 

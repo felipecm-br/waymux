@@ -50,6 +50,7 @@ The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission
 - `waymux inject <workspace_dir> <prompt>`: paste a multi-line prompt into the agent pane working in that directory (bracketed paste, so newlines do not submit early).
 - `waymux review-notes <count|list|send> <repo_path> [session] [idx] [pane_id]`: lazygitrs review notes from `<git-dir>/info/lines.json`; `send` pastes them to the agent.
 - `waymux quota --recommend` / `--json`: the agent a new session should launch and every agent's quota level (`green`, `yellow`, `red`, `unknown`), Claude Code built in, other agents from `[quota] providers`. Check it before starting a long fan-out of agents.
+- `waymux launch --peek --auto`: the agent and model a new session would start (`--pick` shows the menu and prints the pick; never run `launch` without `--peek` or `--pick` from an agent, since it replaces the process).
 - `waymux wt`: one worktree per tmux session. `wt -c <branch> [base] [-- cmd]` creates one and runs a command in it; `wt <branch>` switches; `wt rm`, `rebase`, `ship`, `pr [n]`, `clone`, `sweep`, `reap`; bare `wt` opens the picker. `wt --help` lists flags. `ship` merges, pushes and deletes the branch, and `rm` deletes one: confirm with the user first.
 
 ## 5. JSON-RPC (`POST http://127.0.0.1:4040/rpc`)

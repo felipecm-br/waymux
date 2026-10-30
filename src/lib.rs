@@ -15,6 +15,7 @@ pub mod icons;
 pub mod init;
 pub mod inject;
 pub mod keylog;
+pub mod launch;
 pub mod pid;
 pub mod presets;
 pub mod quota;
@@ -85,6 +86,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "triage",
         usage: "triage [--popup | --jump]",
         about: "Cycle (--popup, default) or jump to (--jump) the next waiting agent",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "launch",
+        usage: "launch [--peek] [--pick] [--auto | --menu | shell | <agent> [args]] | launch --next <choice>",
+        about: "Start an agent CLI: menu of agent × model rows with quota, or the recommended one",
         plumbing: false,
     },
     CommandSpec {
@@ -249,7 +256,7 @@ fn print_command_help(bin_name: &str, c: &CommandSpec) {
 
 /// Commands whose own parser prints richer help than the shared one-liner.
 fn has_own_help(name: &str) -> bool {
-    matches!(name, "wt" | "awt" | "init" | "quota")
+    matches!(name, "wt" | "awt" | "init" | "quota" | "launch")
 }
 
 fn is_help_flag(arg: &str) -> bool {
@@ -347,6 +354,7 @@ pub fn entry() -> anyhow::Result<()> {
         "window-delete" => Some(cockpit::actions::run_window_delete()),
         "triage" => Some(triage::run_cli(&args[2..])),
         "quota" => Some(quota::run_cli(&args[2..])),
+        "launch" => Some(launch::run_cli(&args[2..])),
         "hook" => Some(hook::run_cli(&args[2..])),
         "inject" => Some(inject::run_cli(&args[2..])),
         "wt" | "awt" => Some(wt::run_cli(&args[2..])),

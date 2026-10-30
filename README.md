@@ -98,6 +98,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux triage --popup` | Cycle notifying AI agent panes inside an isolated `_popups` overlay |
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
 | `waymux quota [--visual\|--popup\|--json\|--badge\|--badge-min\|--recommend\|--refresh]` | Agent quota and the agent a new session should launch: Claude Code's 5h/7d windows, burn rate and projection, plus any agents your providers report (see [Agent quota](#agent-quota)) |
+| `waymux launch [--peek\|--pick] [--auto\|--menu\|shell\|<agent> [args]]` | Start an agent CLI in this pane: a Waymaker menu of agent × model rows with their quota, cursor on the recommended row, or that row directly (`--auto`); `--next <choice>` arms the next launch (see [Agent launch](#agent-launch)) |
 | `waymux quota statusline` | Claude Code `statusLine` command: records `rate_limits` from stdin and prints model, context and quota in one line |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
@@ -294,6 +295,17 @@ launch = 'exec "$WAYMUX_QUOTA_AGENT"'    # popup Enter, in a new window (the def
 pick = "my-launcher --pick"              # popup a: prints the command line to run (optional)
 ```
 
+**Agent launch.** <a id="agent-launch"></a>`waymux launch` starts an agent CLI in the current pane, for a new session's startup command or a launcher popup. Its menu has one row per agent × model with that agent's quota: Claude Code's `claude_models`, the `launch` rows a quota provider attaches to its agents (`[{args, model, tier, quota, level, rec}]`, `rec` marking the model to start when that agent is recommended), and each installed `extra` CLI. The cursor starts on the recommended row, which `--auto` (and any launch without a terminal) starts directly. Without an argument the choice is an armed one (`--next`, valid 30 s, for a picker that creates the pane), else `default`, else the menu. `--peek` prints what would start; `--pick` shows the menu and prints the pick. The pane option `@ai_launch` records the start command so `cockpit restore` can repeat it. `rows_filter` rewrites the rows (JSON array in and out), and `exec` starts the pick as `<exec> <agent> [args...]`, e.g. inside a sandbox.
+
+```toml
+[launch]
+default = "menu"                             # or auto, shell, an agent
+claude_models = ["opus", "sonnet", "haiku"]  # Claude Code --model aliases offered as rows
+extra = ["devin", "codex"]                   # CLIs without quota data, shown when installed
+exec = "~/bin/start-agent"                   # optional: run as <exec> <agent> [args...]
+rows_filter = "~/bin/launch-rows"            # optional: JSON rows on stdin, JSON rows on stdout
+```
+
 **Flow events & key telemetry.** `flow_log_hook = "~/bin/flow-log.sh"` runs that program as `<hook> <event> <pane> <extra>` whenever an agent asks a question (`agent_question`), you reply (`human_reply`) or a working agent finishes (`agent_finished`), e.g. to keep a focus or time-tracking log. `keylog = true` makes `waymux keylog` append Cockpit and wrapped tmux key presses to `$XDG_STATE_HOME/flow/keys.tsv`. Both are off unless configured.
 
 | Variable | Default | Purpose |
@@ -302,6 +314,9 @@ pick = "my-launcher --pick"              # popup a: prints the command line to r
 | `WAYMUX_COLORS` | unset | Theme `colors.toml`; else `~/.config/waymux/colors.toml`, then Omarchy's active theme, then built-in colors |
 | `WAYMUX_KEYLOG` | unset | `1` enables `waymux keylog` (`$XDG_STATE_HOME/flow/keys.tsv`) without `keylog = true` in `config.toml`; `0` disables it even when the config turns it on |
 | `WAYMUX_REVIEW_MIN_SECS` | `20` | Seconds in lazygitrs (Cockpit `g`) that clear the done-not-reviewed state when nothing was staged, committed or discarded |
+| `WAYMUX_LAUNCH_DEFAULT`, `WAYMUX_LAUNCH_EXEC`, `WAYMUX_LAUNCH_FILTER` | unset | Replace `[launch] default`, `exec` and `rows_filter` |
+| `WAYMUX_LAUNCH_NEXT` | `$XDG_RUNTIME_DIR/waymux/launch.next` | File `launch --next` arms |
+| `WAYMUX_LAUNCH_PRESET`, `WAYMUX_LAUNCH_PICK_PRESET` | built-in | Waymaker preset for the menu, and one layered over it for `--pick` |
 | `WAYMUX_QUOTA_PROVIDERS` | unset | Quota providers, one command per line; replaces `[quota] providers` |
 | `WAYMUX_QUOTA_PREFERENCE` | unset | Space-separated launch order; replaces `[quota] preference` |
 | `WAYMUX_QUOTA_SESSION_RATE` | `10` | Replaces `[quota] session_rate` |

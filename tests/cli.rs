@@ -456,3 +456,45 @@ fn quota_refresh_is_silent_and_writes_the_badge_caches() {
     assert_eq!(bad.status.code(), Some(2));
     assert!(stderr(&bad).contains("unknown option '--bogus'"));
 }
+
+#[test]
+fn launch_arms_a_choice_and_peeks_without_consuming_it() {
+    let sb = Sandbox::new();
+    assert!(
+        sb.run(&["launch", "--next", "codex", "--model", "o4"])
+            .status
+            .success()
+    );
+    for _ in 0..2 {
+        let out = sb.run(&["launch", "--peek"]);
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "codex --model o4\n");
+    }
+    let bad = sb.run(&["launch", "--next"]);
+    assert_eq!(bad.status.code(), Some(2));
+}
+
+#[test]
+fn launch_rows_come_from_providers_filters_and_the_exec_hook() {
+    let sb = Sandbox::new();
+    let provider = r#"printf '[{"agent":"other","available":true,"level":"green","launch":[{"args":"--model m0","model":"M0"},{"args":"--model m1","model":"M1","rec":true}]}]'"#;
+    let base = [
+        ("WAYMUX_QUOTA_PROVIDERS", provider),
+        ("WAYMUX_QUOTA_PREFERENCE", "other"),
+    ];
+    // No terminal: the menu falls back to the recommended row.
+    let out = sb.run_with_stdin(&["launch", "--peek"], &base, "");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "other --model m1\n",
+        "{}",
+        stderr(&out)
+    );
+
+    let filtered = [base[0], base[1], ("WAYMUX_LAUNCH_FILTER", "sed s/m1/m2/")];
+    let out = sb.run_with_stdin(&["launch", "--peek", "--auto"], &filtered, "");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "other --model m2\n");
+
+    let hooked = [("WAYMUX_LAUNCH_EXEC", "printf '%s|'")];
+    let out = sb.run_with_stdin(&["launch", "other", "--model", "x y"], &hooked, "");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "other|--model|x y|");
+}
