@@ -97,6 +97,8 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux review-notes <count\|list\|send> ...` | Count, list, or atomically send `.git/info/lines.json` review notes to an agent |
 | `waymux triage --popup` | Cycle notifying AI agent panes inside an isolated `_popups` overlay |
 | `waymux triage --jump` | Jump to the next agent waiting on you (permission → question → error/stalled, oldest first), then to finished work nobody has reviewed, with origin-return memory |
+| `waymux quota [--visual\|--popup\|--json\|--badge\|--badge-min\|--recommend\|--refresh]` | Agent quota and the agent a new session should launch: Claude Code's 5h/7d windows, burn rate and projection, plus any agents your providers report (see [Agent quota](#agent-quota)) |
+| `waymux quota statusline` | Claude Code `statusLine` command: records `rate_limits` from stdin and prints model, context and quota in one line |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
 | `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
@@ -281,6 +283,17 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 
 **Logging.** `log_level` sets the daemon's log filter: a level (`debug`) or a full `tracing` directive (`waymux=debug,axum=warn`). `RUST_LOG` overrides it.
 
+**Agent quota.** <a id="agent-quota"></a>`waymux quota` reports how much quota each agent CLI has left and recommends the one a new session should launch. Claude Code is built in: set its `statusLine` command to `waymux quota statusline`, and every refresh records the `rate_limits` it receives (`$XDG_STATE_HOME/waymux/quota/`), from which come the burn rate in %/h, the projection at the 5h reset and the weekly pace. Other agents come from providers: commands that print a JSON array of agent objects with at least `agent`, `available` and `level` (`green`, `yellow`, `red`, `unknown`); optional fields (`title`, `icon`, `tag`, `sessions`, `prompts_1h`, `prompts_5h`, `activity`, `until`, `groups`, `est_five`, `capacity_5h`, `window`, `default_model`, `notes`) shape the report, and every field reaches `--json` unchanged (the module doc in `src/quota/mod.rs` describes each). A provider gets `WAYMUX_QUOTA_NOW`, `WAYMUX_QUOTA_STATE_DIR` and, on `--refresh`, `WAYMUX_QUOTA_FORCE=1`; one that fails or prints anything else is skipped. `--refresh` (silent, one at a time) rewrites the `badge` and `badge-min` caches, for a timer and a status bar that must never wait. In tmux, `--popup` opens the visual report with `Enter` (run `launch`), `a` (run `pick`), `r` (refresh) and `Esc`.
+
+```toml
+[quota]
+providers = ["~/bin/my-agent-quota"]     # each prints a JSON array of agents
+preference = ["claude", "my-agent"]      # launch order; default: claude, then the providers' agents
+session_rate = 10                        # %/h one new Claude session burns before samples exist
+launch = 'exec "$WAYMUX_QUOTA_AGENT"'    # popup Enter, in a new window (the default)
+pick = "my-launcher --pick"              # popup a: prints the command line to run (optional)
+```
+
 **Flow events & key telemetry.** `flow_log_hook = "~/bin/flow-log.sh"` runs that program as `<hook> <event> <pane> <extra>` whenever an agent asks a question (`agent_question`), you reply (`human_reply`) or a working agent finishes (`agent_finished`), e.g. to keep a focus or time-tracking log. `keylog = true` makes `waymux keylog` append Cockpit and wrapped tmux key presses to `$XDG_STATE_HOME/flow/keys.tsv`. Both are off unless configured.
 
 | Variable | Default | Purpose |
@@ -289,6 +302,11 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 | `WAYMUX_COLORS` | unset | Theme `colors.toml`; else `~/.config/waymux/colors.toml`, then Omarchy's active theme, then built-in colors |
 | `WAYMUX_KEYLOG` | unset | `1` enables `waymux keylog` (`$XDG_STATE_HOME/flow/keys.tsv`) without `keylog = true` in `config.toml`; `0` disables it even when the config turns it on |
 | `WAYMUX_REVIEW_MIN_SECS` | `20` | Seconds in lazygitrs (Cockpit `g`) that clear the done-not-reviewed state when nothing was staged, committed or discarded |
+| `WAYMUX_QUOTA_PROVIDERS` | unset | Quota providers, one command per line; replaces `[quota] providers` |
+| `WAYMUX_QUOTA_PREFERENCE` | unset | Space-separated launch order; replaces `[quota] preference` |
+| `WAYMUX_QUOTA_SESSION_RATE` | `10` | Replaces `[quota] session_rate` |
+| `WAYMUX_QUOTA_STATE_DIR` | `$XDG_STATE_HOME/waymux/quota` | Claude samples and the badge caches |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Where `quota` reads Claude Code's sessions and prompt history |
 | `WAYMUX_SHARE_DIR` | `~/.local/share/waymux` | Where `install.sh` puts the tmux plugin and `scripts/`, and where `wt` looks for bundled helpers |
 | `AWT_SWEEP_ROOTS` | `~/.dotfiles:~/dev/github` | Directories `awt sweep --all` scans (each a repository or a folder of repositories) |
 | `AWT_SWEEP_KEEP_BRANCHES` | your user name | Branches whose `target/` `awt sweep --clean-targets` never removes |

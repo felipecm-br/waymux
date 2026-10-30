@@ -106,6 +106,26 @@ impl ApprovalsConfig {
     }
 }
 
+/// `[quota]`: `waymux quota`, the agent quota report and the launch recommendation
+/// (see `crate::quota`).
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct QuotaConfig {
+    /// Commands (run with `sh -c`) that print a JSON array of extra agents to report on.
+    #[serde(default)]
+    pub providers: Vec<String>,
+    /// Agent names in launch preference order; default `claude`, then the providers' agents.
+    pub preference: Option<Vec<String>>,
+    /// Assumed 5h burn of one new Claude session in %/h before samples exist (default 10).
+    pub session_rate: Option<f64>,
+    /// Popup `Enter`: shell command run in a new window; `$WAYMUX_QUOTA_AGENT` holds the
+    /// recommended agent. Default: start that agent.
+    pub launch: Option<String>,
+    /// Popup `a`: shell command that prints the command line to run in a new window (empty
+    /// output cancels). Without it the popup has no `a` key.
+    pub pick: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -133,6 +153,8 @@ pub struct Config {
     #[serde(default)]
     pub keylog: bool,
     pub checkpoints: Option<CheckpointsConfig>,
+    /// Agent quota report and launch recommendation (`[quota]`).
+    pub quota: Option<QuotaConfig>,
 }
 
 fn default_listen_addr() -> String {
@@ -167,6 +189,7 @@ impl Default for Config {
             flow_log_hook: None,
             keylog: false,
             checkpoints: None,
+            quota: None,
         }
     }
 }

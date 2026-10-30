@@ -47,6 +47,11 @@
   - `notes.rs`: `waymux review-notes` (`serde_json` parser/mutator for `<git-dir>/info/lines.json`).
   - `actions.rs`: `waymux agent-action`, `waymux window-create`, `waymux window-delete`.
 - `src/presets/`: Embedded Waymaker preset (`cockpit-picker.toml`) materialized dynamically to `$XDG_RUNTIME_DIR/waymux/cockpit-picker.toml`.
+- `src/quota/`: `waymux quota` agent quota report and launch recommendation:
+  - `mod.rs`: CLI modes, `Snapshot` (Claude plus provider agents), providers (`[quota] providers` / `$WAYMUX_QUOTA_PROVIDERS`, a JSON array of agents each), `recommend`, `--refresh` (flock, badge caches) and the jq-compatible number/time helpers.
+  - `claude.rs`: `quota statusline` (records `rate_limits` samples), Claude sessions and prompts from `~/.claude`, and the burn-rate/projection/level model.
+  - `render.rs`: `--json`, `--badge`, `--badge-min`, `--line`, the plain report and the `--visual` gauges.
+  - `popup.rs`: `--popup` (tmux popup, raw-mode key loop, `[quota] launch` / `pick`).
 - `src/triage.rs`: `waymux triage --popup` and `waymux triage --jump` alert navigation over a stateless queue (`service_class`: permission → question → error/stalled, oldest first), shared with the Cockpit sort.
 - `src/hook.rs`: `waymux hook {tmux|lazygit}` native sub-10ms AI agent lifecycle hooks.
 - `src/inject.rs`: `waymux inject` bracketed-paste prompt injector with staleness guard.

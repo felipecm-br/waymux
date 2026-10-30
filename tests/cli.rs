@@ -392,3 +392,67 @@ fn sighup_reloads_the_config_and_keeps_it_when_the_new_one_is_broken() {
         "{err}"
     );
 }
+
+#[test]
+fn quota_records_the_statusline_and_merges_provider_agents() {
+    let sb = Sandbox::new();
+    let reset = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 3600;
+    let payload = |five: u32| {
+        format!(
+            r#"{{"model":{{"display_name":"Opus"}},"rate_limits":{{"five_hour":{{"used_percentage":{five},"resets_at":{reset}}},"seven_day":{{"used_percentage":22,"resets_at":"2099-01-01T00:00:00.000Z"}}}}}}"#
+        )
+    };
+    let out = sb.run_with_stdin(&["quota", "statusline"], &[], &payload(42));
+    assert!(out.status.success(), "{}", stderr(&out));
+    let line = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(
+        line.starts_with("Opus · ") && line.contains("5h 42%") && line.contains("7d 22%"),
+        "{line}"
+    );
+    let samples = sb.dir.join(".local/state/waymux/quota/claude-samples.tsv");
+    assert_eq!(
+        std::fs::read_to_string(&samples).unwrap().lines().count(),
+        1
+    );
+
+    // Claude at its cap: the provider's agent is recommended; a broken provider is skipped.
+    sb.run_with_stdin(&["quota", "statusline"], &[], &payload(99));
+    let envs = [
+        (
+            "WAYMUX_QUOTA_PROVIDERS",
+            "printf '[{\"agent\":\"other\",\"available\":true,\"level\":\"green\",\"note\":1}]'\necho not-json",
+        ),
+        ("WAYMUX_QUOTA_PREFERENCE", "claude other"),
+    ];
+    let out = sb.run_with_stdin(&["quota", "--json"], &envs, "");
+    assert!(out.status.success(), "{}", stderr(&out));
+    let snap: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(snap["agents"][0]["level"], "red", "{snap}");
+    assert_eq!(snap["agents"][1]["agent"], "other");
+    assert_eq!(snap["agents"][1]["note"], 1, "provider fields pass through");
+    assert_eq!(snap["agents"].as_array().unwrap().len(), 2);
+    assert_eq!(snap["recommend"], "other");
+    let rec = sb.run_with_stdin(&["quota", "--recommend"], &envs, "");
+    assert_eq!(String::from_utf8_lossy(&rec.stdout), "other\n");
+}
+
+#[test]
+fn quota_refresh_is_silent_and_writes_the_badge_caches() {
+    let sb = Sandbox::new();
+    let out = sb.run(&["quota", "--refresh"]);
+    assert!(out.status.success() && out.stdout.is_empty() && out.stderr.is_empty());
+    let state = sb.dir.join(".local/state/waymux/quota");
+    assert!(
+        std::fs::read_to_string(state.join("badge"))
+            .unwrap()
+            .contains("→")
+    );
+    assert!(state.join("badge-min").exists());
+    let bad = sb.run(&["quota", "--bogus"]);
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(stderr(&bad).contains("unknown option '--bogus'"));
+}
