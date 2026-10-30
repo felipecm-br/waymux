@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-30
+
 - **`waymux launch --popup` opens the menu again**: the popup ran the menu with stdin closed, so Waymaker read EOF and returned the recommended row without showing anything; the pick then started in a new window (or failed), and the popup closed at once. The quota popup's `a` key had the same fault. Both now give the menu the popup's terminal.
 
 ## [0.8.1] - 2026-10-30
