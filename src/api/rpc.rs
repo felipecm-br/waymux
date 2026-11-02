@@ -54,6 +54,17 @@ pub struct QueuePushParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct PhonePaneParams {
+    pub pane_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PhonePromptParams {
+    pub pane_id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ApprovalHoldParams {
     pub pane_id: String,
     pub tool: String,
@@ -328,11 +339,29 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
             }
         }
         "phone/snapshot" => Ok(super::phone::snapshot(state).await),
-        // Daemon token only (a phone token reaches snapshot and answer, `super::phone::allowed`).
+        "phone/diff" => {
+            let p: PhonePaneParams = strict(params)?;
+            super::phone::diff(state, &p.pane_id)
+                .await
+                .map_err(|code| RpcError::new(INVALID_PARAMS, code))
+        }
+        // The prompt token only (`super::phone::allowed`), or the daemon token.
+        "phone/prompt" => {
+            let p: PhonePromptParams = strict(params)?;
+            super::phone::prompt(state, &p.pane_id, &p.text)
+                .await
+                .map_err(|code| RpcError::new(INVALID_PARAMS, code))
+        }
+        // Daemon token only (a phone token reaches snapshot, answer and diff,
+        // `super::phone::allowed`). `prompt: true` issues the token that may also type.
         "phone/token" => {
             let rotate = params["rotate"].as_bool().unwrap_or(false);
-            state
-                .phone_token
+            let token = if params["prompt"].as_bool().unwrap_or(false) {
+                &state.phone_prompt_token
+            } else {
+                &state.phone_token
+            };
+            token
                 .issue(rotate)
                 .map(|token| json!({ "token": token }))
                 .ok_or_else(|| RpcError::new(INTERNAL_ERROR, "cannot save the phone token"))

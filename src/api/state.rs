@@ -59,6 +59,8 @@ pub struct ApiState {
     pub hook_tokens: Arc<super::hook_tokens::HookTokens>,
     /// The phone surface's token (see `super::phone`).
     pub phone_token: Arc<super::phone::PhoneToken>,
+    /// The phone token that may also type prompts (see `super::phone`).
+    pub phone_prompt_token: Arc<super::phone::PhoneToken>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -123,6 +125,7 @@ impl ApiState {
             next_queue_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             hook_tokens: Arc::default(),
             phone_token: Arc::default(),
+            phone_prompt_token: Arc::default(),
         }
     }
 

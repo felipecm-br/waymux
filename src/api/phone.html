@@ -47,6 +47,12 @@
   button { flex: 1; min-height: var(--tap); border-radius: var(--radius-m); font: 600 var(--text-l) var(--font-ui); border: var(--border) solid var(--line); background: var(--surface); color: var(--text); }
   button.allow { border-color: var(--accent); color: var(--accent); }
   button:disabled { opacity: var(--disabled); }
+  button.quiet { flex: none; min-height: var(--tap); padding: 0 var(--space-4); font-size: var(--text-m); }
+  .ask { display: flex; gap: var(--space-2); margin-top: var(--space-3); }
+  .ask textarea { flex: 1; min-height: var(--tap); resize: vertical; border-radius: var(--radius-m); border: var(--border) solid var(--line); background: var(--bg); color: var(--text); font: var(--text-l)/var(--leading) var(--font-ui); padding: var(--space-2); }
+  .ask button { flex: none; padding: 0 var(--space-4); }
+  .diff { font: var(--text-s)/var(--leading-code) var(--font-mono); background: var(--bg); border-radius: var(--radius-s); padding: var(--space-2); margin-top: var(--space-3); white-space: pre; overflow-x: auto; max-height: 60vh; }
+  .diff .add { color: var(--accent); } .diff .del { color: var(--error); } .diff .hunk { color: var(--muted); }
   #empty, #pair { color: var(--muted); text-align: center; margin-top: var(--space-7); }
   code { font-family: var(--font-mono); }
 </style>
@@ -78,7 +84,8 @@ async function rpc(method, params) {
     headers: { "content-type": "application/json", "authorization": "Bearer " + token },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params || {} }),
   });
-  if (res.status === 401 || res.status === 403) throw new Error("unpaired");
+  if (res.status === 401) throw new Error("unpaired");
+  if (res.status === 403) throw new Error("not allowed");
   const body = await res.json();
   if (body.error) throw new Error(body.error.message);
   return body.result;
@@ -117,6 +124,55 @@ async function answer(a, decision, buttons) {
   refresh();
 }
 
+// Typing and an open diff survive the 3-second refresh, which rebuilds the cards.
+const drafts = new Map();
+const diffs = new Map();
+let typing = false;
+
+const PROMPT_HELP = "This pairing watches and answers only. To type prompts, run waymux phone-token --prompt --url and open that link.";
+
+async function send(a, box, button) {
+  const text = box.value.trim();
+  if (!text) return;
+  button.disabled = true;
+  try {
+    const r = await rpc("phone/prompt", { pane_id: a.pane_id, text });
+    drafts.delete(a.pane_id);
+    box.value = "";
+    $("status").textContent = r.position > 1 ? "queued (" + r.position + ")" : "queued";
+    box.blur();
+    refresh(true);
+  } catch (e) {
+    $("status").textContent = e.message === "not allowed" ? "prompts not allowed" : "not sent: " + e.message;
+    if (e.message === "not allowed") alert(PROMPT_HELP);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function diffView(text) {
+  const pre = el("pre", "diff");
+  for (const line of text.split("\n")) {
+    const cls = line.startsWith("+") && !line.startsWith("+++") ? "add"
+      : line.startsWith("-") && !line.startsWith("---") ? "del"
+      : line.startsWith("@@") ? "hunk" : null;
+    pre.append(el("span", cls, line + "\n"));
+  }
+  return pre;
+}
+
+async function toggleDiff(a) {
+  if (diffs.has(a.pane_id)) { diffs.delete(a.pane_id); refresh(true); return; }
+  try {
+    const d = await rpc("phone/diff", { pane_id: a.pane_id });
+    diffs.set(a.pane_id, (d.subject || "") + "\n" + (d.diff || "no changes") + (d.truncated ? "\n[cut at 64 KB]" : ""));
+  } catch (e) {
+    const why = { no_checkpoint: "no turn saved yet", no_repository: "not in a git repository" }[e.message] || e.message;
+    diffs.set(a.pane_id, "no diff: " + why);
+  }
+  refresh(true);
+}
+
 function render(snap) {
   const list = $("list");
   list.replaceChildren();
@@ -147,14 +203,31 @@ function render(snap) {
       held.append(actions);
       card.append(held);
     }
+    const ask = el("div", "ask");
+    const box = el("textarea");
+    box.rows = 1;
+    box.placeholder = a.state === "working" ? "Queued until it rests" : "Prompt";
+    box.setAttribute("aria-label", "Prompt for " + (plain(a.label) || a.pane_id));
+    box.value = drafts.get(a.pane_id) || "";
+    box.oninput = () => drafts.set(a.pane_id, box.value);
+    box.onfocus = () => (typing = true);
+    box.onblur = () => (typing = false);
+    const go = el("button", "allow", "Send");
+    go.onclick = () => send(a, box, go);
+    const showDiff = el("button", "quiet", diffs.has(a.pane_id) ? "Hide" : "Diff");
+    showDiff.onclick = () => toggleDiff(a);
+    ask.append(box, go, showDiff);
+    card.append(ask);
+    if (diffs.has(a.pane_id)) card.append(diffView(diffs.get(a.pane_id)));
     list.append(card);
   }
 }
 
 let busy = false;
-async function refresh() {
+async function refresh(force) {
   if (!token) { $("pair").hidden = false; return; }
-  if (busy || document.hidden) return;
+  // Rebuilding the cards while a prompt is typed would take the keyboard away.
+  if (busy || document.hidden || (typing && !force)) return;
   busy = true;
   try {
     render(await rpc("phone/snapshot"));
@@ -166,8 +239,8 @@ async function refresh() {
     busy = false;
   }
 }
-document.addEventListener("visibilitychange", refresh);
-setInterval(refresh, 3000);
+document.addEventListener("visibilitychange", () => refresh());
+setInterval(() => refresh(), 3000);
 refresh();
 </script>
 </body>

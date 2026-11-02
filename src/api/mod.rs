@@ -101,14 +101,16 @@ pub struct AuthState {
     token: Arc<String>,
     hook_tokens: Arc<hook_tokens::HookTokens>,
     phone_token: Arc<phone::PhoneToken>,
+    phone_prompt_token: Arc<phone::PhoneToken>,
 }
 
 /// What a token other than the daemon's may reach.
 enum Scope {
     /// A sandboxed agent's hooks, for one pane.
     Hook(String),
-    /// The phone surface: list agents, answer held prompts.
-    Phone,
+    /// The phone surface: list agents, answer held prompts, read diffs; `true` may also
+    /// queue prompts.
+    Phone(bool),
 }
 
 /// Largest body a hook token may send; a status or a held prompt is far smaller.
@@ -135,8 +137,10 @@ pub async fn auth_middleware(
     }
     let scope = if let Some(pane) = auth.hook_tokens.pane_of(&bearer) {
         Scope::Hook(pane)
+    } else if auth.phone_prompt_token.matches(&bearer) {
+        Scope::Phone(true)
     } else if auth.phone_token.matches(&bearer) {
-        Scope::Phone
+        Scope::Phone(false)
     } else {
         tracing::warn!("Unauthorized HTTP request to {}", req.uri().path());
         return Err(axum::http::StatusCode::UNAUTHORIZED);
@@ -152,7 +156,7 @@ pub async fn auth_middleware(
         serde_json::from_slice(&bytes).map_err(|_| axum::http::StatusCode::BAD_REQUEST)?;
     let allowed = match &scope {
         Scope::Hook(pane) => hook_tokens::allowed(&path, &json, pane),
-        Scope::Phone => phone::allowed(&path, &json),
+        Scope::Phone(prompt) => phone::allowed(&path, &json, *prompt),
     };
     if !allowed {
         tracing::warn!("Scoped token refused on {path}");
@@ -167,6 +171,7 @@ pub fn api_router(adapters: ApiState, auth_token: Arc<String>) -> Router {
         token: auth_token,
         hook_tokens: adapters.hook_tokens.clone(),
         phone_token: adapters.phone_token.clone(),
+        phone_prompt_token: adapters.phone_prompt_token.clone(),
     };
     let protected = Router::new()
         .route("/rpc", post(handle_rpc))
@@ -423,6 +428,30 @@ mod tests {
                 .0,
             StatusCode::FORBIDDEN
         );
+
+        // The diff reaches the handler (no agent on %1, so it is refused there); typing does not.
+        let (code, body) = send(Some(token.clone()), "POST", "/rpc", rpc("phone/diff")).await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(body.contains("unknown_agent"), "{body}");
+        let prompt = r#"{"jsonrpc":"2.0","id":1,"method":"phone/prompt","params":{"pane_id":"%1","text":"hi"}}"#;
+        let (code, _) = send(Some(token.clone()), "POST", "/rpc", prompt.into()).await;
+        assert_eq!(code, StatusCode::FORBIDDEN);
+
+        // The prompt token is a second token: it types, and still reaches nothing else.
+        let issue = r#"{"jsonrpc":"2.0","id":1,"method":"phone/token","params":{"prompt":true}}"#;
+        let (_, body) = send(Some("daemon".into()), "POST", "/rpc", issue.into()).await;
+        let typist = serde_json::from_str::<serde_json::Value>(&body).unwrap()["result"]["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_ne!(typist, token);
+        let (code, body) = send(Some(typist.clone()), "POST", "/rpc", prompt.into()).await;
+        assert_eq!(code, StatusCode::OK);
+        assert!(body.contains("unknown_agent"), "{body}");
+        for method in ["queue/push", "tmux.send_keys", "phone/token", "hook/token"] {
+            let (code, _) = send(Some(typist.clone()), "POST", "/rpc", rpc(method)).await;
+            assert_eq!(code, StatusCode::FORBIDDEN, "{method}");
+        }
 
         // The page needs no token and carries no data.
         let (code, page) = send(None, "GET", "/m", String::new()).await;

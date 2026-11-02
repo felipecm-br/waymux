@@ -32,6 +32,7 @@ pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<
         0,
     );
     adapters.phone_token = Arc::new(crate::api::phone::PhoneToken::load());
+    adapters.phone_prompt_token = Arc::new(crate::api::phone::PhoneToken::load_prompt());
     adapters.hook_tokens = Arc::new(crate::api::hook_tokens::HookTokens::load());
     adapters.reload(&config);
 

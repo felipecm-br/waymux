@@ -133,8 +133,8 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         name: "phone-token",
-        usage: "phone-token [--rotate] [--url]",
-        about: "Print the phone surface's token, or the link that pairs a phone (/m)",
+        usage: "phone-token [--prompt] [--rotate] [--url]",
+        about: "Print the phone surface's token (--prompt: one that may also type prompts), or the pairing link (/m)",
         plumbing: false,
     },
     CommandSpec {

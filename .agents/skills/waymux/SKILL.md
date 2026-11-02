@@ -82,6 +82,8 @@ rpc '{"jsonrpc":"2.0","method":"agentState/wait","params":{"pane_id":"%12","targ
 | `tmux.send_keys` | `target`, `keys` (array), optional `literal` |
 | `tmux.capture_pane` | `target`, optional `start_line`, `end_line`, `escape_sequences` |
 | `tmux.select_window` / `select_pane` / `select_layout` / `kill_*` / `display_message` / `ring_bell` | `target` (+ method-specific fields) |
+| `phone/diff` | `pane_id`: diff of the pane's newest checkpoint (phone token or daemon token) |
+| `phone/prompt` | `pane_id`, `text`: queue a prompt for a known agent (prompt token from `waymux phone-token --prompt`, or daemon token) |
 
 `tmux.send_keys` and `kill_*` act on the user's live tmux: target only panes you created or were asked to touch.
 

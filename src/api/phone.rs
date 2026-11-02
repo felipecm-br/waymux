@@ -13,6 +13,15 @@
 //! One token at a time, minted with `waymux phone-token` (daemon token only) and kept in
 //! `$XDG_STATE_HOME/waymux/phone-token` (0600), so pairing survives a daemon restart.
 //! `--rotate` replaces it and unpairs every device that held the old one.
+//!
+//! The same token also reads the diff of an agent's last turn (`phone/diff`): the daemon picks
+//! the pane's newest checkpoint itself, and the client names a pane, never a path or a commit.
+//!
+//! Typing a prompt (`phone/prompt`) needs a second token, `waymux phone-token --prompt`, kept
+//! in `phone-prompt-token`: pairing a phone to watch and answer does not give it the keyboard.
+//! A prompt goes through the delivery queue (`super::queue`), so it waits for the agent to be
+//! at rest and never lands in a permission prompt or the middle of a turn, and only to a pane
+//! the daemon has agent state for, so it is never typed at once into a bare shell.
 
 use super::ApiState;
 use serde_json::{Value, json};
@@ -20,7 +29,16 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 /// The methods a phone token may call.
-pub const METHODS: [&str; 2] = ["phone/snapshot", "approval/answer"];
+pub const METHODS: [&str; 3] = ["phone/snapshot", "approval/answer", "phone/diff"];
+
+/// What a prompt token may call on top of [`METHODS`].
+pub const PROMPT_METHODS: [&str; 1] = ["phone/prompt"];
+
+/// Largest prompt typed from the phone; a thumb does not write more.
+pub const MAX_PROMPT_BYTES: usize = 4 * 1024;
+
+/// Largest diff sent to the phone; the rest is cut and marked `truncated`.
+pub const MAX_DIFF_BYTES: usize = 64 * 1024;
 
 pub const PAGE: &str = include_str!("phone.html");
 
@@ -34,7 +52,16 @@ pub struct PhoneToken {
 impl PhoneToken {
     /// The token saved by an earlier daemon, if any.
     pub fn load() -> Self {
-        let path = crate::auth::state_file("phone-token");
+        Self::load_named("phone-token")
+    }
+
+    /// The prompt token saved by an earlier daemon, if any.
+    pub fn load_prompt() -> Self {
+        Self::load_named("phone-prompt-token")
+    }
+
+    fn load_named(name: &str) -> Self {
+        let path = crate::auth::state_file(name);
         let saved = path
             .as_ref()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -72,12 +99,81 @@ impl PhoneToken {
     }
 }
 
-/// Whether a request with the phone token may go through: one JSON-RPC call to one of [`METHODS`].
-pub fn allowed(path: &str, body: &Value) -> bool {
+/// Whether a request with a phone token may go through: one JSON-RPC call to one of
+/// [`METHODS`], or of [`PROMPT_METHODS`] with the prompt token.
+pub fn allowed(path: &str, body: &Value, prompt: bool) -> bool {
     path == "/rpc"
         && body["method"]
             .as_str()
-            .is_some_and(|m| METHODS.contains(&m))
+            .is_some_and(|m| METHODS.contains(&m) || (prompt && PROMPT_METHODS.contains(&m)))
+}
+
+/// A prompt as typed text: line endings as `\n`, every other control character (escape
+/// sequences, `\r` that would submit early) dropped, surrounding blank space trimmed.
+fn clean_prompt(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Whether the daemon has agent state for `pane`: the queue types at once into a pane it does
+/// not know, which from the phone would be a shell.
+async fn known_agent(state: &ApiState, pane: &str) -> bool {
+    super::hook_tokens::valid_pane(pane) && state.pane_states.lock().await.contains_key(pane)
+}
+
+/// Queues `text` for the agent in `pane`, as `phone`.
+pub async fn prompt(state: &ApiState, pane: &str, text: &str) -> Result<Value, &'static str> {
+    if !known_agent(state, pane).await {
+        return Err("unknown_agent");
+    }
+    let text = clean_prompt(text);
+    if text.len() > MAX_PROMPT_BYTES {
+        return Err("too_large");
+    }
+    super::queue::push(state, pane, &text, "phone")
+        .await
+        .map(|(id, position)| json!({ "id": id, "position": position, "status": "queued" }))
+        .map_err(|e| e.code())
+}
+
+/// `text` cut to at most `max` bytes on a character boundary, and whether it was cut.
+fn cut(text: String, max: usize) -> (String, bool) {
+    if text.len() <= max {
+        return (text, false);
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_string(), true)
+}
+
+/// The diff of the newest checkpoint of `pane` (its agent's last turn), plain text.
+pub async fn diff(state: &ApiState, pane: &str) -> Result<Value, &'static str> {
+    if !known_agent(state, pane).await {
+        return Err("unknown_agent");
+    }
+    let pane = pane.to_string();
+    tokio::task::spawn_blocking(move || {
+        let dir = crate::checkpoint::pane_dir(&pane).ok_or("no_directory")?;
+        let repo = crate::checkpoint::Repo::open(&dir, None).ok_or("no_repository")?;
+        let last = repo.list(&pane).pop().ok_or("no_checkpoint")?;
+        let text = repo.diff(&pane, last.n, false).map_err(|_| "diff_failed")?;
+        let (text, truncated) = cut(text, MAX_DIFF_BYTES);
+        Ok(json!({
+            "n": last.n,
+            "subject": last.subject,
+            "time": last.time,
+            "diff": text,
+            "truncated": truncated,
+        }))
+    })
+    .await
+    .map_err(|_| "diff_failed")?
 }
 
 /// This machine's Tailscale name (`host.tailnet.ts.net`), if Tailscale runs.
@@ -286,27 +382,100 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_allowed_only_snapshot_and_answer() {
-        assert!(allowed("/rpc", &json!({ "method": "phone/snapshot" })));
-        assert!(allowed(
-            "/rpc",
-            &json!({ "method": "approval/answer", "params": {} })
-        ));
-        for method in [
-            "queue/push",
-            "tmux.send_keys",
-            "phone/token",
-            "phone/alert",
-            "hook/token",
-            "agentState/update",
-        ] {
-            assert!(!allowed("/rpc", &json!({ "method": method })), "{method}");
+    fn test_allowed_only_snapshot_answer_and_diff() {
+        for prompt in [false, true] {
+            for method in ["phone/snapshot", "approval/answer", "phone/diff"] {
+                assert!(
+                    allowed("/rpc", &json!({ "method": method }), prompt),
+                    "{method}"
+                );
+            }
+            for method in [
+                "queue/push",
+                "tmux.send_keys",
+                "phone/token",
+                "phone/alert",
+                "hook/token",
+                "agentState/update",
+                "checkpoint/restore",
+            ] {
+                assert!(
+                    !allowed("/rpc", &json!({ "method": method }), prompt),
+                    "{method}"
+                );
+            }
+            assert!(!allowed(
+                "/api/status",
+                &json!({ "method": "phone/snapshot" }),
+                prompt
+            ));
+            assert!(!allowed(
+                "/rpc",
+                &json!([{ "method": "phone/snapshot" }]),
+                prompt
+            ));
         }
-        assert!(!allowed(
-            "/api/status",
-            &json!({ "method": "phone/snapshot" })
-        ));
-        assert!(!allowed("/rpc", &json!([{ "method": "phone/snapshot" }])));
+    }
+
+    #[test]
+    fn test_only_the_prompt_token_types() {
+        let body = json!({ "method": "phone/prompt" });
+        assert!(!allowed("/rpc", &body, false));
+        assert!(allowed("/rpc", &body, true));
+        assert!(!allowed("/api/status", &body, true));
+    }
+
+    #[test]
+    fn test_clean_prompt_keeps_lines_and_drops_escapes() {
+        assert_eq!(
+            clean_prompt("  fix the test\r\nthen run it \n"),
+            "fix the test\nthen run it"
+        );
+        assert_eq!(clean_prompt("a\u{1b}[2Jb\rc\u{7}"), "a[2Jbc");
+        assert_eq!(clean_prompt("tab\there"), "tab\there");
+        assert_eq!(clean_prompt(" \r\n\t "), "");
+    }
+
+    #[test]
+    fn test_cut_stays_on_a_character_boundary() {
+        assert_eq!(cut("abc".into(), 5), ("abc".into(), false));
+        assert_eq!(cut("abcdef".into(), 3), ("abc".into(), true));
+        // "é" is two bytes: a cut at 2 would split it.
+        assert_eq!(cut("aé".into(), 2), ("a".into(), true));
+    }
+
+    #[tokio::test]
+    async fn test_prompt_and_diff_refuse_panes_with_no_agent() {
+        let state = ApiState::new(Vec::new(), 0);
+        assert_eq!(prompt(&state, "%1", "hi").await, Err("unknown_agent"));
+        assert_eq!(prompt(&state, "api:1", "hi").await, Err("unknown_agent"));
+        assert_eq!(diff(&state, "%1").await, Err("unknown_agent"));
+        assert_eq!(diff(&state, "../etc").await, Err("unknown_agent"));
+    }
+
+    #[tokio::test]
+    async fn test_prompt_queues_for_a_known_agent() {
+        let state = ApiState::new(Vec::new(), 0);
+        // Working: the queue holds the prompt and types nothing until the agent rests.
+        state.pane_states.lock().await.insert(
+            "%3".into(),
+            crate::api::PaneStateInfo {
+                last_timestamp: 0,
+                seq_id: 1,
+                state: crate::adapters::AgentState::Working,
+                message: None,
+                finished_at: 0,
+                changed_at: 0,
+            },
+        );
+        let queued = prompt(&state, "%3", "  run the tests\r\n").await.unwrap();
+        assert_eq!(queued["position"], 1);
+        let list = crate::api::queue::list(&state, Some("%3")).await;
+        assert!(list.to_string().contains("run the tests"), "{list}");
+        assert!(list.to_string().contains(r#""by":"phone""#), "{list}");
+        assert_eq!(prompt(&state, "%3", " \r\n").await, Err("empty"));
+        let long = "x".repeat(MAX_PROMPT_BYTES + 1);
+        assert_eq!(prompt(&state, "%3", &long).await, Err("too_large"));
     }
 
     #[test]

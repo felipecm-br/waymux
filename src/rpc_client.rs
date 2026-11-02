@@ -354,9 +354,10 @@ pub fn phone_alert_cli() -> i32 {
 pub fn phone_token_cli(args: &[String]) -> i32 {
     let rotate = args.iter().any(|a| a == "--rotate");
     let url = args.iter().any(|a| a == "--url");
+    let prompt = args.iter().any(|a| a == "--prompt");
     let token = match rpc_call(
         "phone/token",
-        &serde_json::json!({ "rotate": rotate }),
+        &serde_json::json!({ "rotate": rotate, "prompt": prompt }),
         1000,
     ) {
         Ok(result) => result["token"].as_str().unwrap_or_default().to_string(),

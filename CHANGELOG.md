@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Type a prompt and read the last turn's diff from the phone** (`/m`): each agent card gets a prompt box and a **Diff** button. `phone/prompt` queues the text through the delivery queue (agents with daemon state only, 4 KB, control characters dropped) and needs a second token, `waymux phone-token --prompt [--url]`, so a watch-only pairing cannot type. `phone/diff` returns the diff of the pane's newest checkpoint, chosen by the daemon, cut at 64 KB; the existing phone token reaches it. Either token still gets 403 on `tmux.*`, `queue/push` and every method that takes a path.
+
 ## [0.8.2] - 2026-10-30
 
 - **`waymux launch --popup` opens the menu again**: the popup ran the menu with stdin closed, so Waymaker read EOF and returned the recommended row without showing anything; the pick then started in a new window (or failed), and the popup closed at once. The quota popup's `a` key had the same fault. Both now give the menu the popup's terminal.

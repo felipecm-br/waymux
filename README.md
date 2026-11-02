@@ -121,7 +121,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
 | `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
 | `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
-| `waymux phone-token [--rotate] [--url]` | Print the phone page's token, the link that pairs a phone, or replace it to unpair every phone (see [Phone](#phone)) |
+| `waymux phone-token [--prompt] [--rotate] [--url]` | Print the phone page's token, the link that pairs a phone, or replace it to unpair every phone; `--prompt` handles the second token, which may also type prompts (see [Phone](#phone)) |
 | `waymux phone-alert` | Send a test alert to the `[phone]` ntfy topic |
 | `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
 | `waymux init <--tmux\|--systemd\|--hooks>` | Print the tmux plugin line, the systemd unit, or a Claude Code hooks block |
@@ -281,7 +281,9 @@ Before queuing, invisible characters (Unicode tags, bidi controls, zero-width sp
 
 ### Phone
 
-The daemon serves a page at `/m` for a phone on your tailnet: every agent with its state, age and recap, held prompts first, answered with **Allow** or **Deny** (a call matching a [risk rule](#risk-rules) asks to confirm). Serve the daemon with `tailscale serve --bg 4040`, then open the link `waymux phone-token --url` prints. The page reads its token from the URL fragment, which a browser never sends to a server, and keeps it in local storage. A phone token reaches `phone/snapshot` and `approval/answer` only (403 otherwise); it is saved `0600` in `$XDG_STATE_HOME/waymux/phone-token`, and `waymux phone-token --rotate` unpairs every phone.
+The daemon serves a page at `/m` for a phone on your tailnet: every agent with its state, age and recap, held prompts first, answered with **Allow** or **Deny** (a call matching a [risk rule](#risk-rules) asks to confirm). Serve the daemon with `tailscale serve --bg 4040`, then open the link `waymux phone-token --url` prints. The page reads its token from the URL fragment, which a browser never sends to a server, and keeps it in local storage. A phone token reaches `phone/snapshot`, `approval/answer` and `phone/diff` only (403 otherwise); it is saved `0600` in `$XDG_STATE_HOME/waymux/phone-token`, and `waymux phone-token --rotate` unpairs every phone.
+
+**Diff** on a card shows what the agent's last turn changed: the diff of the pane's newest [checkpoint](#turn-checkpoints), picked by the daemon (the phone names a pane, never a path or a commit), plain text, cut at 64 KB. **Send** types a prompt into the agent through the [delivery queue](#delivery-queue), so it waits until the agent is at rest and never lands in a permission prompt or mid-turn; it goes only to panes the daemon has agent state for, never to a bare shell, at most 4 KB, with control characters dropped. Typing needs a second token: pair with `waymux phone-token --prompt --url` (saved in `phone-prompt-token`; `--prompt --rotate` revokes it alone). The watch-only pairing stays watch-only.
 
 With an [ntfy](https://ntfy.sh) topic in `[phone]`, a prompt still held after `alert_after_seconds` (5 to 120, default 15), so one you did not answer at the desk, sends an alert that names the window (`api:2 build waits for you`, plus `(risky call)` when a rule matched) and opens `/m` when tapped:
 
