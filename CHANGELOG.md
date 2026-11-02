@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Pick the effort in the launch and switch menus**: `Ctrl+H` / `Ctrl+L` (or `←` / `→`) step the effort of the agent under the cursor, drawn as a gauge in the footer (`━━●── high`) that follows the cursor and keeps the preset's colors. The launch pick starts with `--effort <level>` (Claude Code, Codex; agents without the flag show `none`), and the switch pick types `/effort <level>` after `/model`, so a Claude switch menu lists its models only. An untouched gauge passes nothing. Needs Waymaker 0.6 (`SetStyledFooter`); the built-in menu preset carries the binds.
+
 ## [0.9.0] - 2026-11-02
 
 - **A turn ended by a usage limit shows as an error**: Claude Code fires `StopFailure` instead of `Stop` when an API error ends the turn, and the hook took it for nothing, so a rate-limited agent looked finished. `waymux hook tmux StopFailure` now sets the pane to `error` with the reason `usage limit` (for `rate_limit`) or `API error: <name>`, so triage, the sounds and the phone page treat it as waiting on you. `waymux init --hooks` includes the event; add it to existing settings.

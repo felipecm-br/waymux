@@ -28,11 +28,15 @@ usage: waymux switch [-t pane] [choice]
        waymux switch [-t pane] --agent
        waymux switch --popup [pane]
 
-  (none)          Menu of the pane agent's models and effort levels, cursor on the current one
+  (none)          Menu of the pane agent's models, cursor on the current one; Ctrl+H / Ctrl+L
+                  (or ← / →) step the effort shown in the footer, Enter switches both. Agents
+                  without an effort flag list their effort levels as rows instead
   <choice>        Switch directly (a row id: sonnet, high, gemini-3.8-flash-medium, ...)
   --peek          Print the rows (id, command, label), or the command for <choice>, typing nothing
   --agent         Print \"<agent>\\t<current model>\"; exit 1 when no agent runs in the pane
   --popup         The menu in a tmux popup over the pane
+  --effort <step> <row>
+                  For the menu's binds: step (-1, 1) or show (0) the effort; prints the footer
 
 Environment: WAYMUX_SWITCH_AGENT (skip pane detection), WAYMUX_SWITCH_ROWS,
 WAYMUX_SWITCH_AGENTS, WAYMUX_SWITCH_DRAFT, WAYMUX_SWITCH_PRESET.";
@@ -256,7 +260,7 @@ fn claude_effort(plain: &[String], current: &str, settings: &Value) -> String {
         .unwrap_or_default()
 }
 
-fn claude_settings() -> Value {
+pub(crate) fn claude_settings() -> Value {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|d| !d.is_empty())
         .map_or_else(
@@ -423,6 +427,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 let target = args.get(i + 1).cloned().unwrap_or(pane);
                 return run_popup(&target);
             }
+            "--effort" => return crate::launch::effort::run_step("switch", &args[i + 1..]),
             "-h" | "--help" => {
                 println!("{USAGE}");
                 return 0;
@@ -461,16 +466,34 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
             return 0;
         }
-        None => match show_menu(&menu, &icon, &cfg) {
-            Some(r) => r,
-            None => return 0,
-        },
+        None => {
+            let shown = show_menu(&menu, &icon, &cfg);
+            let level = crate::launch::effort::chosen("switch");
+            crate::launch::effort::close("switch");
+            let Some(r) = shown else {
+                return 0;
+            };
+            // The gauge's level, when stepped away from the current one, follows the model.
+            let mut commands = vec![r.command.clone()];
+            if let Some(level) =
+                level.filter(|l| r.kind == "model" && Some(l) != current_effort(&menu).as_ref())
+            {
+                commands.push(format!("/effort {level}"));
+            }
+            return send(&pane, &menu.agent, &commands, &lines, &cfg);
+        }
     };
     if mode == "peek" {
         println!("{}\t{}", menu.agent, pick.command);
         return 0;
     }
-    send(&pane, &menu.agent, &pick.command, &lines, &cfg)
+    send(
+        &pane,
+        &menu.agent,
+        std::slice::from_ref(&pick.command),
+        &lines,
+        &cfg,
+    )
 }
 
 fn wm_bin() -> Option<std::path::PathBuf> {
@@ -481,6 +504,24 @@ fn wm_bin() -> Option<std::path::PathBuf> {
     crate::sys::find_in_path("wm")
 }
 
+/// The effort the agent runs at now: its marked effort row.
+fn current_effort(menu: &Menu) -> Option<String> {
+    menu.rows
+        .iter()
+        .find(|r| r.kind == "effort" && r.active)
+        .map(|r| r.id.clone())
+}
+
+/// The rows the menu shows: an agent whose effort the footer gauge steps (`Ctrl+H` / `Ctrl+L`)
+/// shows its models only; the others keep their effort rows.
+fn menu_rows(menu: &Menu) -> Vec<&Row> {
+    let gauge = !crate::launch::effort::levels_for(&menu.agent).is_empty();
+    menu.rows
+        .iter()
+        .filter(|r| !(gauge && r.kind == "effort"))
+        .collect()
+}
+
 /// The Waymaker menu, cursor on the current model. `Esc` cancels.
 fn show_menu(menu: &Menu, icon: &str, cfg: &SwitchConfig) -> Option<Row> {
     let Some(wm) = wm_bin() else {
@@ -489,18 +530,44 @@ fn show_menu(menu: &Menu, icon: &str, cfg: &SwitchConfig) -> Option<Row> {
     };
     let preset = env_or("WAYMUX_SWITCH_PRESET", cfg.preset.as_ref()).map_or_else(
         || {
-            crate::presets::materialize_menu_toml("switch-picker", "Switch", "Current", "Cancel")
-                .to_string_lossy()
-                .to_string()
+            crate::presets::materialize_menu_toml(
+                "switch-picker",
+                "Switch",
+                "Current",
+                "Cancel",
+                "switch",
+            )
+            .to_string_lossy()
+            .to_string()
         },
         |p| crate::sys::expand_home(&p),
     );
-    let pos = menu
-        .rows
+    let rows = menu_rows(menu);
+    let pos = rows
         .iter()
         .position(|r| r.active && r.kind == "model")
         .unwrap_or(0);
-    let labels: Vec<(String, String)> = menu.rows.iter().map(|r| r.labels(icon)).collect();
+    let labels: Vec<(String, String)> = rows.iter().map(|r| r.labels(icon)).collect();
+    let effort = current_effort(menu).unwrap_or_else(|| "medium".into());
+    crate::launch::effort::open(
+        "switch",
+        &crate::launch::effort::Sidecar {
+            footer: crate::launch::effort::preset_footer(std::slice::from_ref(&preset)),
+            rows: rows
+                .iter()
+                .zip(&labels)
+                .map(|(r, (plain, _))| crate::launch::effort::SidecarRow {
+                    plain: plain.clone(),
+                    agent: if r.kind == "model" {
+                        menu.agent.clone()
+                    } else {
+                        String::new()
+                    },
+                    default: effort.clone(),
+                })
+                .collect(),
+        },
+    );
     let mut child = Command::new(wm)
         .args(["-o", &preset, "--pos", &pos.to_string()])
         .stdin(Stdio::piped())
@@ -524,7 +591,7 @@ fn show_menu(menu: &Menu, icon: &str, cfg: &SwitchConfig) -> Option<Row> {
     labels
         .iter()
         .position(|(plain, _)| *plain == sel)
-        .map(|i| menu.rows[i].clone())
+        .map(|i| rows[i].clone())
 }
 
 /// Whether the prompt line holds typed text: something after the marker (`❯`, `›`, `>`) that is
@@ -581,7 +648,8 @@ fn draft_cmd(draft: &str, pane: &str, action: &str) -> bool {
 }
 
 /// Types the command into the pane and submits it, keeping any draft out of the way.
-fn send(pane: &str, agent: &str, command: &str, lines: &[String], cfg: &SwitchConfig) -> i32 {
+/// Types each command into the agent and submits it, the draft (when any) kept around them all.
+fn send(pane: &str, agent: &str, commands: &[String], lines: &[String], cfg: &SwitchConfig) -> i32 {
     let draft_tool = env_or("WAYMUX_SWITCH_DRAFT", cfg.draft.as_ref());
     let mut kept = false;
     if has_draft(lines) {
@@ -597,10 +665,17 @@ fn send(pane: &str, agent: &str, command: &str, lines: &[String], cfg: &SwitchCo
             }
         }
     }
-    let _ = tmux_status(&["send-keys", "-t", pane, "-l", "--", command]);
-    // Let the agent's input settle (slash-command autocomplete) before submitting.
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    let _ = tmux_status(&["send-keys", "-t", pane, "Enter"]);
+    for (i, command) in commands.iter().enumerate() {
+        if i > 0 {
+            // Let the agent apply the previous command before the next one.
+            std::thread::sleep(std::time::Duration::from_millis(400));
+        }
+        let _ = tmux_status(&["send-keys", "-t", pane, "-l", "--", command]);
+        // Let the agent's input settle (slash-command autocomplete) before submitting.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = tmux_status(&["send-keys", "-t", pane, "Enter"]);
+    }
+    let command = commands.join(" · ");
     match (kept, agent, &draft_tool) {
         (true, "codex", _) => say(&format!(
             "{agent} → {command} · draft kept until the picker closes"
@@ -682,6 +757,33 @@ mod tests {
         ["fable", "opus", "sonnet", "haiku"]
             .map(String::from)
             .to_vec()
+    }
+
+    #[test]
+    fn test_gauge_agents_show_models_only_and_keep_the_current_effort() {
+        let screen = lines(&["  Opus 5.5 · ctx 1%", "◐ high · /effort", "❯ "]);
+        let menu = builtin_menu("claude", &screen, &models(), &Value::Null);
+        let shown = menu_rows(&menu);
+        assert!(
+            shown.iter().all(|r| r.kind == "model"),
+            "effort rows move to the gauge"
+        );
+        assert_eq!(shown.len(), models().len());
+        assert_eq!(current_effort(&menu).as_deref(), Some("high"));
+
+        let other = Menu {
+            agent: "agy".into(),
+            rows: vec![
+                Row::model("m", "M", "$", "/model m".into(), true),
+                Row::effort("high", "/effort high".into(), false),
+            ],
+            ..Menu::default()
+        };
+        assert_eq!(
+            menu_rows(&other).len(),
+            2,
+            "agents without the flag keep effort rows"
+        );
     }
 
     #[test]

@@ -34,7 +34,7 @@ status_inline = true
 show = true
 
 [footer]
-content = " {cyan,bold:Enter} {__MUTED_TEXT__:__ACTION__} {__MUTED_LINE__:│} {white,bold:⠛} {__MUTED_TEXT__:__MARK__} {__MUTED_LINE__:│} {cyan,bold:type} {__MUTED_TEXT__:Filter} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:__ESC_LABEL__}"
+content = " {cyan,bold:Enter} {__MUTED_TEXT__:__ACTION__} {__MUTED_LINE__:│} {cyan,bold:C-h/l} {__MUTED_TEXT__:Effort} {__MUTED_LINE__:│} {white,bold:⠛} {__MUTED_TEXT__:__MARK__} {__MUTED_LINE__:│} {cyan,bold:type} {__MUTED_TEXT__:Filter} {__MUTED_LINE__:│} {cyan,bold:Esc} {__MUTED_TEXT__:__ESC_LABEL__}"
 row_connection = "Full"
 match_indent = false
 separator = "light"
@@ -75,3 +75,9 @@ sides = ""
 "QueryChange" = "Pos(0)"
 "esc"    = "Quit"
 "ctrl-c" = "Quit"
+# Effort of the row's agent: the gauge after "Effort" in the footer follows the cursor
+"CursorChange" = "Transform('__WAYMUX_BIN__' __MENU__ --effort 0 {})"
+"ctrl-h" = "Transform('__WAYMUX_BIN__' __MENU__ --effort -1 {})"
+"left"   = "Transform('__WAYMUX_BIN__' __MENU__ --effort -1 {})"
+"ctrl-l" = "Transform('__WAYMUX_BIN__' __MENU__ --effort 1 {})"
+"right"  = "Transform('__WAYMUX_BIN__' __MENU__ --effort 1 {})"

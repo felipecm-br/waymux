@@ -88,8 +88,12 @@ pub fn render_menu_toml(
     action: &str,
     mark: &str,
     esc_label: &str,
+    menu: &str,
+    waymux_bin: &str,
 ) -> String {
     MENU_PICKER_TOML_TEMPLATE
+        .replace("__WAYMUX_BIN__", waymux_bin)
+        .replace("__MENU__", menu)
         .replace("__MUTED_TEXT__", muted_text)
         .replace("__MUTED_LINE__", muted_line)
         .replace("__ACTION__", action)
@@ -97,13 +101,30 @@ pub fn render_menu_toml(
         .replace("__ESC_LABEL__", esc_label)
 }
 
-/// Writes a menu preset to the runtime dir as `<name>.toml` (only when it changed).
-pub fn materialize_menu_toml(name: &str, action: &str, mark: &str, esc_label: &str) -> PathBuf {
+/// Writes a menu preset to the runtime dir as `<name>.toml` (only when it changed); `menu`
+/// (`launch` or `switch`) is the subcommand its effort binds call.
+pub fn materialize_menu_toml(
+    name: &str,
+    action: &str,
+    mark: &str,
+    esc_label: &str,
+    menu: &str,
+) -> PathBuf {
     let dir = runtime_dir();
     let _ = fs::create_dir_all(&dir);
     let target = dir.join(format!("{name}.toml"));
     let theme = crate::theme::ThemePalette::load();
-    let rendered = render_menu_toml(&theme.muted, &theme.muted_line, action, mark, esc_label);
+    let bin = std::env::current_exe()
+        .map_or_else(|_| "waymux".into(), |p| p.to_string_lossy().to_string());
+    let rendered = render_menu_toml(
+        &theme.muted,
+        &theme.muted_line,
+        action,
+        mark,
+        esc_label,
+        menu,
+        &bin,
+    );
     if fs::read_to_string(&target).ok().as_deref() != Some(rendered.as_str()) {
         let _ = fs::write(&target, rendered);
     }
@@ -128,7 +149,17 @@ mod tests {
 
     #[test]
     fn test_menu_preset_is_filled_and_valid() {
-        let toml = render_menu_toml("#7f9bb3", "#5d7a92", "Launch", "Recommended", "Close");
+        let toml = render_menu_toml(
+            "#7f9bb3",
+            "#5d7a92",
+            "Launch",
+            "Recommended",
+            "Close",
+            "launch",
+            "/bin/waymux",
+        );
+        assert!(toml.contains("\"ctrl-l\" = \"Transform('/bin/waymux' launch --effort 1 {})\""));
+        assert!(toml.contains("{cyan,bold:C-h/l} {#7f9bb3:Effort}"));
         assert!(!toml.contains("__"), "unfilled placeholder");
         assert!(!toml.contains("\"DIM\""), "rows must not be dimmed");
         assert!(!toml.to_ascii_lowercase().contains("darkgray"));

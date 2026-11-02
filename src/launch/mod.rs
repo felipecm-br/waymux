@@ -20,6 +20,8 @@ use crate::config::{Config, LaunchConfig};
 use crate::quota::Snapshot;
 use crate::theme::RESET;
 
+pub mod effort;
+
 const USAGE: &str = "\
 usage: waymux launch [--peek] [--pick] [--auto | --menu | shell | <agent> [args...]]
        waymux launch --next <choice> [args...]
@@ -34,6 +36,9 @@ usage: waymux launch [--peek] [--pick] [--auto | --menu | shell | <agent> [args.
   --pick            Show the menu and print the pick instead of starting it
   --next <choice>   Arm a one-shot choice for the next launch (a picker that creates the pane)
   --popup [dir]     The menu in a tmux popup; the pick starts in a new window rooted at dir
+  --effort <step> <row>
+                    For the menu's binds: step (-1, 1) or show (0) the effort of the row's agent;
+                    prints the footer with its gauge. The pick then starts with --effort <level>
 
 Environment: WAYMUX_LAUNCH_DEFAULT, WAYMUX_LAUNCH_EXEC, WAYMUX_LAUNCH_FILTER,
 WAYMUX_LAUNCH_NEXT (armed-choice file), WAYMUX_LAUNCH_PRESET, WAYMUX_LAUNCH_PICK_PRESET,
@@ -169,6 +174,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             return 0;
         }
         Some("--popup") => return run_popup(args.get(1).map(String::as_str)),
+        Some("--effort") => return effort::run_step("launch", &args[1..]),
         Some("--next") => {
             if args.len() < 2 {
                 eprintln!("waymux launch: --next needs a choice");
@@ -416,11 +422,23 @@ fn run_rows(menu: bool, peek: bool, pick_only: bool, cfg: &LaunchConfig) -> i32 
             quota: "no agent".into(),
             ..Row::default()
         });
-        match show_menu(&shown, pick_only, cfg) {
+        let result = show_menu(&shown, pick_only, cfg);
+        let picked = match result {
             MenuResult::Picked(i) => shown.get(i).cloned(),
-            MenuResult::Cancelled => return 0,
+            MenuResult::Cancelled => {
+                effort::close("launch");
+                return 0;
+            }
             MenuResult::Unmatched => None,
-        }
+        };
+        // The effort chosen in the menu, as start args of the picked row.
+        let picked = picked.map(|mut row| {
+            let args: Vec<String> = row.args.split_whitespace().map(str::to_string).collect();
+            row.args = effort::with_effort("launch", &row.agent, args).join(" ");
+            row
+        });
+        effort::close("launch");
+        picked
     } else {
         rows.iter().find(|r| r.rec).cloned()
     };
@@ -694,7 +712,8 @@ fn preset_args(pick_only: bool, cfg: &LaunchConfig) -> Vec<String> {
         } else {
             ("launch-picker-shell", "Shell")
         };
-        let path = crate::presets::materialize_menu_toml(name, "Launch", "Recommended", esc);
+        let path =
+            crate::presets::materialize_menu_toml(name, "Launch", "Recommended", esc, "launch");
         return vec!["-o".to_string(), path.to_string_lossy().to_string()];
     };
     let mut args = vec!["-o".to_string(), crate::sys::expand_home(&preset)];
@@ -716,8 +735,28 @@ fn show_menu(rows: &[Row], pick_only: bool, cfg: &LaunchConfig) -> MenuResult {
             .map_or(MenuResult::Unmatched, MenuResult::Picked);
     };
     let pos = rows.iter().position(|r| r.rec).unwrap_or(0);
+    let preset = preset_args(pick_only, cfg);
+    let preset_paths: Vec<String> = preset
+        .windows(2)
+        .filter(|w| w[0] == "-o")
+        .map(|w| w[1].clone())
+        .collect();
+    effort::open(
+        "launch",
+        &effort::Sidecar {
+            footer: effort::preset_footer(&preset_paths),
+            rows: rows
+                .iter()
+                .map(|r| effort::SidecarRow {
+                    plain: r.plain(),
+                    agent: r.agent.clone(),
+                    default: effort::default_for(&r.agent, &r.args),
+                })
+                .collect(),
+        },
+    );
     let child = Command::new(wm)
-        .args(preset_args(pick_only, cfg))
+        .args(&preset)
         .args(["--pos", &pos.to_string()])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
