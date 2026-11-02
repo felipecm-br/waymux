@@ -73,12 +73,58 @@ fn codex_default() -> Option<String> {
         .map(str::to_string)
 }
 
+/// One effort of a row whose levels are other start args (a model id per effort).
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
+pub struct LevelArgs {
+    pub level: String,
+    pub args: String,
+}
+
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
 pub struct SidecarRow {
     /// The row as Waymaker shows it, without color.
     pub plain: String,
     pub agent: String,
     pub default: String,
+    /// The row's own levels, lowest first; empty: the agent's [`levels_for`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub levels: Vec<String>,
+}
+
+impl SidecarRow {
+    /// A launch row: its own levels when it carries them (the default being the level its args
+    /// start at), else the agent's flag levels and default.
+    pub fn for_row(plain: String, agent: &str, args: &str, efforts: &[LevelArgs]) -> Self {
+        if efforts.is_empty() {
+            return Self {
+                plain,
+                agent: agent.into(),
+                default: default_for(agent, args),
+                levels: Vec::new(),
+            };
+        }
+        let default = efforts
+            .iter()
+            .find(|e| e.args.trim() == args.trim())
+            .or_else(|| efforts.iter().find(|e| e.level == "medium"))
+            .unwrap_or(&efforts[0])
+            .level
+            .clone();
+        Self {
+            plain,
+            agent: agent.into(),
+            default,
+            levels: efforts.iter().map(|e| e.level.clone()).collect(),
+        }
+    }
+
+    fn levels(&self) -> Vec<&str> {
+        if self.levels.is_empty() {
+            levels_for(&self.agent).to_vec()
+        } else {
+            self.levels.iter().map(String::as_str).collect()
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq)]
@@ -114,7 +160,8 @@ pub fn open(menu: &str, sidecar: &Sidecar) {
 pub fn chosen(menu: &str) -> Option<String> {
     let level = std::fs::read_to_string(state_path(menu)).ok()?;
     let level = level.trim().to_string();
-    LEVELS.contains(&level.as_str()).then_some(level)
+    (!level.is_empty() && level.len() <= 16 && level.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then_some(level)
 }
 
 /// Clears the menu's choice and rows once the pick is handled.
@@ -157,13 +204,13 @@ pub fn run_step(menu: &str, args: &[String]) -> i32 {
         .find(|r| r.plain.trim() == row_text.trim());
     let (levels, current) = match row {
         Some(r) => {
-            let levels = levels_for(&r.agent);
+            let levels = r.levels();
             let current = chosen(menu)
                 .filter(|l| levels.contains(&l.as_str()))
                 .unwrap_or_else(|| r.default.clone());
             (levels, current)
         }
-        None => (&[][..], String::new()),
+        None => (Vec::new(), String::new()),
     };
     let current = if step != 0 && !levels.is_empty() {
         let i = levels.iter().position(|l| *l == current).unwrap_or(1);
@@ -178,7 +225,7 @@ pub fn run_step(menu: &str, args: &[String]) -> i32 {
     } else {
         current
     };
-    if let Some(footer) = render_footer(&sidecar.footer, levels, &current) {
+    if let Some(footer) = render_footer(&sidecar.footer, &levels, &current) {
         println!("SetStyledFooter({footer})");
     }
     0
@@ -209,7 +256,9 @@ pub fn render_footer(footer: &str, levels: &[&str], current: &str) -> Option<Str
         if i + 1 < levels.len() {
             let _ = write!(track, "{{{muted}:{}}}", "─".repeat(levels.len() - i - 1));
         }
-        format!(" {track} {{white,bold:{current:<width$}}}")
+        // A shorter scale (3 levels) pads to the longest, so the footer never shifts.
+        let pad = " ".repeat(LEVELS.len().saturating_sub(levels.len()));
+        format!(" {track}{pad} {{white,bold:{current:<width$}}}")
     };
     let mut out = format!("{}{gauge}{}", &footer[..end], &footer[end..]);
     if levels.is_empty() {
@@ -221,14 +270,26 @@ pub fn render_footer(footer: &str, levels: &[&str], current: &str) -> Option<Str
     Some(out)
 }
 
-/// The args to start a row's agent with, plus `--effort <level>` when the user chose one it
-/// accepts.
-pub fn with_effort(menu: &str, agent: &str, mut args: Vec<String>) -> Vec<String> {
-    if let Some(level) = chosen(menu).filter(|l| levels_for(agent).contains(&l.as_str())) {
-        args.push("--effort".into());
-        args.push(level);
+/// The args to start a row with: the chosen level's own args when the row carries levels, else
+/// its args plus `--effort <level>` when the agent accepts the chosen one; unchanged when the
+/// user did not step the gauge.
+pub fn with_effort(menu: &str, agent: &str, args: &str, efforts: &[LevelArgs]) -> String {
+    let Some(level) = chosen(menu) else {
+        return args.to_string();
+    };
+    if !efforts.is_empty() {
+        return efforts
+            .iter()
+            .find(|e| e.level == level)
+            .map_or_else(|| args.to_string(), |e| e.args.clone());
     }
-    args
+    if levels_for(agent).contains(&level.as_str()) {
+        format!("{} --effort {level}", args.trim())
+            .trim()
+            .to_string()
+    } else {
+        args.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -255,6 +316,27 @@ mod tests {
         );
         let max = render_footer(FOOTER, &LEVELS, "max").unwrap();
         assert!(max.contains("{darkgray:Effort} {white:━━━━}{white,bold:●} {white,bold:max   }"));
+    }
+
+    #[test]
+    fn test_short_scales_keep_the_footer_width() {
+        let three = render_footer(FOOTER, &["low", "medium", "high"], "medium").unwrap();
+        let five = render_footer(FOOTER, &LEVELS, "medium").unwrap();
+        // Visible text: drop `{style:` openers and the closing braces.
+        let shown = |s: &str| {
+            let (mut n, mut in_tag) = (0, false);
+            for c in s.chars() {
+                match c {
+                    '{' => in_tag = true,
+                    ':' if in_tag => in_tag = false,
+                    '}' => {}
+                    _ if !in_tag => n += 1,
+                    _ => {}
+                }
+            }
+            n
+        };
+        assert_eq!(shown(&three), shown(&five));
     }
 
     #[test]
@@ -291,6 +373,25 @@ mod tests {
         assert_eq!(claude_default(&s, "opus").as_deref(), Some("medium"));
         assert_eq!(claude_default(&s, "sonnet").as_deref(), Some("high"));
         assert_eq!(claude_default(&json!({}), "opus"), None);
+    }
+
+    #[test]
+    fn test_rows_with_their_own_levels_start_at_the_level_of_their_args() {
+        let efforts: Vec<LevelArgs> = ["low", "medium", "high"]
+            .iter()
+            .map(|l| LevelArgs {
+                level: (*l).into(),
+                args: format!("--model gemini-4-argon-{l}"),
+            })
+            .collect();
+        let row = SidecarRow::for_row("x".into(), "agy", "--model gemini-4-argon-high", &efforts);
+        assert_eq!(row.default, "high");
+        assert_eq!(row.levels(), ["low", "medium", "high"]);
+        let flag = SidecarRow::for_row("y".into(), "agy", "--model m", &[]);
+        assert!(
+            flag.levels().is_empty(),
+            "agy rows without levels keep no gauge"
+        );
     }
 
     #[test]

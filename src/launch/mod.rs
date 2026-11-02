@@ -83,6 +83,10 @@ pub struct Row {
     pub level: String,
     #[serde(default)]
     pub rec: bool,
+    /// Effort levels this row starts at with other args, lowest first (a provider's
+    /// `efforts: [{level, args}]`, e.g. a model id per effort); empty: the agent's `--effort`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub efforts: Vec<effort::LevelArgs>,
 }
 
 impl Row {
@@ -433,8 +437,7 @@ fn run_rows(menu: bool, peek: bool, pick_only: bool, cfg: &LaunchConfig) -> i32 
         };
         // The effort chosen in the menu, as start args of the picked row.
         let picked = picked.map(|mut row| {
-            let args: Vec<String> = row.args.split_whitespace().map(str::to_string).collect();
-            row.args = effort::with_effort("launch", &row.agent, args).join(" ");
+            row.args = effort::with_effort("launch", &row.agent, &row.args, &row.efforts);
             row
         });
         effort::close("launch");
@@ -594,6 +597,7 @@ fn claude_rows(c: &Value, models: &[String], now: i64) -> Vec<Row> {
             quota: quota.clone(),
             level: level.into(),
             rec: m == want,
+            efforts: Vec::new(),
         })
         .collect()
 }
@@ -621,6 +625,7 @@ fn provider_rows(a: &Value) -> Vec<Row> {
                 quota: text(r, "quota").unwrap_or_default(),
                 level: text(r, "level").unwrap_or_else(|| "unknown".into()),
                 rec: r["rec"] == true,
+                efforts: serde_json::from_value(r["efforts"].clone()).unwrap_or_default(),
                 model,
             }
         })
@@ -747,11 +752,7 @@ fn show_menu(rows: &[Row], pick_only: bool, cfg: &LaunchConfig) -> MenuResult {
             footer: effort::preset_footer(&preset_paths),
             rows: rows
                 .iter()
-                .map(|r| effort::SidecarRow {
-                    plain: r.plain(),
-                    agent: r.agent.clone(),
-                    default: effort::default_for(&r.agent, &r.args),
-                })
+                .map(|r| effort::SidecarRow::for_row(r.plain(), &r.agent, &r.args, &r.efforts))
                 .collect(),
         },
     );

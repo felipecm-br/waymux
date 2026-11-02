@@ -564,6 +564,7 @@ fn show_menu(menu: &Menu, icon: &str, cfg: &SwitchConfig) -> Option<Row> {
                         String::new()
                     },
                     default: effort.clone(),
+                    levels: Vec::new(),
                 })
                 .collect(),
         },
