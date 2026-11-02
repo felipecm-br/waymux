@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-02
+
 - **A turn ended by a usage limit shows as an error**: Claude Code fires `StopFailure` instead of `Stop` when an API error ends the turn, and the hook took it for nothing, so a rate-limited agent looked finished. `waymux hook tmux StopFailure` now sets the pane to `error` with the reason `usage limit` (for `rate_limit`) or `API error: <name>`, so triage, the sounds and the phone page treat it as waiting on you. `waymux init --hooks` includes the event; add it to existing settings.
 
 - **Type a prompt and read the last turn's diff from the phone** (`/m`): each agent card gets a prompt box and a **Diff** button. `phone/prompt` queues the text through the delivery queue (agents with daemon state only, 4 KB, control characters dropped) and needs a second token, `waymux phone-token --prompt [--url]`, so a watch-only pairing cannot type. `phone/diff` returns the diff of the pane's newest checkpoint, chosen by the daemon, cut at 64 KB; the existing phone token reaches it. Either token still gets 403 on `tmux.*`, `queue/push` and every method that takes a path.
