@@ -69,6 +69,10 @@ pub struct Row {
     /// A row drawn as is (Codex's picker): no gutter mark, its own head and text.
     #[serde(skip)]
     pub label: Option<(String, String)>,
+    /// The command per effort level, lowest first, for the footer gauge (a rows hook's
+    /// `efforts: [{level, args}]`); `command` is the one the row types untouched.
+    #[serde(default)]
+    pub efforts: Vec<crate::launch::effort::LevelArgs>,
 }
 
 fn model_kind() -> String {
@@ -98,6 +102,7 @@ impl Row {
             tier: tier.into(),
             active,
             label: None,
+            efforts: Vec::new(),
         }
     }
 
@@ -397,10 +402,23 @@ fn menu_for(pane: &str, cfg: &SwitchConfig) -> Option<(Menu, Vec<String>)> {
         (pane_process(pane, &known)?, screen(pane))
     };
     let text = plain(&lines);
-    let menu = if BUILTIN.contains(&process.as_str()) {
-        builtin_menu(&process, &text, &claude_models(), &claude_settings())
+    // An agent listed for the rows hook goes to it even when built in (Codex, Devin): the hook
+    // knows the models the CLI lists today.
+    // A hook that answers with no rows (its model list not cached yet) leaves a built-in agent
+    // on the built-in rows.
+    let hooked = hook.is_some() && extra.contains(&process);
+    let builtin = BUILTIN.contains(&process.as_str());
+    let from_hook = if hooked || !builtin {
+        hook.as_deref()
+            .and_then(|h| hook_menu(h, &process, pane, &text))
+            .filter(|m| !m.rows.is_empty() || !builtin)
     } else {
-        hook_menu(hook.as_deref()?, &process, pane, &text)?
+        None
+    };
+    let menu = match from_hook {
+        Some(m) => m,
+        None if builtin => builtin_menu(&process, &text, &claude_models(), &claude_settings()),
+        None => return None,
     };
     Some((menu, lines))
 }
@@ -475,7 +493,12 @@ pub fn run_cli(args: &[String]) -> i32 {
             };
             // The gauge's level, when stepped away from the current one, follows the model.
             let mut commands = vec![r.command.clone()];
-            if let Some(level) =
+            if !r.efforts.is_empty() {
+                // The row's own command for the chosen level (`/model <id>` with the effort in it).
+                if let Some(e) = level.and_then(|l| r.efforts.iter().find(|e| e.level == l)) {
+                    commands = vec![e.args.clone()];
+                }
+            } else if let Some(level) =
                 level.filter(|l| r.kind == "model" && Some(l) != current_effort(&menu).as_ref())
             {
                 commands.push(format!("/effort {level}"));
@@ -512,10 +535,12 @@ fn current_effort(menu: &Menu) -> Option<String> {
         .map(|r| r.id.clone())
 }
 
-/// The rows the menu shows: an agent whose effort the footer gauge steps (`Ctrl+H` / `Ctrl+L`)
-/// shows its models only; the others keep their effort rows.
+/// The rows the menu shows: an agent whose effort the footer gauge steps (`Ctrl+H` / `Ctrl+L`),
+/// through its flag levels or its rows' own `efforts`, shows its models only; the others keep
+/// their effort rows.
 fn menu_rows(menu: &Menu) -> Vec<&Row> {
-    let gauge = !crate::launch::effort::levels_for(&menu.agent).is_empty();
+    let gauge = !crate::launch::effort::levels_for(&menu.agent).is_empty()
+        || menu.rows.iter().any(|r| !r.efforts.is_empty());
     menu.rows
         .iter()
         .filter(|r| !(gauge && r.kind == "effort"))
@@ -556,15 +581,26 @@ fn show_menu(menu: &Menu, icon: &str, cfg: &SwitchConfig) -> Option<Row> {
             rows: rows
                 .iter()
                 .zip(&labels)
-                .map(|(r, (plain, _))| crate::launch::effort::SidecarRow {
-                    plain: plain.clone(),
-                    agent: if r.kind == "model" {
-                        menu.agent.clone()
-                    } else {
-                        String::new()
-                    },
-                    default: effort.clone(),
-                    levels: Vec::new(),
+                .map(|(r, (plain, _))| {
+                    if !r.efforts.is_empty() {
+                        // The row's own levels; the gauge opens on the one its command types.
+                        return crate::launch::effort::SidecarRow::for_row(
+                            plain.clone(),
+                            &menu.agent,
+                            &r.command,
+                            &r.efforts,
+                        );
+                    }
+                    crate::launch::effort::SidecarRow {
+                        plain: plain.clone(),
+                        agent: if r.kind == "model" {
+                            menu.agent.clone()
+                        } else {
+                            String::new()
+                        },
+                        default: effort.clone(),
+                        levels: Vec::new(),
+                    }
                 })
                 .collect(),
         },
@@ -758,6 +794,41 @@ mod tests {
         ["fable", "opus", "sonnet", "haiku"]
             .map(String::from)
             .to_vec()
+    }
+
+    #[test]
+    fn test_hook_rows_with_efforts_hide_effort_rows_and_open_on_their_command() {
+        let lv = |l: &str| crate::launch::effort::LevelArgs {
+            level: l.into(),
+            args: format!("/model gpt-5.6-terra --reasoning={l}"),
+        };
+        let mut model = Row::model(
+            "gpt-5.6-terra",
+            "GPT-5.6-Terra",
+            "$$",
+            "/model gpt-5.6-terra --reasoning=high".into(),
+            true,
+        );
+        model.efforts = vec![lv("low"), lv("high"), lv("ultra")];
+        let menu = Menu {
+            agent: "codex".into(),
+            rows: vec![
+                model.clone(),
+                Row::effort("max", "/effort max".into(), false),
+            ],
+            ..Menu::default()
+        };
+        assert_eq!(menu_rows(&menu).len(), 1);
+        let side = crate::launch::effort::SidecarRow::for_row(
+            "x".into(),
+            "codex",
+            &model.command,
+            &model.efforts,
+        );
+        assert_eq!(side.default, "high");
+        let json = r#"{"id":"m","command":"/model m-medium","efforts":[{"level":"low","args":"/model m-low"}]}"#;
+        let row: Row = serde_json::from_str(json).unwrap();
+        assert_eq!(row.efforts[0].args, "/model m-low");
     }
 
     #[test]
