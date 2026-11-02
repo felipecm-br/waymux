@@ -242,21 +242,21 @@ fn model(inp: &Inputs, now: i64, srate: f64, icon: &str) -> Value {
     let seven0 = seven.unwrap_or(0.0);
     let level = match five {
         None => "unknown",
-        Some(f) if f >= 98.0 || seven0 >= 98.0 => "red",
+        Some(f) if f >= 90.0 || seven0 >= 90.0 => "red",
         Some(_) if rate.is_some() && eta_h.is_some_and(|e| e < 0.5) && h5 > 0.5 => "red",
         Some(f)
-            if f >= 80.0
+            if f >= 70.0
                 || (rate.is_some() && proj.unwrap_or(0.0) >= 90.0)
-                || seven0 >= 85.0
+                || seven0 >= 70.0
                 || (pace.unwrap_or(0.0) >= 1.25 && seven0 >= 40.0) =>
         {
             "yellow"
         }
         Some(_) => "green",
     };
-    let until = if five0 >= 98.0 {
+    let until = if five0 >= 90.0 {
         r5
-    } else if seven0 >= 98.0 {
+    } else if seven0 >= 90.0 {
         r7
     } else {
         None

@@ -264,7 +264,7 @@ pub fn report(snap: &Snapshot) -> String {
             let r7 = i(&a["seven_reset"]);
             let _ = writeln!(
                 out,
-                "    5h: {}%  reset {} (in {})  burn: {}%/h  +1 session: {}%/h",
+                "    5h: {}% used  reset {} (in {})  burn: {}%/h  +1 session: {}%/h",
                 n(&a["five"], "?"),
                 clock(r5, "%H:%M"),
                 hm(r5.map(|r| r - now)),
@@ -279,7 +279,7 @@ pub fn report(snap: &Snapshot) -> String {
             );
             let _ = write!(
                 out,
-                "    7d: {}%  reset {}  pace: {}×",
+                "    7d: {}% used  reset {}  pace: {}×",
                 n(&a["seven"], "?"),
                 clock(r7, "%a %H:%M"),
                 n(&a["week_pace"], "-"),
@@ -294,10 +294,13 @@ pub fn report(snap: &Snapshot) -> String {
                         .map_or(String::new(), |d| format!(" ({d})"));
                     let reset = i(&g["reset"]).map_or_else(
                         || "-".into(),
-                        |r| format!("{} (in {})", clock(Some(r), "%a %H:%M"), hm(Some(r - now))),
+                        |r| {
+                            let fmt = if r - now > 86_400 { "%a %H:%M" } else { "%H:%M" };
+                            format!("{} (in {})", clock(Some(r), fmt), hm(Some(r - now)))
+                        },
                     );
                     format!(
-                        "    {}{detail}: {}% left  reset {reset}",
+                        "    {}{detail}: {}% used  reset {reset}",
                         g["label"].as_str().unwrap_or_default(),
                         n(&g["pct"], "?")
                     )
@@ -468,9 +471,9 @@ fn bar_week(
         return format!("{}{}{RESET}", c.muted, "░".repeat(20));
     };
     let u = cells20(Some(s));
-    let lvl = if s >= 98.0 {
+    let lvl = if s >= 90.0 {
         "red"
-    } else if s >= 85.0 || (pace.unwrap_or(0.0) >= 1.25 && s >= 40.0) {
+    } else if s >= 70.0 || (pace.unwrap_or(0.0) >= 1.25 && s >= 40.0) {
         "yellow"
     } else {
         "green"
@@ -491,31 +494,11 @@ fn bar_week(
         .collect()
 }
 
-/// Percent left of a model group.
-fn bar_left(c: &Colors, pct: Option<f64>) -> String {
-    match pct {
-        None => format!("{}{}{RESET}", c.muted, "░".repeat(20)),
-        Some(p) if p <= 0.0 => format!("{}{}{RESET}", c.red, "░".repeat(20)),
-        Some(p) => {
-            let lvl = if p < 20.0 { "yellow" } else { "green" };
-            let filled = cells20(Some(p));
-            format!(
-                "{}{}{}{}{RESET}",
-                c.level(lvl),
-                "█".repeat(filled),
-                c.muted,
-                "░".repeat(20 - filled)
-            )
-        }
-    }
-}
-
 /// Ten 30-minute buckets of prompts (5h), scaled to the busiest one.
 fn sparkline(c: &Colors, bins: &[usize]) -> String {
     const GLYPHS: [&str; 8] = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"];
     let max = bins.iter().copied().max().unwrap_or(0).max(1);
-    let cells: String = bins
-        .iter()
+    bins.iter()
         .map(|&b| {
             if b == 0 {
                 format!("{}·{RESET}", c.muted)
@@ -523,8 +506,7 @@ fn sparkline(c: &Colors, bins: &[usize]) -> String {
                 format!("{}{}{RESET}", c.cyan, GLYPHS[(b * 7 / max).min(7)])
             }
         })
-        .collect();
-    format!("{cells} {}(10×30m){RESET} ", c.muted)
+        .collect()
 }
 
 fn bins(a: &Value) -> Vec<usize> {
@@ -540,14 +522,17 @@ fn bins(a: &Value) -> Vec<usize> {
     b
 }
 
-fn activity_row(c: &Colors, a: &Value) -> String {
+/// Column-aligned reset countdown and wall-clock timestamp: `⟳ 1h13m  (20:27)`.
+fn reset_col(now: i64, ts: Option<i64>, exhausted: bool) -> String {
+    let glyph = if exhausted { "⏳" } else { "⟳" };
+    let Some(r) = ts else {
+        return format!("{glyph} -");
+    };
+    let fmt = if r - now > 86_400 { "%a %H:%M" } else { "%H:%M" };
     format!(
-        "    {}{}{RESET}{}  {}{}{RESET}",
-        c.muted,
-        rpad("5h activity", 15),
-        sparkline(c, &bins(a)),
-        c.fg,
-        lpad(&format!("{}p / 5h", n(&a["prompts_5h"], "0")), 9)
+        "{glyph} {} ({})",
+        rpad(&hm(Some(r - now)), 6),
+        clock(Some(r), fmt)
     )
 }
 
@@ -561,19 +546,22 @@ pub fn visual(snap: &Snapshot, c: &Colors) -> String {
         let icon = a["icon"].as_str().unwrap_or_default();
         let heading = format!("{icon} {}", title(snap, name(a)));
         let active = i(&a["active"]).map_or(String::new(), |n| format!(" ({n} act)"));
+        let sess = format!("{}s{active}", n(&a["sessions"], "0"));
+        let prompts = lpad(
+            &format!("{}/{}p", n(&a["prompts_1h"], "0"), n(&a["prompts_5h"], "0")),
+            12,
+        );
         let mut b = format!(
-            "  {gutter} {}{BOLD}{}{RESET}{}{BOLD}{}{RESET}{}sessions:{RESET} {}{}{active}{RESET}  {}prompts 1h/5h:{RESET} {}{}/{}{RESET}\n",
+            "  {gutter} {}{BOLD}{}{RESET}{}{BOLD}{}{RESET}{}{}{RESET}{}{}{}{RESET}\n",
             c.blue,
             rpad(&heading, 16),
             c.level(lvl),
-            rpad(lvl, 8),
+            rpad(lvl, 9),
             c.muted,
+            rpad(&sess, 25),
+            sparkline(c, &bins(a)),
             c.fg,
-            n(&a["sessions"], "0"),
-            c.muted,
-            c.fg,
-            n(&a["prompts_1h"], "0"),
-            n(&a["prompts_5h"], "0"),
+            prompts,
         );
         if name(a) == "claude" {
             b.push_str(&visual_claude(c, a, now));
@@ -583,32 +571,24 @@ pub fn visual(snap: &Snapshot, c: &Colors) -> String {
                 .map(|g| {
                     let pct = f(&g["pct"]);
                     let glvl = match pct {
-                        Some(0.0) => "red",
-                        Some(p) if p >= 20.0 => "green",
-                        _ => "yellow",
+                        Some(p) if p >= 90.0 => "red",
+                        Some(p) if p >= 70.0 => "yellow",
+                        Some(_) => "green",
+                        None => "unknown",
                     };
-                    let reset = i(&g["reset"]).map_or_else(
-                        || "-".into(),
-                        |r| format!("{} ({})", clock(Some(r), "%a %H:%M"), hm(Some(r - now))),
-                    );
+                    let reset = reset_col(now, i(&g["reset"]), pct.is_some_and(|p| p >= 90.0));
                     format!(
-                        "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}{} {reset}{RESET}",
+                        "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}{reset}{RESET}",
                         c.muted,
                         rpad(g["label"].as_str().unwrap_or_default(), 15),
-                        bar_left(c, pct),
+                        bar_used(c, pct, None, glvl),
                         c.level(glvl),
-                        lpad(&format!("{}% left", n(&g["pct"], "?")), 9),
+                        lpad(&format!("{}% used", n(&g["pct"], "?")), 9),
                         c.muted,
-                        if pct == Some(0.0) { "⏳" } else { "⟳" },
                     )
                 })
                 .collect();
             b.push_str(&rows.join("\n"));
-            b.push('\n');
-            b.push_str(&activity_row(c, a));
-            if let Some(dm) = a["default_model"].as_str().filter(|s| !s.is_empty()) {
-                let _ = write!(b, "  {}default: {dm}{RESET}", c.muted);
-            }
             b.push_str(&visual_notes(c, a));
         } else {
             let est = if a["est_five"].is_null() {
@@ -621,7 +601,7 @@ pub fn visual(snap: &Snapshot, c: &Colors) -> String {
             } else {
                 format!("cap ~{} prompts", n(&a["capacity_5h"], "?"))
             };
-            let _ = writeln!(
+            let _ = write!(
                 b,
                 "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}{cap}{RESET}",
                 c.muted,
@@ -631,15 +611,14 @@ pub fn visual(snap: &Snapshot, c: &Colors) -> String {
                 lpad(&est, 9),
                 c.muted,
             );
-            b.push_str(&activity_row(c, a));
             if let Some(until) = i(&a["until"]) {
                 let _ = write!(
                     b,
-                    "  {}⏳ exhausted ({}) until {} ({}){RESET}",
+                    "  {}⏳ ({}) {} ({}){RESET}",
                     c.red,
                     a["window"].as_str().unwrap_or("?"),
+                    hm(Some(until - now)),
                     clock(Some(until), "%a %H:%M"),
-                    hm(Some(until - now))
                 );
             }
             b.push_str(&visual_notes(c, a));
@@ -647,7 +626,7 @@ pub fn visual(snap: &Snapshot, c: &Colors) -> String {
         blocks.push(b);
     }
     format!(
-        "{}  █ actual  ▒ proj  │ pace  ░ headroom{RESET}\n{rule}\n{}\n{rule}\n  {MARK} {}Recommended{RESET} {}{BOLD}{}{RESET}  {}({}){RESET}",
+        "{}  █ actual  ▒ proj  │ pace  ░ headroom                10×30m (5h)      1h/5h{RESET}\n{rule}\n{}\n{rule}\n  {MARK} {}Recommended{RESET} {}{BOLD}{}{RESET}  {}({}){RESET}",
         c.muted,
         blocks.join("\n\n"),
         c.muted,
@@ -688,17 +667,14 @@ fn visual_claude(c: &Colors, a: &Value, now: i64) -> String {
         )
     };
     let mut out = format!(
-        "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}⟳ {}{RESET}",
+        "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}{}{RESET}",
         c.muted,
         rpad("5h window", 15),
         bar_used(c, f(&a["five"]), f(&a["projected_five"]), lvl),
         c.level(lvl),
         used(&a["five"]),
         c.muted,
-        r5.map_or_else(
-            || "-".into(),
-            |r| format!("{} ({})", clock(Some(r), "%H:%M"), hm(Some(r - now)))
-        ),
+        reset_col(now, r5, f(&a["five"]).is_some_and(|p| p >= 90.0)),
     );
     if let Some(p) = f(&a["projected_five"]) {
         let col = if p >= 90.0 { &c.red } else { &c.fg };
@@ -709,16 +685,19 @@ fn visual_claude(c: &Colors, a: &Value, now: i64) -> String {
             floor(&a["projected_five"])
         );
     }
+    if let Some(r) = f(&a["rate"]).filter(|&r| r >= 1.0) {
+        let _ = write!(out, " {}·{RESET} {}{}%/h{RESET}", c.muted, c.fg, super::num(r));
+    }
     let _ = write!(
         out,
-        "\n    {}{}{RESET}{}  {}{}{RESET}  {}⟳ {}{RESET}",
+        "\n    {}{}{RESET}{}  {}{}{RESET}  {}{}{RESET}",
         c.muted,
         rpad("7d weekly", 15),
         bar_week(c, now, f(&a["seven"]), r7, f(&a["week_pace"])),
         c.fg,
         used(&a["seven"]),
         c.muted,
-        clock(r7, "%a %H:%M"),
+        reset_col(now, r7, f(&a["seven"]).is_some_and(|p| p >= 90.0)),
     );
     if let Some(p) = f(&a["week_pace"]) {
         let col = if p >= 1.25 { &c.yellow } else { &c.cyan };
@@ -729,21 +708,6 @@ fn visual_claude(c: &Colors, a: &Value, now: i64) -> String {
             n(&a["week_pace"], "-")
         );
     }
-    let burn = if a["rate"].is_null() {
-        "idle".to_string()
-    } else {
-        format!("{}%/h", n(&a["rate"], "-"))
-    };
-    let full = f(&a["eta_full_h"]).map_or(String::new(), |e| format!(" · full {}", hm_f(e)));
-    let _ = write!(
-        out,
-        "\n{}  {}burn:{RESET} {}{burn}{RESET} {}(+1: {}%/h{full}){RESET}",
-        activity_row(c, a),
-        c.muted,
-        c.fg,
-        c.muted,
-        n(&a["rate_with_new"], "-"),
-    );
     out.push_str(&claude_stale(a, &format!("{}󰋼 ", c.muted), RESET));
     out
 }
@@ -776,10 +740,10 @@ mod tests {
         json!({"agent": "agy", "title": "Antigravity", "available": true, "icon": "A",
                "sessions": 0, "prompts_1h": 0, "prompts_5h": 1, "level": "green",
                "groups": [
-                 {"key": "claude", "label": "Claude & GPT", "pct": 100, "reset": NOW + 3600, "abbr": "C"},
-                 {"key": "flash", "label": "Gemini Flash", "pct": 97, "reset": NOW + 18000, "abbr": "G", "detail": "gemini-flash"},
-                 {"key": "argon", "label": "Gemini 4 Argon", "pct": 25, "reset": null, "abbr": "A"},
-                 {"key": "pro", "label": "Gemini pro tier", "pct": 97, "hidden": true}],
+                 {"key": "claude", "label": "Claude & GPT", "pct": 0, "reset": NOW + 3600, "abbr": "C"},
+                 {"key": "flash", "label": "Gemini Flash", "pct": 3, "reset": NOW + 18000, "abbr": "G", "detail": "gemini-flash"},
+                 {"key": "argon", "label": "Gemini 4 Argon", "pct": 75, "reset": null, "abbr": "A"},
+                 {"key": "pro", "label": "Gemini pro tier", "pct": 3, "hidden": true}],
                "notes": [{"text": "default model is out of quota", "level": "warn"}]})
     }
 
@@ -788,7 +752,7 @@ mod tests {
         let s = snap(vec![claude(), agy()], "agy");
         assert_eq!(
             badge(&s),
-            "#[fg=yellow]C#[default] 42·22% ↗ ×2 │ #[fg=green]A#[default] C100 G97 A25% │ → A"
+            "#[fg=yellow]C#[default] 42·22% ↗ ×2 │ #[fg=green]A#[default] C0 G3 A75% │ → A"
         );
         assert_eq!(badge_min(&s), "#[fg=green]A#[default]");
         let mut red = agy();
@@ -815,8 +779,8 @@ mod tests {
     #[test]
     fn test_report_lists_groups_details_and_notes_but_not_hidden_groups() {
         let r = report(&snap(vec![claude(), agy()], "claude"));
-        assert!(r.contains("Gemini 4 Argon: 25% left  reset -"), "{r}");
-        assert!(r.contains("Gemini Flash (gemini-flash): 97% left"), "{r}");
+        assert!(r.contains("Gemini 4 Argon: 75% used  reset -"), "{r}");
+        assert!(r.contains("Gemini Flash (gemini-flash): 3% used"), "{r}");
         assert!(r.contains("default model is out of quota"), "{r}");
         assert!(!r.contains("Gemini pro tier"), "{r}");
         assert!(
@@ -835,11 +799,12 @@ mod tests {
         let plain = crate::theme::strip_ansi(&v.replace('\n', "\u{1}")).replace('\u{1}', "\n");
         assert_eq!(plain.matches('⠛').count(), 2, "{plain}");
         assert!(v.contains(MARK));
-        for glyph in ["█", "▒", "│", "Recommended"] {
+        for glyph in ["█", "▒", "│", "Recommended", "75% used", "3% used"] {
             assert!(plain.contains(glyph), "missing {glyph}: {plain}");
         }
         assert!(plain.contains("Recommended Antigravity"), "{plain}");
         assert!(!plain.contains("Gemini pro tier"), "{plain}");
+        assert!(!plain.contains("% left"), "{plain}");
     }
 
     #[test]

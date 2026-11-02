@@ -221,9 +221,25 @@ pub fn run_step(menu: &str, args: &[String]) -> i32 {
     0
 }
 
+/// Color of an effort level along the thermal compute scale:
+/// `low` (blue) -> `medium` (green) -> `high` (yellow) -> `xhigh` (orange `#fab387`)
+/// -> `max` (red) -> `ultra` (magenta/violet).
+fn level_color(level: &str) -> &'static str {
+    match level {
+        "low" => "blue",
+        "medium" => "green",
+        "high" => "yellow",
+        "xhigh" => "#fab387",
+        "max" => "red",
+        "ultra" => "magenta",
+        _ => "white",
+    }
+}
+
 /// The footer with the gauge after its `Effort` label: `━` up to the level, `●` on it, `─` above
-/// it, then the level's name, padded so the items after it never move. An agent without levels
-/// gets the key and the label in the muted color and an empty track: nothing to press.
+/// it, then the level's name, colored by thermal effort tier and padded so the items after it
+/// never move. An agent without levels gets the key and the label in the muted color and an
+/// empty track: nothing to press.
 pub fn render_footer(footer: &str, levels: &[&str], current: &str) -> Option<String> {
     let at = footer.find("Effort}")?;
     let label_start = footer[..at].rfind('{')?;
@@ -238,17 +254,18 @@ pub fn render_footer(footer: &str, levels: &[&str], current: &str) -> Option<Str
         )
     } else {
         let i = levels.iter().position(|l| *l == current).unwrap_or(0);
+        let col = level_color(current);
         let mut track = String::new();
         if i > 0 {
-            let _ = write!(track, "{{white:{}}}", "━".repeat(i));
+            let _ = write!(track, "{{{col}:{}}}", "━".repeat(i));
         }
-        track.push_str("{white,bold:●}");
+        let _ = write!(track, "{{{col},bold:●}}");
         if i + 1 < levels.len() {
             let _ = write!(track, "{{{muted}:{}}}", "─".repeat(levels.len() - i - 1));
         }
         // A shorter scale pads to the longest, so the footer never shifts.
         let pad = " ".repeat(TRACK.saturating_sub(levels.len()));
-        format!(" {track}{pad} {{white,bold:{current:<width$}}}")
+        format!(" {track}{pad} {{{col},bold:{current:<width$}}}")
     };
     let mut out = format!("{}{gauge}{}", &footer[..end], &footer[end..]);
     if levels.is_empty() {
@@ -293,7 +310,7 @@ mod tests {
     fn test_gauge_sits_after_the_effort_label_in_the_preset_colors() {
         let out = render_footer(FOOTER, &LEVELS, "high").unwrap();
         assert!(out.contains(
-            "{darkgray:Effort} {white:━━}{white,bold:●}{darkgray:──}  {white,bold:high  } {darkgray:│} {cyan,bold:Esc}"
+            "{darkgray:Effort} {yellow:━━}{yellow,bold:●}{darkgray:──}  {yellow,bold:high  } {darkgray:│} {cyan,bold:Esc}"
         ));
         assert!(out.starts_with(" {cyan,bold:Enter} {darkgray:Launch}"));
     }
@@ -302,10 +319,17 @@ mod tests {
     fn test_gauge_ends_have_no_empty_runs() {
         let low = render_footer(FOOTER, &LEVELS, "low").unwrap();
         assert!(
-            low.contains("{darkgray:Effort} {white,bold:●}{darkgray:────}  {white,bold:low   }")
+            low.contains("{darkgray:Effort} {blue,bold:●}{darkgray:────}  {blue,bold:low   }")
+        );
+        let xhigh = render_footer(FOOTER, &LEVELS, "xhigh").unwrap();
+        assert!(
+            xhigh.contains("{darkgray:Effort} {#fab387:━━━}{#fab387,bold:●}{darkgray:─}  {#fab387,bold:xhigh }")
         );
         let max = render_footer(FOOTER, &LEVELS, "max").unwrap();
-        assert!(max.contains("{darkgray:Effort} {white:━━━━}{white,bold:●}  {white,bold:max   }"));
+        assert!(max.contains("{darkgray:Effort} {red:━━━━}{red,bold:●}  {red,bold:max   }"));
+        let six = ["low", "medium", "high", "xhigh", "max", "ultra"];
+        let ultra = render_footer(FOOTER, &six, "ultra").unwrap();
+        assert!(ultra.contains("{darkgray:Effort} {magenta:━━━━━}{magenta,bold:●} {magenta,bold:ultra }"));
     }
 
     #[test]
@@ -352,7 +376,7 @@ mod tests {
         let f = " {cyan,bold:C-h/l} {#7f9bb3:Effort} {#5d7a92:│}";
         let out = render_footer(f, &LEVELS, "medium").unwrap();
         assert!(out.contains(
-            "{#7f9bb3:Effort} {white:━}{white,bold:●}{#7f9bb3:───}  {white,bold:medium}"
+            "{#7f9bb3:Effort} {green:━}{green,bold:●}{#7f9bb3:───}  {green,bold:medium}"
         ));
     }
 

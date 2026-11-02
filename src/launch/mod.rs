@@ -805,8 +805,8 @@ mod tests {
     fn agy() -> Value {
         json!({"agent": "agy", "title": "Antigravity", "available": true, "icon": "A", "level": "green",
                "launch": [
-                 {"args": "--model gemini-4-argon-medium", "model": "Gemini 4 Argon", "quota": "25% left", "level": "green", "rec": true},
-                 {"args": "--model gemini-3.8-flash-medium", "model": "Gemini 3.8 Flash", "quota": "97% left", "level": "green"}]})
+                 {"args": "--model gemini-4-argon-medium", "model": "Gemini 4 Argon", "quota": "75% used", "level": "green", "rec": true},
+                 {"args": "--model gemini-3.8-flash-medium", "model": "Gemini 3.8 Flash", "quota": "3% used", "level": "green"}]})
     }
 
     fn models() -> Vec<String> {
