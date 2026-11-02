@@ -50,6 +50,8 @@ const CLAUDE_HOOKS: &[(&str, Option<&str>, &[&str])] = &[
         &["waymux hook tmux PermissionRequest claude"],
     ),
     ("Stop", None, &["waymux hook tmux Stop"]),
+    // A turn ended by an API error (a usage limit above all) shows as an error, not as done.
+    ("StopFailure", None, &["waymux hook tmux StopFailure"]),
     (
         "SessionEnd",
         None,
@@ -99,7 +101,7 @@ fn print_hooks() {
 #   Antigravity  ~/.gemini/antigravity-cli/hooks.json   waymux hook tmux <Event>\n\
 #   Devin        ~/.config/devin/config.json            waymux hook tmux <Event>\n\
 # Events: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification,\n\
-#         PermissionRequest, Stop, SessionEnd. Add `waymux hook lazygit <Event>` on\n\
+#         PermissionRequest, Stop, StopFailure, SessionEnd. Add `waymux hook lazygit <Event>` on\n\
 #         SessionStart/SessionEnd to link review notes to the session.\n\
 # Verify with: waymux doctor"
     );
@@ -155,6 +157,7 @@ mod tests {
             "PreToolUse",
             "Notification",
             "Stop",
+            "StopFailure",
             "SessionEnd",
         ] {
             let cmd = hooks[event][0]["hooks"][0]["command"].as_str().unwrap();

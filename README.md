@@ -117,7 +117,7 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux launch [--peek\|--pick] [--auto\|--menu\|shell\|<agent> [args]]` | Start an agent CLI in this pane: a Waymaker menu of agent × model rows with their quota, cursor on the recommended row, or that row directly (`--auto`); `--next <choice>` arms the next launch; `--popup [dir]` shows the menu in a popup and starts the pick in a new window (see [Agent launch](#agent-launch)) |
 | `waymux switch [-t pane] [--peek\|--agent\|--popup] [choice]` | Change the model or effort of the agent in a pane, in place, by typing its own `/model` or `/effort`; a half-typed prompt is never submitted (see [Agent switch](#agent-switch)) |
 | `waymux quota statusline` | Claude Code `statusLine` command: records `rate_limits` from stdin and prints model, context and quota in one line |
-| `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd`) |
+| `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
 | `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
 | `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
@@ -166,7 +166,7 @@ Print the Claude Code hook block and merge it into `~/.claude/settings.json`:
 waymux init --hooks
 ```
 
-It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification` (permission prompts and questions), `Stop` and `SessionEnd` to `waymux hook tmux <Event>`, plus `waymux hook lazygit <Event>` to link review notes to the session. Other agents call the same commands from their own hook config (Antigravity: `~/.gemini/antigravity-cli/hooks.json`, Devin: `~/.config/devin/config.json`). `waymux doctor` confirms the Claude Code wiring.
+It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification` (permission prompts and questions), `Stop`, `StopFailure` (a turn ended by an API error; a usage limit shows as `error` / `usage limit`) and `SessionEnd` to `waymux hook tmux <Event>`, plus `waymux hook lazygit <Event>` to link review notes to the session. Other agents call the same commands from their own hook config (Antigravity: `~/.gemini/antigravity-cli/hooks.json`, Devin: `~/.config/devin/config.json`). `waymux doctor` confirms the Claude Code wiring.
 
 `SessionStart` leaves the pane `idle` (a fresh session waits at the prompt; `compact` is left untouched) and `UserPromptSubmit` starts the spinner. The window icon follows the agent binary running in the pane, so the agent named in the hook command only applies to unrecognized commands. Devin imports `~/.claude/settings.json` and runs Claude's hooks next to its own; state updates are idempotent and sounds fire only on transitions, so the duplicates are harmless.
 

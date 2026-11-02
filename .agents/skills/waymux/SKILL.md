@@ -36,7 +36,7 @@ Then:
 | `permission` | Waiting for the user to approve a tool | `Notification` / `PermissionRequest` hook |
 | `awaiting_input` (alias `question`) | Agent asked the user something | `PreToolUse` of a question tool |
 | `stalled` | No output and no CPU for 20 s while working (Linux only) | Daemon stall detector |
-| `error` | Agent reported an error | RPC or hook |
+| `error` | Agent reported an error; `usage limit` when Claude Code's turn ended on a rate limit | RPC or hook (`StopFailure`) |
 | `idle` | Finished; the Cockpit shows it as "done, not reviewed" until the worktree is opened in lazygitrs | `Stop` hook |
 | `closed` | Session ended | `SessionEnd` hook |
 

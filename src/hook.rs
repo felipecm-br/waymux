@@ -484,6 +484,26 @@ fn held_decision(pane: &str, ctx: &serde_json::Value) -> Option<String> {
     decision_output(res.get("decision")?.as_str()?)
 }
 
+/// What ended the turn, for the pane's error state: `usage limit` for a rate limit (the cue to
+/// continue in another agent, `ai-quota` / `waymux launch`), else the API error's own name.
+pub(crate) const USAGE_LIMIT: &str = "usage limit";
+
+fn stop_failure_reason(ctx: &serde_json::Value) -> String {
+    let error: String = ctx
+        .get("error")
+        .and_then(|e| e.as_str())
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .take(40)
+        .collect();
+    match error.as_str() {
+        "rate_limit" => USAGE_LIMIT.to_string(),
+        "" => "API error".to_string(),
+        other => format!("API error: {}", other.replace('_', " ")),
+    }
+}
+
 fn print_hook_response(event_type: &str, ctx: &serde_json::Value) {
     if event_type == "PreToolUse" && ctx.get("hook_event_name").is_none() {
         println!("{{\"decision\":\"allow\"}}");
@@ -558,6 +578,12 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
             remember_pane_tool(&tmux_pane, None);
             remember_pane_command(&tmux_pane, None);
             send_acp_state(&tmux_pane, "idle", None);
+        }
+        // Claude Code fires StopFailure instead of Stop when an API error ended the turn.
+        "StopFailure" => {
+            remember_pane_tool(&tmux_pane, None);
+            remember_pane_command(&tmux_pane, None);
+            send_acp_state(&tmux_pane, "error", Some(&stop_failure_reason(&ctx)));
         }
         "SessionEnd" | "Exit" => {
             set_ai_agent_title(&tmux_pane, None);
@@ -721,6 +747,25 @@ pub fn run_cli(args: &[String]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_stop_failure_names_a_usage_limit() {
+        let reason = |v: serde_json::Value| stop_failure_reason(&v);
+        assert_eq!(
+            reason(serde_json::json!({"error": "rate_limit"})),
+            USAGE_LIMIT
+        );
+        assert_eq!(
+            reason(serde_json::json!({"error": "billing_error"})),
+            "API error: billing error"
+        );
+        assert_eq!(reason(serde_json::json!({})), "API error");
+        // Never more than a short word from the payload: no escapes, no long text.
+        assert_eq!(
+            reason(serde_json::json!({"error": "x\u{1b}[31m;rm -rf ~"})),
+            "API error: x31mrmrf"
+        );
+    }
+
     #[test]
     fn test_session_of_only_for_resumable_hints() {
         let ctx = serde_json::json!({ "session_id": "0d5f3c1e-8a2b" });
