@@ -4,6 +4,9 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Unified `% used` quota gauges, `70/90` thresholds and compact `5h` sparkline header (`src/quota/`)**: provider groups now report percent used (`% used`) like Claude Code instead of percent left, unifying every `--visual` gauge on `█` used / `░` headroom, leveling thresholds across Claude and provider groups at `0–69%` green, `70–89%` yellow and `90–100%` red, folding the 10-cell `5h` activity sparkline and `1h/5h` prompt counts into each agent's header row, and showing countdown-first reset columns (`⟳ 1h13m (20:27)`).
+- **Thermal-colored effort gauge (`src/launch/effort.rs`)**: the `launch` and `switch` footer effort gauge (`━━●── high`) now colors the active fill and level label along a peripheral-vision thermal scale (`none` `darkgray`, `low` `blue`, `medium` `green`, `high` `yellow`, `xhigh` `#fab387` orange, `max` `red`, `ultra` `magenta`).
+
 ## [0.10.0] - 2026-11-02
 
 - **Pick the effort in the launch and switch menus**: `Ctrl+H` / `Ctrl+L` (or `←` / `→`) step the effort of the agent under the cursor, drawn as a gauge in the footer (`━━●── high`) that follows the cursor and keeps the preset's colors. The launch pick starts with `--effort <level>` (Claude Code; agents without the flag show `none`), and the switch pick types `/effort <level>` after `/model`, so a Claude switch menu lists its models only. A provider row can carry its own levels as start args (`efforts: [{level, args}]`, e.g. a model id per effort). An untouched gauge passes nothing. Needs Waymaker 0.6 (`SetStyledFooter`); the built-in menu preset carries the binds.
