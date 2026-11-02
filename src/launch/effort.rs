@@ -14,7 +14,8 @@ use serde_json::Value;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-/// Effort levels in order, lowest first (Claude Code `--effort`, Codex `--effort`).
+/// Effort levels in order, lowest first (Claude Code's `--effort`). Codex has no such flag (it
+/// takes `-c model_reasoning_effort=<level>`): its rows carry their levels as start args.
 pub const LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// Cells of the gauge's track: the longest scale a row may carry (`none` … `max`, or Codex's
@@ -23,15 +24,15 @@ const TRACK: usize = 6;
 
 /// The levels an agent accepts at start, empty when it takes no effort flag.
 pub fn levels_for(agent: &str) -> &'static [&'static str] {
-    if agent.contains("claude") || agent == "codex" {
+    if agent.contains("claude") {
         &LEVELS
     } else {
         &[]
     }
 }
 
-/// The level the agent uses when started without a flag: Claude's per-model setting, Codex's
-/// `model_reasoning_effort`, else `medium`.
+/// The level the agent uses when started without a flag: Claude's per-model setting, else
+/// `medium`.
 pub fn default_for(agent: &str, args: &str) -> String {
     let found = if agent.contains("claude") {
         let model = args
@@ -40,8 +41,6 @@ pub fn default_for(agent: &str, args: &str) -> String {
             .nth(1)
             .unwrap_or_default();
         claude_default(&crate::switch::claude_settings(), model)
-    } else if agent == "codex" {
-        codex_default()
     } else {
         None
     };
@@ -62,19 +61,6 @@ fn claude_default(settings: &Value, model: &str) -> Option<String> {
         })
         .flatten();
     per_model.or_else(|| settings["effortLevel"].as_str().map(str::to_string))
-}
-
-fn codex_default() -> Option<String> {
-    let home = std::env::var("CODEX_HOME")
-        .ok()
-        .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| crate::sys::expand_home("~/.codex"));
-    let text = std::fs::read_to_string(format!("{home}/config.toml")).ok()?;
-    let table: toml::Table = text.parse().ok()?;
-    table
-        .get("model_reasoning_effort")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
 }
 
 /// One effort of a row whose levels are other start args (a model id per effort).
@@ -407,10 +393,10 @@ mod tests {
 
     #[test]
     fn test_levels_only_for_agents_that_take_the_flag() {
-        for a in ["claude", "jail-claude", "jail-claude-ask", "codex"] {
+        for a in ["claude", "jail-claude", "jail-claude-ask"] {
             assert_eq!(levels_for(a).len(), 5, "{a}");
         }
-        for a in ["agy", "devin", "opencode", "shell"] {
+        for a in ["agy", "codex", "devin", "opencode", "shell"] {
             assert!(levels_for(a).is_empty(), "{a}");
         }
     }

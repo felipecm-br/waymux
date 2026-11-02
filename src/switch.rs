@@ -651,14 +651,37 @@ fn has_draft(lines: &[String]) -> bool {
     if text.is_empty() {
         return false;
     }
-    let dim = ["\x1b[2m", "\x1b[90m"];
-    // 256-color greys 240..=249 (`\e[38;5;24Nm`)
-    let bytes = after.as_bytes();
-    let grey = after.starts_with("\x1b[38;5;24")
-        && bytes.get(9).is_some_and(u8::is_ascii_digit)
-        && bytes.get(10) == Some(&b'm');
-    let placeholder = dim.iter().any(|d| after.starts_with(d)) || grey;
-    !placeholder
+    !leading_style_is_dim(after)
+}
+
+/// Whether the first visible character after `s`'s leading styles and spaces is dim (`2`), grey
+/// (`90`, 256-color 240..=249): a placeholder. Codex resets after its bold marker before the
+/// dim text (`\e[1m›\e[0m \e[2mAsk Codex…`), so every leading style counts, not the first.
+fn leading_style_is_dim(s: &str) -> bool {
+    let mut rest = s;
+    let mut dim = false;
+    loop {
+        let trimmed = rest.trim_start_matches([' ', '\t', '\u{a0}']);
+        let Some(r) = trimmed.strip_prefix("\x1b[") else {
+            return dim;
+        };
+        let Some(i) = r.find('m') else {
+            return dim;
+        };
+        let codes: Vec<&str> = r[..i].split(';').collect();
+        if codes.iter().any(|c| c.is_empty() || *c == "0") {
+            dim = false; // a reset clears what came before it
+        }
+        let grey = codes.windows(3).any(|w| {
+            w[0] == "38"
+                && w[1] == "5"
+                && w[2].parse::<u8>().is_ok_and(|n| (240..=249).contains(&n))
+        });
+        if codes.iter().any(|c| *c == "2" || *c == "90") || grey {
+            dim = true;
+        }
+        rest = &r[i + 1..];
+    }
 }
 
 /// The text after any leading color codes.
@@ -794,6 +817,21 @@ mod tests {
         ["fable", "opus", "sonnet", "haiku"]
             .map(String::from)
             .to_vec()
+    }
+
+    #[test]
+    fn test_codex_placeholder_after_a_reset_is_not_a_draft() {
+        let codex = lines(&["\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m"]);
+        assert!(!has_draft(&codex));
+        let typed = lines(&["\x1b[1m›\x1b[0m fix the tests"]);
+        assert!(has_draft(&typed));
+        let dim_then_reset = lines(&["› \x1b[2m\x1b[0mreal text"]);
+        assert!(
+            has_draft(&dim_then_reset),
+            "a reset before the text undoes the dim"
+        );
+        let grey = lines(&["❯ \x1b[38;5;244mTry \"fix lint\"\x1b[0m"]);
+        assert!(!has_draft(&grey));
     }
 
     #[test]
