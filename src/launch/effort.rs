@@ -17,6 +17,10 @@ use std::path::PathBuf;
 /// Effort levels in order, lowest first (Claude Code `--effort`, Codex `--effort`).
 pub const LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
+/// Cells of the gauge's track: the longest scale a row may carry (`none` … `max`, or Codex's
+/// `low` … `ultra`); shorter scales pad to it, so the footer keeps its width.
+const TRACK: usize = 6;
+
 /// The levels an agent accepts at start, empty when it takes no effort flag.
 pub fn levels_for(agent: &str) -> &'static [&'static str] {
     if agent.contains("claude") || agent == "codex" {
@@ -239,11 +243,11 @@ pub fn render_footer(footer: &str, levels: &[&str], current: &str) -> Option<Str
     let label_start = footer[..at].rfind('{')?;
     let muted = footer[label_start + 1..at].trim_end_matches(':');
     let end = at + "Effort}".len();
-    let width = LEVELS.iter().map(|l| l.len()).max().unwrap_or(6);
+    let width = 6; // the longest level name: "medium"
     let gauge = if levels.is_empty() {
         format!(
             " {{{muted}:{}}} {{{muted}:{:<width$}}}",
-            "─".repeat(LEVELS.len()),
+            "─".repeat(TRACK),
             "none"
         )
     } else {
@@ -256,8 +260,8 @@ pub fn render_footer(footer: &str, levels: &[&str], current: &str) -> Option<Str
         if i + 1 < levels.len() {
             let _ = write!(track, "{{{muted}:{}}}", "─".repeat(levels.len() - i - 1));
         }
-        // A shorter scale (3 levels) pads to the longest, so the footer never shifts.
-        let pad = " ".repeat(LEVELS.len().saturating_sub(levels.len()));
+        // A shorter scale pads to the longest, so the footer never shifts.
+        let pad = " ".repeat(TRACK.saturating_sub(levels.len()));
         format!(" {track}{pad} {{white,bold:{current:<width$}}}")
     };
     let mut out = format!("{}{gauge}{}", &footer[..end], &footer[end..]);
@@ -303,7 +307,7 @@ mod tests {
     fn test_gauge_sits_after_the_effort_label_in_the_preset_colors() {
         let out = render_footer(FOOTER, &LEVELS, "high").unwrap();
         assert!(out.contains(
-            "{darkgray:Effort} {white:━━}{white,bold:●}{darkgray:──} {white,bold:high  } {darkgray:│} {cyan,bold:Esc}"
+            "{darkgray:Effort} {white:━━}{white,bold:●}{darkgray:──}  {white,bold:high  } {darkgray:│} {cyan,bold:Esc}"
         ));
         assert!(out.starts_with(" {cyan,bold:Enter} {darkgray:Launch}"));
     }
@@ -312,10 +316,10 @@ mod tests {
     fn test_gauge_ends_have_no_empty_runs() {
         let low = render_footer(FOOTER, &LEVELS, "low").unwrap();
         assert!(
-            low.contains("{darkgray:Effort} {white,bold:●}{darkgray:────} {white,bold:low   }")
+            low.contains("{darkgray:Effort} {white,bold:●}{darkgray:────}  {white,bold:low   }")
         );
         let max = render_footer(FOOTER, &LEVELS, "max").unwrap();
-        assert!(max.contains("{darkgray:Effort} {white:━━━━}{white,bold:●} {white,bold:max   }"));
+        assert!(max.contains("{darkgray:Effort} {white:━━━━}{white,bold:●}  {white,bold:max   }"));
     }
 
     #[test]
@@ -337,13 +341,22 @@ mod tests {
             n
         };
         assert_eq!(shown(&three), shown(&five));
+        let six = ["low", "medium", "high", "xhigh", "max", "ultra"];
+        assert_eq!(
+            shown(&five),
+            shown(&render_footer(FOOTER, &six, "ultra").unwrap())
+        );
+        assert_eq!(
+            shown(&five),
+            shown(&render_footer(FOOTER, &[], "").unwrap())
+        );
     }
 
     #[test]
     fn test_agent_without_levels_mutes_the_key_and_shows_an_empty_track() {
         let out = render_footer(FOOTER, &[], "").unwrap();
         assert!(
-            out.contains("{darkgray:C-h/l} {darkgray:Effort} {darkgray:─────} {darkgray:none  }")
+            out.contains("{darkgray:C-h/l} {darkgray:Effort} {darkgray:──────} {darkgray:none  }")
         );
         assert!(out.contains("{cyan,bold:Enter}") && out.contains("{cyan,bold:Esc}"));
     }
@@ -352,11 +365,9 @@ mod tests {
     fn test_hex_muted_colors_of_the_builtin_preset_carry_over() {
         let f = " {cyan,bold:C-h/l} {#7f9bb3:Effort} {#5d7a92:│}";
         let out = render_footer(f, &LEVELS, "medium").unwrap();
-        assert!(
-            out.contains(
-                "{#7f9bb3:Effort} {white:━}{white,bold:●}{#7f9bb3:───} {white,bold:medium}"
-            )
-        );
+        assert!(out.contains(
+            "{#7f9bb3:Effort} {white:━}{white,bold:●}{#7f9bb3:───}  {white,bold:medium}"
+        ));
     }
 
     #[test]
