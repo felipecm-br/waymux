@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-02
+
 - **Pick the effort in the launch and switch menus**: `Ctrl+H` / `Ctrl+L` (or `←` / `→`) step the effort of the agent under the cursor, drawn as a gauge in the footer (`━━●── high`) that follows the cursor and keeps the preset's colors. The launch pick starts with `--effort <level>` (Claude Code; agents without the flag show `none`), and the switch pick types `/effort <level>` after `/model`, so a Claude switch menu lists its models only. A provider row can carry its own levels as start args (`efforts: [{level, args}]`, e.g. a model id per effort). An untouched gauge passes nothing. Needs Waymaker 0.6 (`SetStyledFooter`); the built-in menu preset carries the binds.
 - **The switch no longer takes Codex's empty prompt for a draft**: Codex draws its placeholder after a reset (`\e[1m›\e[0m \e[2mAsk Codex…`), and the guard looked only at the first style after the marker, so every switch of an idle Codex stopped with "Draft in the codex prompt". It now reads the style the first visible character gets.
 - **Switch rows with their own effort commands**: a `rows_command` row may carry `efforts: [{level, args}]`, the command per level, for the gauge; and an agent listed in `[switch] agents` goes to `rows_command` even when built in (Codex, Devin), falling back to the built-in rows when the hook lists none.
