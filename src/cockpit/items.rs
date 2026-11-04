@@ -140,7 +140,7 @@ pub fn format_age(diff_s: u64) -> String {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct GitMetadata {
     is_repo: bool,
     branch: String,
@@ -150,6 +150,64 @@ struct GitMetadata {
     diffstat: String,
     pr_num: String,
     pr_ci: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct CachedGitMetadata {
+    stamp: String,
+    meta: GitMetadata,
+}
+
+fn stat_stamp(path: &Path) -> (u128, u64) {
+    let Ok(meta) = fs::metadata(path) else {
+        return (0, 0);
+    };
+    let ns = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
+    (ns, meta.len())
+}
+
+/// Fingerprint of a repository's git state (`HEAD`, `index`, `logs/HEAD`, `packed-refs`,
+/// `FETCH_HEAD` and the worktree root directory) without spawning git. `None` when `ppath`
+/// is not a git worktree.
+fn git_meta_stamp(ppath: &str) -> Option<String> {
+    let worktree = Path::new(ppath);
+    let (common_dir, git_dir) = crate::git::git_dirs(worktree)?;
+    let (h_ns, h_len) = stat_stamp(&git_dir.join("HEAD"));
+    let (i_ns, i_len) = stat_stamp(&git_dir.join("index"));
+    let (l_ns, l_len) = stat_stamp(&git_dir.join("logs").join("HEAD"));
+    let (p_ns, p_len) = stat_stamp(&common_dir.join("packed-refs"));
+    let (f_ns, f_len) = stat_stamp(&common_dir.join("FETCH_HEAD"));
+    let (w_ns, _) = stat_stamp(worktree);
+    Some(format!(
+        "{h_ns}:{h_len}|{i_ns}:{i_len}|{l_ns}:{l_len}|{p_ns}:{p_len}|{f_ns}:{f_len}|{w_ns}"
+    ))
+}
+
+fn git_meta_cache_file(ppath: &str) -> Option<std::path::PathBuf> {
+    let dir = crate::presets::private_runtime_dir()?.join("git-meta");
+    let _ = fs::create_dir_all(&dir);
+    let key: String = ppath
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Some(dir.join(format!("{key}.json")))
+}
+
+/// Clears the per-repository git metadata cache (`$XDG_RUNTIME_DIR/waymux/git-meta`).
+pub fn invalidate_git_meta_cache() {
+    if let Some(dir) = crate::presets::private_runtime_dir().map(|d| d.join("git-meta")) {
+        let _ = fs::remove_dir_all(dir);
+    }
 }
 
 fn parse_pr_cache_json(path: &Path) -> (String, String) {
@@ -274,64 +332,14 @@ fn parse_shortstat(shortstat: &str, dirty_files: usize) -> String {
     }
 }
 
-fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
-    let mut meta = GitMetadata::default();
-    let hardened = crate::git::neutralize(Path::new(ppath));
-    let out = match Command::new("git")
-        .args(&hardened)
-        .args([
-            "-C",
-            ppath,
-            "-c",
-            "submodule.recurse=false",
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "-b",
-        ])
-        .stderr(Stdio::null())
-        .output()
-    {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
-        _ => return meta,
-    };
-
-    if out.trim().is_empty() {
-        return meta;
-    }
-
-    let dirty_files = parse_porcelain_status(&out, &mut meta);
-    if dirty_files > 0 {
-        let shortstat = Command::new("git")
-            .args(&hardened)
-            .args([
-                "-C",
-                ppath,
-                "-c",
-                "submodule.recurse=false",
-                "--no-optional-locks",
-                "diff",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--shortstat",
-                "HEAD",
-            ])
-            .stderr(Stdio::null())
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-            .unwrap_or_default();
-        meta.diffstat = parse_shortstat(&shortstat, dirty_files);
-    }
-
+fn resolve_pr_metadata(ppath: &str, meta: &mut GitMetadata, now_s: u64) {
     let br = &meta.branch;
     if !br.is_empty() && !matches!(br.as_str(), "main" | "master" | "HEAD" | "detached") {
         let hash_key = format!("{}_{}", ppath.replace('/', "_"), br.replace('/', "_"));
         // Per-user runtime dir, not /tmp: other users cannot pre-create or symlink the file.
         let Some(cache_dir) = crate::presets::private_runtime_dir().map(|d| d.join("pr-cache"))
         else {
-            return meta;
+            return;
         };
         let _ = fs::create_dir_all(&cache_dir);
         let cache_file = cache_dir
@@ -363,7 +371,104 @@ fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
         meta.pr_num = pr_n;
         meta.pr_ci = pr_c;
     }
+}
 
+fn try_cached_git_metadata(ppath: &str, now_s: u64) -> Option<(String, GitMetadata)> {
+    let pre_stamp = git_meta_stamp(ppath)?;
+    let path = git_meta_cache_file(ppath)?;
+    let raw = fs::read_to_string(path).ok()?;
+    let cached = serde_json::from_str::<CachedGitMetadata>(&raw).ok()?;
+    if cached.stamp != pre_stamp {
+        return None;
+    }
+    let mut hit = cached.meta;
+    resolve_pr_metadata(ppath, &mut hit, now_s);
+    Some((pre_stamp, hit))
+}
+
+fn resolve_git_metadata(ppath: &str, now_s: u64) -> GitMetadata {
+    let mut meta = GitMetadata::default();
+    let Some(pre_stamp) = git_meta_stamp(ppath) else {
+        return meta;
+    };
+    if let Some((_, hit)) = try_cached_git_metadata(ppath, now_s) {
+        return hit;
+    }
+    let cache_file = git_meta_cache_file(ppath);
+
+    let hardened = crate::git::neutralize(Path::new(ppath));
+    let status_child = Command::new("git")
+        .args(&hardened)
+        .args([
+            "-C",
+            ppath,
+            "-c",
+            "submodule.recurse=false",
+            "-c",
+            "core.untrackedCache=true",
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "-b",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let diff_child = Command::new("git")
+        .args(&hardened)
+        .args([
+            "-C",
+            ppath,
+            "-c",
+            "submodule.recurse=false",
+            "--no-optional-locks",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--shortstat",
+            "HEAD",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+
+    let out = match status_child.and_then(std::process::Child::wait_with_output) {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+        _ => {
+            if let Ok(mut d) = diff_child {
+                let _ = d.wait();
+            }
+            return meta;
+        }
+    };
+    let shortstat = diff_child
+        .and_then(std::process::Child::wait_with_output)
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    if out.trim().is_empty() {
+        return meta;
+    }
+
+    let dirty_files = parse_porcelain_status(&out, &mut meta);
+    if dirty_files > 0 {
+        meta.diffstat = parse_shortstat(&shortstat, dirty_files);
+    }
+
+    if let Some(path) = &cache_file {
+        let stamp = git_meta_stamp(ppath).unwrap_or(pre_stamp);
+        let cached = CachedGitMetadata {
+            stamp,
+            meta: meta.clone(),
+        };
+        if let Ok(json) = serde_json::to_string(&cached) {
+            let _ = fs::write(path, json);
+        }
+    }
+
+    resolve_pr_metadata(ppath, &mut meta, now_s);
     meta
 }
 
@@ -578,26 +683,42 @@ fn repo_path_for(ppath: &str) -> Option<String> {
     Some(ppath.to_string())
 }
 
-/// Git status for every distinct pane path, one thread each: the `git status` and
-/// `git diff` calls dominated the scan when run back to back.
+/// Git status for every distinct pane path: warm cache hits are read in place, and only
+/// cache misses spawn worker threads to run `git status` and `git diff`.
 fn prefetch_git_metadata(list_out: &str, now_s: u64) -> HashMap<String, GitMetadata> {
     let paths: HashSet<String> = list_out
         .lines()
         .filter_map(|line| line.split('\x1f').nth(5))
         .filter_map(repo_path_for)
         .collect();
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = paths
-            .into_iter()
-            .map(|path| {
-                scope.spawn(move || {
-                    let meta = resolve_git_metadata(&path, now_s);
-                    (path, meta)
+    let mut out = HashMap::with_capacity(paths.len());
+    let mut misses = Vec::new();
+    for path in paths {
+        if let Some((_, hit)) = try_cached_git_metadata(&path, now_s) {
+            out.insert(path, hit);
+        } else {
+            misses.push(path);
+        }
+    }
+    if !misses.is_empty() {
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = misses
+                .into_iter()
+                .map(|path| {
+                    scope.spawn(move || {
+                        let meta = resolve_git_metadata(&path, now_s);
+                        (path, meta)
+                    })
                 })
-            })
-            .collect();
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
-    })
+                .collect();
+            for h in handles {
+                if let Ok((path, meta)) = h.join() {
+                    out.insert(path, meta);
+                }
+            }
+        });
+    }
+    out
 }
 
 pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> String {
@@ -619,45 +740,81 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         {
             cur_window = env_w;
         }
-        if (cur_session.is_empty() || cur_window.is_empty())
-            && let Some(out) =
-                tmux_out(&["display-message", "-p", "#{session_name}\t#{window_index}"])
-            && let Some((ts, tw)) = out.split_once('\t')
-        {
-            if cur_session.is_empty() {
-                cur_session = ts.to_string();
-            }
-            if cur_window.is_empty() {
-                cur_window = tw.to_string();
-            }
-        }
     }
 
-    let acpd_map = rpc_client::fetch_agent_states();
-    let (sess_agent, sess_etimes) = scan_running_agents();
+    let need_origin = cur_session.is_empty() || cur_window.is_empty();
+    let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
+
+    let (tmux_raw, acpd_map, (sess_agent, sess_etimes), theme, reg) = std::thread::scope(|scope| {
+        let tmux_h = scope.spawn(move || {
+            if need_origin {
+                tmux_out(&[
+                    "display-message",
+                    "-p",
+                    "#{session_name}\t#{window_index}",
+                    ";",
+                    "list-panes",
+                    "-a",
+                    "-F",
+                    fmt,
+                ])
+                .unwrap_or_default()
+            } else {
+                tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default()
+            }
+        });
+        let rpc_h = scope.spawn(rpc_client::fetch_agent_states);
+        let proc_scan = scan_running_agents();
+        let theme = ThemePalette::load();
+        let reg = Registry::global();
+        (
+            tmux_h.join().unwrap_or_default(),
+            rpc_h.join().unwrap_or_default(),
+            proc_scan,
+            theme,
+            reg,
+        )
+    });
+
+    let list_out = if need_origin {
+        if let Some((first, rest)) = tmux_raw.split_once('\n') {
+            if let Some((ts, tw)) = first.split_once('\t') {
+                if cur_session.is_empty() {
+                    cur_session = ts.to_string();
+                }
+                if cur_window.is_empty() {
+                    cur_window = tw.to_string();
+                }
+            }
+            rest
+        } else {
+            if let Some((ts, tw)) = tmux_raw.split_once('\t') {
+                if cur_session.is_empty() {
+                    cur_session = ts.to_string();
+                }
+                if cur_window.is_empty() {
+                    cur_window = tw.to_string();
+                }
+            }
+            ""
+        }
+    } else {
+        tmux_raw.as_str()
+    };
 
     let now_s = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
 
-    let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
-    let list_out = tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default();
-
-    let git_cache = prefetch_git_metadata(&list_out, now_s);
+    let git_cache = prefetch_git_metadata(list_out, now_s);
     let sources = PaneSources {
         agent_states: &acpd_map,
         sess_agent: &sess_agent,
         sess_etimes: &sess_etimes,
         git: &git_cache,
     };
-    let rows = build_rows(
-        &list_out,
-        &sources,
-        Registry::global(),
-        now_s,
-        (&cur_session, &cur_window),
-    );
-    render_items(rows, &ThemePalette::load(), filter_agents, &cur_session)
+    let rows = build_rows(list_out, &sources, reg, now_s, (&cur_session, &cur_window));
+    render_items(rows, &theme, filter_agents, &cur_session)
 }
 
 /// Daemon, `/proc` and git data the rows are built from.
@@ -1141,6 +1298,7 @@ fn render_items(
 
 pub fn run_cli(args: &[String]) -> i32 {
     let mut filter_agents = false;
+    let mut refresh = false;
     let mut cur_session = String::new();
     let mut cur_window = String::new();
 
@@ -1148,6 +1306,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         match arg.as_str() {
             "--agents" | "agents" | "-a" => filter_agents = true,
             "--fleet" | "fleet" => filter_agents = false,
+            "--refresh" | "refresh" | "-r" => refresh = true,
             _ => {
                 if cur_session.is_empty() {
                     cur_session.clone_from(arg);
@@ -1158,6 +1317,9 @@ pub fn run_cli(args: &[String]) -> i32 {
         }
     }
 
+    if refresh {
+        invalidate_git_meta_cache();
+    }
     let output = generate_items(filter_agents, &cur_session, &cur_window);
     print!("{output}");
     0
@@ -1359,6 +1521,13 @@ mod tests {
             Some(linked.join("../main/.git/worktrees/feat"))
         );
         assert_eq!(git_dir_of(&base), None);
+        assert_eq!(git_meta_stamp(base.to_str().unwrap()), None);
+
+        fs::write(main.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let s1 = git_meta_stamp(main.to_str().unwrap()).unwrap();
+        fs::write(main.join(".git/HEAD"), "ref: refs/heads/feat/longer\n").unwrap();
+        let s2 = git_meta_stamp(main.to_str().unwrap()).unwrap();
+        assert_ne!(s1, s2, "HEAD change invalidates stamp");
 
         mark_reviewed(&main);
         assert!(mtime_secs(&main.join(".git").join(REVIEW_MARKER)) > 0);

@@ -1,6 +1,7 @@
 # Waymux repository audit: 2026-11-04 (v0.11.0)
 
-> **Phase 1 status (branch `fix/phase1-audit`):** S1, C1, S2 and C2 fixed and released in v0.11.1 (pending tag); C3 withdrawn; C7 (found during Phase 1) fixed on `fix/awt-merge-guard`.
+> **Phase 1 status (branch `fix/phase1-audit`):** S1, C1, S2 and C2 fixed and released in v0.11.1; C3 withdrawn; C7 (found during Phase 1) fixed on `fix/awt-merge-guard`.
+> **Phase 2 status (branch `perf/phase2-cockpit-latency`):** P1, P2, P3, P4 and D4 completed (`cockpit-items` 3.6 ms warm / 8.8 ms cold on the 10-pane bench fixture; 4.4 ms warm / 16.6 ms cold on the live server).
 
 A full pass over code, performance, configuration, documentation, CI/supply chain and the TUI
 surfaces, two weeks and nine releases after the October audit that produced

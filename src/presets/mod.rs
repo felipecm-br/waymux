@@ -47,13 +47,46 @@ pub fn active_pane_file(workspace: &str) -> Option<PathBuf> {
     )))
 }
 
-/// Fills the preset template: the waymux binary path, and the metadata text and line colors
-/// (theme `muted` lifted to WCAG contrast; ANSI darkgray is 1.68:1 under lumon).
-pub fn render_cockpit_toml(waymux_bin: &str, muted_text: &str, muted_line: &str) -> String {
-    COCKPIT_PICKER_TOML_TEMPLATE
-        .replace("__WAYMUX_BIN__", waymux_bin)
+fn strip_keylog_binds(toml: &str) -> String {
+    const PREFIX: &str = "\"ExecuteAsync(__WAYMUX_BIN__ keylog ";
+    const SUFFIX: &str = ")\", ";
+    let mut out = String::with_capacity(toml.len());
+    let mut rest = toml;
+    while let Some(start) = rest.find(PREFIX) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + PREFIX.len()..];
+        if let Some(end) = after.find(SUFFIX) {
+            rest = &after[end + SUFFIX.len()..];
+        } else {
+            out.push_str(PREFIX);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Fills the preset template: the waymux binary path, the metadata text and line colors
+/// (theme `muted` lifted to WCAG contrast; ANSI darkgray is 1.68:1 under lumon), and whether
+/// `keylog` telemetry binds are kept.
+pub fn render_cockpit_toml_with_keylog(
+    waymux_bin: &str,
+    muted_text: &str,
+    muted_line: &str,
+    keylog: bool,
+) -> String {
+    let base = if keylog {
+        COCKPIT_PICKER_TOML_TEMPLATE.to_string()
+    } else {
+        strip_keylog_binds(COCKPIT_PICKER_TOML_TEMPLATE)
+    };
+    base.replace("__WAYMUX_BIN__", waymux_bin)
         .replace("__MUTED_TEXT__", muted_text)
         .replace("__MUTED_LINE__", muted_line)
+}
+
+pub fn render_cockpit_toml(waymux_bin: &str, muted_text: &str, muted_line: &str) -> String {
+    render_cockpit_toml_with_keylog(waymux_bin, muted_text, muted_line, false)
 }
 
 pub fn materialize_cockpit_toml() -> PathBuf {
@@ -66,7 +99,12 @@ pub fn materialize_cockpit_toml() -> PathBuf {
         .map_or_else(|| "waymux".to_string(), |p| p.to_string_lossy().to_string());
 
     let theme = crate::theme::ThemePalette::load();
-    let rendered = render_cockpit_toml(&exe_path, &theme.muted, &theme.muted_line);
+    let rendered = render_cockpit_toml_with_keylog(
+        &exe_path,
+        &theme.muted,
+        &theme.muted_line,
+        crate::keylog::enabled(),
+    );
 
     let needs_write = match fs::read_to_string(&target) {
         Ok(existing) => existing != rendered,
@@ -143,8 +181,18 @@ mod tests {
         }
         assert!(!toml.contains("\"DIM\""), "rows must not be dimmed");
         assert!(!toml.to_ascii_lowercase().contains("darkgray"));
+        assert!(!toml.contains("keylog"), "keylog binds stripped when off");
+        assert!(
+            !toml.contains("sleep"),
+            "delete binds wait on window-delete"
+        );
         assert!(toml.contains("{#7f9bb3:Jump}"));
         assert!(toml.parse::<toml::Table>().is_ok());
+
+        let with_keylog =
+            render_cockpit_toml_with_keylog("/bin/waymux", "#7f9bb3", "#5d7a92", true);
+        assert!(with_keylog.contains("/bin/waymux keylog cockpit"));
+        assert!(with_keylog.parse::<toml::Table>().is_ok());
     }
 
     #[test]

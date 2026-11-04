@@ -60,18 +60,21 @@ Never run tests that call tmux, play sounds or write `$XDG_RUNTIME_DIR/waymux` a
 
 | Path | Budget | How to measure |
 | --- | --- | --- |
-| `--version`, `health`, `list`, `status`, `dismiss` | < 1.5 ms | Average of 30 runs of the release binary |
-| `hook tmux <Event>` | < 10 ms | Same, against a sandboxed daemon |
-| `cockpit-items` | ~17 ms with 10 panes | Same, in a live tmux session |
+| `--version`, `health`, `list`, `status`, `dismiss` | < 1.5 ms | Median of 30 runs after 5 warmup runs (`./scripts/bench.sh`) |
+| `hook tmux <Event>` | < 10 ms | Same (`~1 ms` typical) |
+| `cockpit-items --refresh` (cold, 10 panes) | ≤ 20 ms | Same (`~9 ms` on the 10-repo fixture) |
+| `cockpit-items` (warm, 10 panes) | ≤ 8 ms | Same (`~4 ms` from `$XDG_RUNTIME_DIR/waymux/git-meta`) |
+| `quota --badge` | ≤ 10 ms | Same (`~1 ms` typical) |
+| `switch --peek` | ≤ 30 ms | Same (`~3 ms` on the fixture) |
 
-`scripts/bench.sh` measures the first two rows: 30 runs each against a sandboxed daemon (own `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR`, port). Copy the previous binary aside first and pass it as the baseline; run twice and report both, because the machine is noisy right after a build:
+`scripts/bench.sh` measures every row above: 30 runs each (after 5 warmup runs) against a sandboxed daemon and a 10-window private tmux server with 10 dirty git repositories under its own `HOME`, `XDG_RUNTIME_DIR`, `TMUX_TMPDIR` and port. Copy the previous binary aside first and pass it as the baseline:
 
 ```bash
 cp ~/.local/bin/waymux /tmp/waymux-old    # `cp`, not an alias: the script refuses a missing binary
 cargo build --release && ./scripts/bench.sh target/release/waymux /tmp/waymux-old
 ```
 
-The daemon is always the first binary's, so a daemon-side change shows in both columns; compare against an earlier run of the old build instead. `--check` exits 1 over budget (`BENCH_SLACK=4` in CI). `cockpit-items` needs a live tmux session; time it with a 30-iteration `date +%s%N` loop.
+The daemon is always the first binary's, so a daemon-side change shows in both columns; compare against an earlier run of the old build instead. `--check` exits 1 over budget (`BENCH_SLACK=4` in CI).
 
 ## Coverage & Mutation Testing
 

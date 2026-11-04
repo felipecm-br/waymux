@@ -545,6 +545,7 @@ pub fn run_window_delete() -> i32 {
             let _ = tmux_status(&["switch-client", "-n"]);
         }
         let _ = tmux_status(&["kill-session", "-t", sess_name]);
+        crate::cockpit::items::invalidate_git_meta_cache();
         return 0;
     }
 
@@ -569,23 +570,25 @@ pub fn run_window_delete() -> i32 {
 
     // Optional user script that records a window before it is killed (e.g. to reopen it).
     let record_script = crate::wt::find_user_script("record-window-state.sh");
+    let mut killed = false;
 
     for (sess, idx) in targets {
         let target = format!("{sess}:{idx}");
-        let label = tmux_out(&[
+        let info = tmux_out(&[
             "display-message",
             "-p",
             "-t",
             &target,
-            "#{session_name} › #{window_name}",
+            "#{session_name} › #{window_name}\t#{window_active}",
         ])
-        .unwrap_or_else(|| target.clone());
-        if !confirm_kill(&target, &label, &active_agent_states(&target, false)) {
+        .unwrap_or_default();
+        let (label, is_active) = info
+            .split_once('\t')
+            .map_or((target.as_str(), ""), |(l, a)| (l, a));
+        if !confirm_kill(&target, label, &active_agent_states(&target, false)) {
             continue;
         }
 
-        let is_active = tmux_out(&["display-message", "-p", "-t", &target, "#{window_active}"])
-            .unwrap_or_default();
         let win_count = tmux_out(&["list-windows", "-t", &sess]).map_or(0, |s| s.lines().count());
 
         if is_active == "1"
@@ -603,7 +606,13 @@ pub fn run_window_delete() -> i32 {
                 .stderr(Stdio::null())
                 .status();
         }
-        let _ = tmux_status(&["kill-window", "-t", &target]);
+        if tmux_status(&["kill-window", "-t", &target]) {
+            killed = true;
+        }
+    }
+
+    if killed {
+        crate::cockpit::items::invalidate_git_meta_cache();
     }
 
     0

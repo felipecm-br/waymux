@@ -185,41 +185,43 @@ fn say(msg: &str) {
     eprintln!("waymux switch: {msg}");
 }
 
-/// The agent process in the pane: its foreground command, else the first agent process of its
-/// session (an agent started through a wrapper or a sandbox).
-fn pane_process(pane: &str, known: &[String]) -> Option<String> {
-    let info = tmux_out(&[
+/// The agent process in the pane (its foreground command, else the first agent process of its
+/// session) and the last 8 non-blank lines of its screen, fetched in one tmux round-trip.
+fn pane_and_screen(pane: &str, known: &[String]) -> Option<(String, Vec<String>)> {
+    let raw = tmux_out(&[
         "display-message",
         "-p",
         "-t",
         pane,
         "#{pane_current_command} #{pane_pid}",
+        ";",
+        "capture-pane",
+        "-p",
+        "-e",
+        "-t",
+        pane,
     ])?;
-    let (cmd, pid) = info.trim().split_once(' ')?;
-    if known.iter().any(|k| k == cmd) {
-        return Some(cmd.to_string());
-    }
-    let out = Command::new("ps")
-        .args(["-s", pid, "-o", "comm="])
-        .output()
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|c| known.iter().any(|k| k == c))
-        .map(str::to_string)
-}
-
-/// The last 8 non-blank lines of the pane, with their colors.
-fn screen(pane: &str) -> Vec<String> {
-    let raw = tmux_out(&["capture-pane", "-p", "-e", "-t", pane]).unwrap_or_default();
-    let lines: Vec<String> = raw
-        .lines()
+    let mut iter = raw.lines();
+    let (cmd, pid) = iter.next()?.trim().split_once(' ')?;
+    let proc = if known.iter().any(|k| k == cmd) {
+        cmd.to_string()
+    } else {
+        let out = Command::new("ps")
+            .args(["-s", pid, "-o", "comm="])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|c| known.iter().any(|k| k == c))?
+            .to_string()
+    };
+    let lines: Vec<String> = iter
         .filter(|l| !strip_ansi(l).trim().is_empty())
         .map(str::to_string)
         .collect();
     let skip = lines.len().saturating_sub(8);
-    lines[skip..].to_vec()
+    Some((proc, lines[skip..].to_vec()))
 }
 
 fn plain(lines: &[String]) -> Vec<String> {
@@ -399,7 +401,7 @@ fn menu_for(pane: &str, cfg: &SwitchConfig) -> Option<(Menu, Vec<String>)> {
             .map(|s| (*s).to_string())
             .chain(extra.iter().cloned())
             .collect();
-        (pane_process(pane, &known)?, screen(pane))
+        pane_and_screen(pane, &known)?
     };
     let text = plain(&lines);
     // An agent listed for the rows hook goes to it even when built in (Codex, Devin): the hook

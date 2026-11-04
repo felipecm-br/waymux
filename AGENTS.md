@@ -40,7 +40,7 @@
 - `src/status_palette.rs`: Semantic agent-state colors (built-in light/dark palettes, `[theme.states.*].color` overrides) shared by the status bar, Waybar and the Cockpit.
 - `src/cockpit/`: Native Cockpit HUD engine:
   - `mod.rs`: `waymux cockpit` popup launcher, `@SEGMENT_BG`/`@FG`/`@ACCENT_COLOR` Waymaker color resolver, and `__ACTION__` dispatch loop.
-  - `items.rs`: `waymux cockpit-items` (native `/proc/<pid>/stat` & `/proc/<pid>/comm` scanner, Git status read in parallel per pane path, PR cache in `$XDG_RUNTIME_DIR/waymux/pr-cache`, 12-column TSV emitter; ~17ms with 10 panes).
+  - `items.rs`: `waymux cockpit-items` (native `/proc/<pid>/stat` & `/proc/<pid>/comm` scanner, Git status and diffstat read concurrently per pane path and cached in `$XDG_RUNTIME_DIR/waymux/git-meta`, PR cache in `$XDG_RUNTIME_DIR/waymux/pr-cache`, 12-column TSV emitter; ~4ms warm / ~9ms cold with 10 panes via `./scripts/bench.sh`).
   - `preview.rs`: `waymux cockpit-preview` (contextual agent card, PR badge, review notes, terminal snapshot).
   - `diff.rs`: `waymux cockpit-diff` (diff header card, untracked files, flushed stdout into `delta --side-by-side` / `bat`).
   - `help.rs`: `waymux cockpit-help` (telemetry HUD and keybinding cheat-sheet).

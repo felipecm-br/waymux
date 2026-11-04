@@ -501,6 +501,56 @@ fn plugin_popup_bindings_pass_a_hostile_directory_as_one_argument() {
     );
 }
 
+#[test]
+fn cockpit_items_caches_git_metadata_and_invalidates_on_delete_and_refresh() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    env.init_repo();
+    env.write("a.txt", "one\ntwo\n");
+    let repo = env.repo();
+    tmux.run(&[
+        "new-window",
+        "-t",
+        "main:1",
+        "-c",
+        &repo.display().to_string(),
+        "sleep 30",
+    ]);
+
+    let cache_dir = env.dir.join("run/waymux/git-meta");
+    assert!(!cache_dir.exists());
+
+    // Cold run populates git-meta cache and reports +1 diffstat.
+    let out1 = env.run(&["cockpit-items"]);
+    assert!(out1.contains("+1"), "{out1}");
+    assert!(cache_dir.is_dir());
+    let cached_files: Vec<_> = std::fs::read_dir(&cache_dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    assert_eq!(cached_files.len(), 1);
+
+    // Warm run serves the cached metadata; corrupting the cached diffstat proves the cache hit,
+    // and --refresh rebuilds it from git.
+    let raw = std::fs::read_to_string(&cached_files[0]).unwrap();
+    std::fs::write(&cached_files[0], raw.replace("+1", "+99")).unwrap();
+    let warm = env.run(&["cockpit-items"]);
+    assert!(warm.contains("+99"), "expected warm cache hit: {warm}");
+
+    let refreshed = env.run(&["cockpit-items", "--refresh"]);
+    assert!(
+        refreshed.contains("+1") && !refreshed.contains("+99"),
+        "{refreshed}"
+    );
+
+    // window-delete invalidates git-meta cache.
+    run_with_stdin(&env, &["window-delete"], "x\t1\tx\tmain\n");
+    assert!(
+        !cache_dir.exists(),
+        "window-delete must clear git-meta cache"
+    );
+}
+
 fn walk(dir: &std::path::Path) -> impl Iterator<Item = std::path::PathBuf> {
     let mut stack = vec![dir.to_path_buf()];
     std::iter::from_fn(move || {

@@ -26,8 +26,8 @@ Running multiple autonomous AI coding agents (`agy`, `claude`, `codex`, `opencod
 **Waymux solves all of this in a single ~3 MB Rust binary:**
 - **Zero status-bar polling (`status-interval 0`)**: An asynchronous Axum/Tokio daemon (`waymux daemon`) tracks agent states with consolidated 300ms idle debouncing, proactive stall detection (20s hung-agent heuristic), and multi-pane urgency aggregation.
 - **<1.5ms Synchronous CLI Fast-Path**: All client subcommands (`cockpit`, `triage`, `hook`, `inject`, `wt`, `dismiss`, `status`, `list`) execute synchronously **before** initializing the Tokio runtime.
-- **~17ms Native `/proc` Cockpit HUD**: Scans `/proc/<pid>/stat` and `/proc/<pid>/comm` directly in Rust to render a 12-column TUI fleet dashboard via **Waymaker (`wm`)** with embedded presets and live `delta` side-by-side diffs.
-- **Zero-Node Agent Hooks & Bracketed-Paste Injection**: Native `waymux hook {tmux|lazygit}` (~8ms) and `waymux inject` deliver multi-line review notes atomically via `tmux load-buffer` + `paste-buffer -p`.
+- **~4ms Warm / ~9ms Cold Native `/proc` Cockpit HUD**: Scans `/proc/<pid>/stat` and `/proc/<pid>/comm` directly in Rust, caches per-repository Git metadata keyed on `index`/`HEAD` mtimes in `$XDG_RUNTIME_DIR/waymux/git-meta`, and renders a 12-column TUI fleet dashboard via **Waymaker (`wm`)** with embedded presets and live `delta` side-by-side diffs (`./scripts/bench.sh`).
+- **Zero-Node Agent Hooks & Bracketed-Paste Injection**: Native `waymux hook {tmux|lazygit}` (~1ms) and `waymux inject` deliver multi-line review notes atomically via `tmux load-buffer` + `paste-buffer -p`.
 - **Git Worktree Orchestrator (`waymux wt` / `awt`)**: Provisions sibling `.bare` worktrees, copies untracked `.env*` secrets, and binds 1 worktree to 1 Tmux session, using the bundled `awt-*.sh` helpers.
 - **Quota-aware launch and in-place switching**: `waymux quota` tracks Claude Code's 5h/7d windows (burn rate, projection at the reset, weekly pace) plus any agent a provider reports; `waymux launch` starts the agent and model with headroom, and `waymux switch` changes the model or effort of a running agent without leaving the conversation.
 
@@ -184,12 +184,12 @@ flowchart TD
 
     subgraph Agents ["Autonomous AI Coding Agents"]
         Agent["Antigravity / Claude Code / Codex / OpenCode"]
-        Hook["waymux hook tmux|lazygit\n(<8ms Native Rust Hook)"]
+        Hook["waymux hook tmux|lazygit\n(~1ms Native Rust Hook)"]
     end
 
     subgraph Core ["Waymux Unified Rust Engine"]
         Daemon["waymux daemon\n(Axum JSON-RPC @ 127.0.0.1:4040)"]
-        Scanner["waymux cockpit-items\n(~17ms Native /proc & Git Scanner)"]
+        Scanner["waymux cockpit-items\n(~4ms Warm / ~9ms Cold /proc & Git Scanner)"]
         Injector["waymux inject & review-notes\n(Atomic Bracketed Paste)"]
         WT["waymux wt\n(Git Worktree Orchestrator)"]
     end

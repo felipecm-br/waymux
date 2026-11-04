@@ -98,13 +98,31 @@ fn set_ai_agent_title(pane: &str, title: Option<&str>) {
                 .filter(|c| !matches!(c, '"' | '\\' | '$' | '`'))
                 .take(80)
                 .collect();
-            let _ = tmux_status(&["set-option", "-w", "-t", pane, "@ai_agent_title", &clean]);
-            let _ = tmux_status(&["refresh-client", "-S"]);
+            let _ = tmux_status(&[
+                "set-option",
+                "-w",
+                "-t",
+                pane,
+                "@ai_agent_title",
+                &clean,
+                ";",
+                "refresh-client",
+                "-S",
+            ]);
             return;
         }
     }
-    let _ = tmux_status(&["set-option", "-w", "-t", pane, "-u", "@ai_agent_title"]);
-    let _ = tmux_status(&["refresh-client", "-S"]);
+    let _ = tmux_status(&[
+        "set-option",
+        "-w",
+        "-t",
+        pane,
+        "-u",
+        "@ai_agent_title",
+        ";",
+        "refresh-client",
+        "-S",
+    ]);
 }
 
 fn set_lazygitrs_icon(pane: &str, icon: Option<&str>) {
@@ -112,11 +130,30 @@ fn set_lazygitrs_icon(pane: &str, icon: Option<&str>) {
         return;
     }
     if let Some(ic) = icon {
-        let _ = tmux_status(&["set-option", "-w", "-t", pane, "@lazygitrs_icon", ic]);
+        let _ = tmux_status(&[
+            "set-option",
+            "-w",
+            "-t",
+            pane,
+            "@lazygitrs_icon",
+            ic,
+            ";",
+            "refresh-client",
+            "-S",
+        ]);
     } else {
-        let _ = tmux_status(&["set-option", "-w", "-t", pane, "-u", "@lazygitrs_icon"]);
+        let _ = tmux_status(&[
+            "set-option",
+            "-w",
+            "-t",
+            pane,
+            "-u",
+            "@lazygitrs_icon",
+            ";",
+            "refresh-client",
+            "-S",
+        ]);
     }
-    let _ = tmux_status(&["refresh-client", "-S"]);
 }
 
 /// First line of a transcript, at most 1 MiB. Transcripts grow to tens of MB and the hook

@@ -36,7 +36,7 @@ fn is_enabled(env_val: Option<&str>, config_keylog: bool) -> bool {
     }
 }
 
-fn enabled() -> bool {
+pub fn enabled() -> bool {
     let env_val = std::env::var("WAYMUX_KEYLOG").ok();
     if matches!(env_val.as_deref(), Some("0" | "1")) {
         return is_enabled(env_val.as_deref(), false);

@@ -187,7 +187,7 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         name: "cockpit-items",
-        usage: "cockpit-items [--agents] [session] [window]",
+        usage: "cockpit-items [--agents] [--refresh] [session] [window]",
         about: "Emit the Cockpit's 12-column TSV rows",
         plumbing: true,
     },
