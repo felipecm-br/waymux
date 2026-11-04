@@ -419,7 +419,7 @@ fn ship_from_a_linked_worktree_merges_into_the_checkout_that_has_the_base() {
         "the main checkout's tree was not updated"
     );
     assert!(eventually_gone(&feat), "the merged worktree is still there");
-    assert!(git_in(&env, &repo, &["branch", "--list", "feat/x"]).is_empty());
+    assert_eq!(git_in(&env, &repo, &["branch", "--list", "feat/x"]), "");
 }
 
 fn eventually_gone(path: &Path) -> bool {
