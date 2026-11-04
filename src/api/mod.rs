@@ -182,15 +182,7 @@ pub fn api_router(adapters: ApiState, auth_token: Arc<String>) -> Router {
     // The page carries no data; everything it shows comes through /rpc with the phone token.
     let page = Router::new().route(
         "/m",
-        axum::routing::get(|| async {
-            (
-                [
-                    (axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8"),
-                    (axum::http::header::CACHE_CONTROL, "no-store"),
-                ],
-                phone::PAGE,
-            )
-        }),
+        axum::routing::get(|| async { phone::page_response() }),
     );
 
     Router::new().merge(protected).merge(page)
@@ -457,6 +449,68 @@ mod tests {
         let (code, page) = send(None, "GET", "/m", String::new()).await;
         assert_eq!(code, StatusCode::OK);
         assert!(page.contains("phone/snapshot") && !page.contains(&token));
+    }
+
+    #[tokio::test]
+    async fn test_phone_page_runs_only_its_own_script() {
+        use tower::ServiceExt;
+        let get = || async {
+            let router = api_router(ApiState::new(Vec::new(), 0), Arc::new("daemon".into()));
+            let req = axum::http::Request::builder()
+                .uri("/m")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = router.oneshot(req).await.unwrap();
+            let headers = res.headers().clone();
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (headers, String::from_utf8(body.to_vec()).unwrap())
+        };
+        let (headers, page) = get().await;
+        let header = |name: &str| headers.get(name).unwrap().to_str().unwrap().to_string();
+        let csp = header("content-security-policy");
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|r| r.split('\'').next())
+            .unwrap()
+            .to_string();
+        assert_eq!(nonce.len(), 32, "{csp}");
+        for directive in [
+            "default-src 'none'",
+            "connect-src 'self'",
+            "frame-ancestors 'none'",
+            "base-uri 'none'",
+        ] {
+            assert!(csp.contains(directive), "{directive} missing from {csp}");
+        }
+        assert!(!csp.contains("unsafe"), "{csp}");
+        // Every script and style block carries the nonce, and nothing runs from attributes.
+        assert_eq!(page.matches("<script").count(), 1);
+        assert_eq!(page.matches("<style").count(), 1);
+        assert!(page.contains(&format!("<script nonce=\"{nonce}\">")));
+        assert!(page.contains(&format!("<style nonce=\"{nonce}\">")));
+        let inline_handler = page.split(['<', ' ', '\n']).any(|w| {
+            w.strip_prefix("on")
+                .and_then(|r| r.split_once('='))
+                .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_lowercase()))
+        });
+        assert!(
+            !inline_handler,
+            "an on*= handler would be blocked by the CSP"
+        );
+        assert!(
+            !page.contains(" style=\""),
+            "a style attribute would be blocked"
+        );
+        assert_eq!(header("referrer-policy"), "no-referrer");
+        assert_eq!(header("x-content-type-options"), "nosniff");
+        assert_eq!(header("x-frame-options"), "DENY");
+        assert_eq!(header("cache-control"), "no-store");
+        // A new nonce every time.
+        let (again, _) = get().await;
+        assert_ne!(again.get("content-security-policy").unwrap(), csp.as_str());
     }
 
     #[test]

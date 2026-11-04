@@ -4,6 +4,7 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **The phone page sends security headers (`/m`, `src/api/phone.rs`)**: the page keeps the phone token in memory, and was served with only a content type. It now gets a `Content-Security-Policy` with a fresh nonce per response (only its own script and style run, it may call only this origin, no framing), plus `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY`.
 - **Background-task results no longer replace an agent's title (`src/hook.rs`)**: Claude Code delivers a finished background task (`<task-notification>…`), a slash command's body (`<command-message>…`) and similar harness messages through `UserPromptSubmit`, and the hook took each for the user's prompt, so the Cockpit, triage and status bar showed `<task-notification> <ta…` instead of the task. A prompt wrapped in such a tag (a name with `-` or `_`, closed later in the prompt) now leaves the title as it was.
 - **The tmux popup bindings no longer run a directory name as shell (`tmux/waymux.tmux`, `waymux init --tmux`, README)**: `prefix+u` and `prefix+a` passed `'#{pane_current_path}'` to `run-shell` in single quotes, so a directory whose name held a `'` broke the command, and a crafted name (a cloned repository, an extracted archive) ran its own commands when the key was pressed. They now use tmux's shell quoting, `#{q:pane_current_path}`. If you copied the bindings from `waymux init --tmux` or the README into `~/.tmux.conf`, replace them there too.
 

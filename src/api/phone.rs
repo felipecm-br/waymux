@@ -42,6 +42,34 @@ pub const MAX_DIFF_BYTES: usize = 64 * 1024;
 
 pub const PAGE: &str = include_str!("phone.html");
 
+/// The headers and body of `/m`. The page holds the phone token in memory, so a fresh nonce
+/// per response lets only its own `<script>` and `<style>` run, it may call nothing but this
+/// origin, and no other site may frame it or learn its URL.
+pub fn page_response() -> ([(axum::http::HeaderName, String); 6], String) {
+    use axum::http::header;
+    // Without randomness the page still loads; it just gets no script or style.
+    let nonce = crate::auth::random_token().unwrap_or_default();
+    let body = PAGE
+        .replacen("<script>", &format!("<script nonce=\"{nonce}\">"), 1)
+        .replacen("<style>", &format!("<style nonce=\"{nonce}\">"), 1);
+    let csp = format!(
+        "default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; \
+         connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; \
+         frame-ancestors 'none'"
+    );
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8".into()),
+            (header::CACHE_CONTROL, "no-store".into()),
+            (header::CONTENT_SECURITY_POLICY, csp),
+            (header::REFERRER_POLICY, "no-referrer".into()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".into()),
+            (header::X_FRAME_OPTIONS, "DENY".into()),
+        ],
+        body,
+    )
+}
+
 /// `Default` keeps the token in memory only (tests); the daemon uses [`PhoneToken::load`].
 #[derive(Debug, Default)]
 pub struct PhoneToken {
