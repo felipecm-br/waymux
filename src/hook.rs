@@ -135,6 +135,25 @@ fn read_first_line(path: &Path) -> Option<String> {
     Some(line)
 }
 
+/// Whether a prompt is a message the agent harness wrapped in its own tag, such as Claude
+/// Code's `<task-notification>…</task-notification>` (a background task finished) or
+/// `<command-message>…</command-message>` (a slash command's body). Those arrive through
+/// `UserPromptSubmit` like typed prompts. Only a tag whose name holds `-` or `_` and that is
+/// closed later counts, so a typed prompt such as `<div> is broken` is still a title.
+fn is_harness_message(prompt: &str) -> bool {
+    let Some(rest) = prompt.trim_start().strip_prefix('<') else {
+        return false;
+    };
+    let name_len = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..name_len];
+    name.starts_with(|c: char| c.is_ascii_alphabetic())
+        && name.contains(['-', '_'])
+        && rest[name_len..].starts_with(['>', ' '])
+        && rest.contains(&format!("</{name}>"))
+}
+
 pub fn extract_session_title(ctx: &serde_json::Value) -> Option<String> {
     if let Some(t) = ctx.get("title").and_then(|v| v.as_str())
         && !t.trim().is_empty()
@@ -147,6 +166,11 @@ pub fn extract_session_title(ctx: &serde_json::Value) -> Option<String> {
         return Some(t.trim().to_string());
     }
     if let Some(p) = ctx.get("prompt").and_then(|v| v.as_str()) {
+        if is_harness_message(p) {
+            // A task result or a slash command's body, not something the user typed:
+            // keep the title the pane already has.
+            return None;
+        }
         let mut raw = p.trim();
         if let Some(rest) = raw.strip_prefix('/')
             && let Some(idx) = rest.find(char::is_whitespace)
@@ -966,6 +990,38 @@ mod tests {
     }
 
     #[test]
+    fn test_harness_messages_are_not_titles() {
+        for prompt in [
+            "<task-notification> <task-id>b1</task-id> <status>completed</status> </task-notification>",
+            "  <command-message>tui-ux-architect</command-message>\n<command-name>/tui-ux-architect</command-name>",
+            "<system-reminder>\nnote\n</system-reminder>",
+            "<local-command-stdout>ok</local-command-stdout>",
+            "<user_prompt_submit_hook id=\"1\">x</user_prompt_submit_hook>",
+        ] {
+            let ctx = serde_json::json!({ "prompt": prompt, "transcript_path": "/nonexistent" });
+            assert_eq!(extract_session_title(&ctx), None, "{prompt}");
+        }
+        // Typed prompts that merely start with markup are still titles.
+        for (prompt, title) in [
+            ("<div> is broken", "<div> is broken"),
+            ("<my-widget> renders twice", "<my-widget> renders twice"),
+            ("<a-b>x</a-bc> mismatched", "<a-b>x</a-bc> mismatched"),
+            ("<-x->x</-x->", "<-x->x</-x->"),
+            (
+                "fix <task-notification> parsing",
+                "fix <task-notification> parsing",
+            ),
+        ] {
+            let ctx = serde_json::json!({ "prompt": prompt });
+            assert_eq!(
+                extract_session_title(&ctx).as_deref(),
+                Some(title),
+                "{prompt}"
+            );
+        }
+    }
+
+    #[test]
     fn test_remember_and_recall_pane_tool_in() {
         assert_eq!(pane_tool_memo_in(None, "%1"), None);
         let dir = std::env::temp_dir().join(format!("waymux-memo-test-{}", std::process::id()));
@@ -1032,6 +1088,18 @@ mod tests {
                     prop_assert!(summary.chars().count() <= MAX_REASON_CHARS);
                     prop_assert!(!summary.contains('\n'));
                 }
+            }
+
+            /// A harness-wrapped message never becomes the title, whatever it wraps.
+            #[test]
+            fn harness_messages_keep_the_title(
+                name in "[a-z]{1,8}[-_][a-z]{1,8}",
+                body in arb_text(),
+                lead in "[ \n]{0,3}",
+            ) {
+                let prompt = format!("{lead}<{name}>{body}</{name}>");
+                let ctx = serde_json::json!({ "prompt": prompt });
+                prop_assert_eq!(extract_session_title(&ctx), None);
             }
 
             #[test]
