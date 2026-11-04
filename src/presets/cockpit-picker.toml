@@ -47,6 +47,8 @@ row_connection = "Full"
 column_spacing = 0
 
 [results.current_style]
+# Waymaker defaults the selection to a black strip; keep the terminal background.
+bg = "reset"
 modifier = "BOLD"
 
 [results.current_nav_bar_style]
