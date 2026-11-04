@@ -57,19 +57,19 @@ fi
 # Quota & launch recommendation: default Prefix + u
 KEY_QUOTA=$(get_tmux_option "@waymux_key_quota" "u")
 if [[ "$KEY_QUOTA" != off ]]; then
-    tmux bind-key "$KEY_QUOTA" run-shell "waymux quota --popup '#{pane_current_path}'"
+    tmux bind-key "$KEY_QUOTA" run-shell "waymux quota --popup #{q:pane_current_path}"
 fi
 
 # Agent × model launcher (new window): default Prefix + a
 KEY_LAUNCH=$(get_tmux_option "@waymux_key_launch" "a")
 if [[ "$KEY_LAUNCH" != off ]]; then
-    tmux bind-key "$KEY_LAUNCH" run-shell "waymux launch --popup '#{pane_current_path}'"
+    tmux bind-key "$KEY_LAUNCH" run-shell "waymux launch --popup #{q:pane_current_path}"
 fi
 
 # In-place model / effort switch for the pane's agent: default Prefix + A
 KEY_SWITCH=$(get_tmux_option "@waymux_key_switch" "A")
 if [[ "$KEY_SWITCH" != off ]]; then
-    tmux bind-key "$KEY_SWITCH" run-shell "waymux switch --popup '#{pane_id}'"
+    tmux bind-key "$KEY_SWITCH" run-shell "waymux switch --popup #{pane_id}"
 fi
 
 # Quick Jump to Last Session: default Prefix + L

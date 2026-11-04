@@ -450,3 +450,66 @@ fn launch_tags_the_pane_and_the_popup_starts_the_pick_in_a_new_window() {
     );
     assert!(tmux.window_count("main") >= before);
 }
+
+/// The plugin's popup bindings hand the pane's directory to `waymux` as one argument, whatever
+/// the directory is called: a name with a quote or a `;` (a cloned repository, an extracted
+/// archive) must never be read as shell.
+#[test]
+fn plugin_popup_bindings_pass_a_hostile_directory_as_one_argument() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    let args_file = env.dir.join("waymux-args");
+    let fake = env.dir.join("bin/waymux");
+    std::fs::write(
+        &fake,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+            args_file.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let plugin = concat!(env!("CARGO_MANIFEST_DIR"), "/tmux/waymux.tmux");
+    tmux.run(&["run-shell", plugin]);
+    let hostile = env.dir.join("a'b;touch pwned;'c $HOME");
+    std::fs::create_dir_all(&hostile).unwrap();
+    tmux.run(&[
+        "new-window",
+        "-c",
+        &hostile.display().to_string(),
+        "sleep 30",
+    ]);
+
+    for (key, sub) in [("u", "quota"), ("a", "launch")] {
+        let _ = std::fs::remove_file(&args_file);
+        let bound = tmux.run(&["list-keys", "-T", "prefix", key]);
+        let command = &bound[bound.find("run-shell").expect("bound to run-shell")..];
+        let script = env.dir.join("binding.conf");
+        std::fs::write(&script, format!("{command}\n")).unwrap();
+        tmux.run(&["source-file", &script.display().to_string()]);
+        let args = std::fs::read_to_string(&args_file).unwrap_or_default();
+        assert_eq!(
+            args.lines().collect::<Vec<_>>(),
+            [sub, "--popup", &hostile.display().to_string()],
+            "prefix {key} ran: {command}"
+        );
+    }
+    let pwned: Vec<_> = walk(&env.dir).filter(|p| p.ends_with("pwned")).collect();
+    assert!(
+        pwned.is_empty(),
+        "the directory name ran as shell: {pwned:?}"
+    );
+}
+
+fn walk(dir: &std::path::Path) -> impl Iterator<Item = std::path::PathBuf> {
+    let mut stack = vec![dir.to_path_buf()];
+    std::iter::from_fn(move || {
+        let path = stack.pop()?;
+        if path.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&path)
+        {
+            stack.extend(entries.flatten().map(|e| e.path()));
+        }
+        Some(path)
+    })
+}

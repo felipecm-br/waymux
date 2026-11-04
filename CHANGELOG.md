@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **The tmux popup bindings no longer run a directory name as shell (`tmux/waymux.tmux`, `waymux init --tmux`, README)**: `prefix+u` and `prefix+a` passed `'#{pane_current_path}'` to `run-shell` in single quotes, so a directory whose name held a `'` broke the command, and a crafted name (a cloned repository, an extracted archive) ran its own commands when the key was pressed. They now use tmux's shell quoting, `#{q:pane_current_path}`. If you copied the bindings from `waymux init --tmux` or the README into `~/.tmux.conf`, replace them there too.
+
 ## [0.11.0] - 2026-11-04
 
 - **Unified `% used` quota gauges, `70/90` thresholds and compact `5h` sparkline header (`src/quota/`)**: provider groups now report percent used (`% used`) like Claude Code instead of percent left, unifying every `--visual` gauge on `█` used / `░` headroom, leveling thresholds across Claude and provider groups at `0–69%` green, `70–89%` yellow and `90–100%` red, folding the 10-cell `5h` activity sparkline and `1h/5h` prompt counts into each agent's header row, and showing countdown-first reset columns (`⟳ 1h13m (20:27)`).

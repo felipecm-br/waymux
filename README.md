@@ -151,9 +151,9 @@ bind-key Space if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-
 bind-key "i"   if-shell -F '#{==:#{session_name},_popups}' 'detach-client' 'run-shell "waymux triage --popup"'
 bind-key "I"   run-shell "waymux triage --jump"
 bind-key -n 'C-S-i' run-shell "waymux triage --jump"
-bind-key "u"   run-shell "waymux quota --popup '#{pane_current_path}'"
-bind-key "a"   run-shell "waymux launch --popup '#{pane_current_path}'"
-bind-key "A"   run-shell "waymux switch --popup '#{pane_id}'"
+bind-key "u"   run-shell "waymux quota --popup #{q:pane_current_path}"
+bind-key "a"   run-shell "waymux launch --popup #{q:pane_current_path}"
+bind-key "A"   run-shell "waymux switch --popup #{pane_id}"
 ```
 
 The plugin's keys: `prefix+Space` Cockpit, `prefix+i` triage popup, `prefix+I` / `C-S-i` jump to the next waiting agent, `C-g` lazygitrs, `prefix+u` quota, `prefix+a` launcher (the pick opens in a new window), `prefix+A` model/effort switch for the pane's agent. Change one with its option before loading the plugin, e.g. `set -g @waymux_key_launch "C-a"`; `@waymux_key_quota`, `@waymux_key_launch` and `@waymux_key_switch` take `off` to stay unbound.
