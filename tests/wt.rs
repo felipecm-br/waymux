@@ -274,3 +274,217 @@ fn popup_uses_the_helper_dirs_then_the_legacy_tmux_dir_and_reports_a_missing_scr
         "the helper dir wins over the legacy one"
     );
 }
+
+/// Runs the bundled `scripts/awt/awt-merge.sh` (not a fake) from `cwd`, with coreutils on
+/// `PATH` but no tmux session, sounds or hooks of the developer's.
+fn real_merge(env: &Env, cwd: &Path, args: &[&str]) -> Output {
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/awt/awt-merge.sh");
+    std::process::Command::new("bash")
+        .arg(script)
+        .args(args)
+        .current_dir(cwd)
+        .env_clear()
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", env.dir.join("bin").display()),
+        )
+        .env("HOME", env.dir.join("home"))
+        .env("TMUX_TMPDIR", env.dir.join("tmux"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+fn git_in(env: &Env, dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("HOME", env.dir.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A plain checkout with the branch checked out in it has no worktree for `main` to merge
+/// in. The helper used to guess `../main`: with an unrelated repository there it merged
+/// into that one, and then moved the checkout itself to the trash and deleted it.
+#[test]
+fn ship_in_a_plain_checkout_refuses_and_keeps_the_checkout() {
+    let env = Env::with_repo_at("proj/app");
+    env.init_repo();
+    env.git(&["switch", "-q", "-c", "feat"]);
+    env.write("b.txt", "two\n");
+    env.git(&["add", "."]);
+    env.git(&["commit", "-q", "-m", "feat"]);
+    // A clone, so a different repository whose `main` can fast-forward to `feat`: where the
+    // old guess looked.
+    let decoy = env.dir.join("proj/main");
+    git_in(
+        &env,
+        &env.dir,
+        &[
+            "clone",
+            "-q",
+            "-b",
+            "main",
+            &env.repo().to_string_lossy(),
+            &decoy.to_string_lossy(),
+        ],
+    );
+    git_in(&env, &decoy, &["fetch", "-q", "origin", "feat:feat"]);
+    let decoy_head = git_in(&env, &decoy, &["rev-parse", "HEAD"]);
+
+    let repo = env.repo();
+    let out = real_merge(
+        &env,
+        &repo,
+        &[
+            "feat",
+            &repo.to_string_lossy(),
+            "s",
+            "main",
+            "--no-tmux",
+            "-y",
+        ],
+    );
+    assert!(!out.status.success(), "{out:?}");
+    assert!(
+        stderr(&out).contains("no worktree has 'main' checked out"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(repo.join(".git").exists(), "the checkout was removed");
+    assert_eq!(git_in(&env, &repo, &["branch", "--show-current"]), "feat");
+    assert_eq!(
+        git_in(&env, &decoy, &["rev-parse", "HEAD"]),
+        decoy_head,
+        "merged into another repository"
+    );
+}
+
+/// From a linked worktree, the merge lands in whichever worktree has the base checked out,
+/// here the main checkout (not a `.bare` sibling), and only the linked worktree is removed.
+#[test]
+fn ship_from_a_linked_worktree_merges_into_the_checkout_that_has_the_base() {
+    let env = Env::with_repo_at("proj/app");
+    env.init_repo();
+    let feat = env.dir.join("proj/feat-x");
+    env.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat/x",
+        &feat.to_string_lossy(),
+    ]);
+    std::fs::write(feat.join("b.txt"), "two\n").unwrap();
+    git_in(&env, &feat, &["add", "."]);
+    git_in(
+        &env,
+        &feat,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "feat x",
+        ],
+    );
+
+    let out = real_merge(
+        &env,
+        &feat,
+        &[
+            "feat/x",
+            &feat.to_string_lossy(),
+            "s",
+            "main",
+            "--no-tmux",
+            "-y",
+        ],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let repo = env.repo();
+    assert_eq!(
+        git_in(&env, &repo, &["log", "-1", "--format=%s", "main"]),
+        "feat x"
+    );
+    assert!(
+        repo.join("b.txt").is_file(),
+        "the main checkout's tree was not updated"
+    );
+    assert!(eventually_gone(&feat), "the merged worktree is still there");
+    assert!(git_in(&env, &repo, &["branch", "--list", "feat/x"]).is_empty());
+}
+
+fn eventually_gone(path: &Path) -> bool {
+    common::eventually(|| !path.exists())
+}
+
+/// The `.bare` layout `awt clone` makes: every branch is a linked worktree next to the
+/// others, so shipping a feature merges into `../main` and removes the feature worktree.
+#[test]
+fn ship_in_the_bare_layout_merges_into_the_main_worktree_and_removes_the_feature() {
+    let env = Env::with_repo_at("seed");
+    env.init_repo();
+    let proj = env.dir.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    git_in(
+        &env,
+        &proj,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &env.repo().to_string_lossy(),
+            ".bare",
+        ],
+    );
+    std::fs::write(proj.join(".git"), "gitdir: ./.bare\n").unwrap();
+    git_in(&env, &proj, &["worktree", "add", "-q", "main", "main"]);
+    git_in(
+        &env,
+        &proj,
+        &["worktree", "add", "-q", "-b", "feat-y", "feat-y"],
+    );
+    let feat = proj.join("feat-y");
+    std::fs::write(feat.join("c.txt"), "three\n").unwrap();
+    git_in(&env, &feat, &["add", "."]);
+    git_in(
+        &env,
+        &feat,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "feat y",
+        ],
+    );
+
+    let out = real_merge(
+        &env,
+        &feat,
+        &[
+            "feat-y",
+            &feat.to_string_lossy(),
+            "s",
+            "main",
+            "--no-tmux",
+            "-y",
+        ],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let main = proj.join("main");
+    assert_eq!(git_in(&env, &main, &["log", "-1", "--format=%s"]), "feat y");
+    assert!(main.join("c.txt").is_file());
+    assert!(eventually_gone(&feat), "the merged worktree is still there");
+}

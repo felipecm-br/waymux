@@ -104,12 +104,22 @@ fi
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 repo_parent=$(basename "$(dirname "$current_wt")")
 target_clean="${target_branch//\//-}"
-target_wt="$repo_root/../$target_clean"
-
-if [[ ! -d "$target_wt" ]]; then
-    if [[ -d "$repo_root/../$target_branch" ]]; then
-        target_wt="$repo_root/../$target_branch"
-    fi
+# The worktree that has the target branch checked out, as git reports it. Guessing
+# "../<branch>" found a directory of another repository when this is a plain checkout
+# (not the .bare layout), merged there, and then removed this checkout as the "source".
+target_wt=$(git -C "$current_wt" worktree list --porcelain 2>/dev/null | awk -v ref="refs/heads/$target_branch" '
+    /^worktree / { wt = substr($0, 10) }
+    $0 == "branch " ref { print wt; exit }')
+if [[ -z "$target_wt" ]]; then
+    printf "awt-merge.sh: no worktree has '%s' checked out; nothing was merged.\n" "$target_branch" >&2
+    printf "  (in a plain checkout: git switch %s && git merge %s)\n" "$target_branch" "$source_branch" >&2
+    exit 1
+fi
+# Only a linked worktree may be removed after the merge, never the main checkout.
+source_is_linked=0
+if [[ "$(git -C "$current_wt" rev-parse --path-format=absolute --git-dir 2>/dev/null)" != \
+      "$(git -C "$current_wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" ]]; then
+    source_is_linked=1
 fi
 
 if [[ "$repo_parent" == ".dotfiles" ]]; then
@@ -255,7 +265,7 @@ if [[ $merge_success -eq 1 ]]; then
     fi
 
     # Cleanup source worktree & branch unless --no-remove was specified (Atomic 0.1ms Trash-Rename + Async Purge)
-    if [[ $no_remove -eq 0 && "$current_wt" != "$target_wt" ]]; then
+    if [[ $no_remove -eq 0 && $source_is_linked -eq 1 && "$current_wt" != "$target_wt" ]]; then
         if [[ -d "$current_wt" ]]; then
             trash_dir="$(dirname "$current_wt")/.awt_trash_$(basename "$current_wt")_$$_${RANDOM}"
             if mv "$current_wt" "$trash_dir" 2>/dev/null; then

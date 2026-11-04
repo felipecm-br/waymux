@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **`awt ship` merges only into the worktree that has the base checked out, and never removes the main checkout (`scripts/awt/awt-merge.sh`)**: the helper guessed the base's worktree as the sibling directory `../<base>`. In a plain checkout (not the `.bare` layout) that is some other directory: when it held another repository with a matching branch (a clone), the merge went there, and the cleanup then moved the checkout itself to the trash and deleted it. The base's worktree now comes from `git worktree list`; without one the helper exits 1 before anything changes and says how to merge by hand, and the cleanup removes only a linked worktree. If your `~/.config/waymaker/scripts/awt-merge.sh` overrides the bundled helper, apply the same change there.
+
 ## [0.11.1] - 2026-11-04
 
 - **The Cockpit keeps the terminal background on the selected row (`src/presets/cockpit-picker.toml`)**: the preset set only `BOLD` on the current row, so Waymaker's default black selection strip covered transparent terminals. It now sets `bg = "reset"`; the row is marked by bold and the cyan bar, as in the `launch` and `switch` menus.

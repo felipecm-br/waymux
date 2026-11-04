@@ -64,7 +64,7 @@
 - `src/test_strategies.rs`: test-only `proptest` strategies (agent/tmux/`gh`-shaped JSON and hostile strings) shared by the property tests; `proptest-regressions/` keeps shrunk failures so they replay on every run.
 - `tests/common/mod.rs`: the shared harness for the end-to-end tests below (`Env`: temp `HOME`, runtime and tmux dirs, a `PATH` with only `git`, repository helpers).
 - `tests/tmux.rs`: End-to-end tests of `agent-action`, `window-create`, `window-delete`, `triage --jump`, `switch` (fake agents detected through `ps`, the typed command, the draft guard) and `launch` (the `@ai_launch` tag, `--popup` starting the pick in a new window) against a private tmux server per test (`Env::tmux`), skipped without tmux.
-- `tests/wt.rs`: End-to-end tests of `waymux wt` with fake `awt-*.sh` helpers that record their arguments (lookup order, exit 127, forwarded arguments) and real `git worktree` creation (`-c`, `-W`, post-create hook).
+- `tests/wt.rs`: End-to-end tests of `waymux wt` with fake `awt-*.sh` helpers that record their arguments (lookup order, exit 127, forwarded arguments) real `git worktree` creation (`-c`, `-W`, post-create hook), and the bundled `awt-merge.sh` run for real (a plain checkout is refused and kept; a linked worktree merges into the checkout that has the base; the `.bare` layout merges into `../main`).
 - `tests/cockpit.rs`: End-to-end tests of `cockpit-diff`, `cockpit-preview`, `cockpit-help` and `review-notes` against real temporary git repositories, with only `git` on `PATH` (no `delta`/`bat`, no tmux).
 - `tests/cli.rs`: End-to-end tests that start the built binary on a free port with its own `HOME`, `XDG_RUNTIME_DIR` and `TMUX_TMPDIR`, so they never touch the developer's tmux server, sounds or token.
 
@@ -101,7 +101,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **237 unit tests** (in `src/`, 15 of them `proptest` properties) and **48 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings**, **0 surviving mutants** across the 5 core logic modules (`cargo mutants`), and **81% line coverage** (CI fails below 80%: `cargo llvm-cov --summary-only --fail-under-lines 80`).
+> Current baseline: **258 unit tests** (in `src/`, 15 of them `proptest` properties) and **52 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings**, **0 surviving mutants** across the 5 core logic modules (`cargo mutants`), and **81% line coverage** (CI fails below 80%: `cargo llvm-cov --summary-only --fail-under-lines 80`).
 
 ### Dependency Audit & Performance Budgets (also run in CI)
 
