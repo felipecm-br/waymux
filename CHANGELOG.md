@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-04
+
 - **The Cockpit keeps the terminal background on the selected row (`src/presets/cockpit-picker.toml`)**: the preset set only `BOLD` on the current row, so Waymaker's default black selection strip covered transparent terminals. It now sets `bg = "reset"`; the row is marked by bold and the cyan bar, as in the `launch` and `switch` menus.
 - **The phone page sends security headers (`/m`, `src/api/phone.rs`)**: the page keeps the phone token in memory, and was served with only a content type. It now gets a `Content-Security-Policy` with a fresh nonce per response (only its own script and style run, it may call only this origin, no framing), plus `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY`.
 - **Background-task results no longer replace an agent's title (`src/hook.rs`)**: Claude Code delivers a finished background task (`<task-notification>…`), a slash command's body (`<command-message>…`) and similar harness messages through `UserPromptSubmit`, and the hook took each for the user's prompt, so the Cockpit, triage and status bar showed `<task-notification> <ta…` instead of the task. A prompt wrapped in such a tag (a name with `-` or `_`, closed later in the prompt) now leaves the title as it was.
