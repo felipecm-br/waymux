@@ -174,6 +174,8 @@ impl Tmux<'_> {
     fn raw(&self, args: &[&str]) -> std::process::Output {
         Command::new(self.env.dir.join("bin/tmux"))
             .args(args)
+            // The server and its run-shell commands start here, never in the checkout.
+            .current_dir(&self.env.dir)
             .env_clear()
             .env(
                 "PATH",
