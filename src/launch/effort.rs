@@ -318,18 +318,20 @@ mod tests {
     #[test]
     fn test_gauge_ends_have_no_empty_runs() {
         let low = render_footer(FOOTER, &LEVELS, "low").unwrap();
-        assert!(
-            low.contains("{darkgray:Effort} {blue,bold:●}{darkgray:────}  {blue,bold:low   }")
-        );
+        assert!(low.contains("{darkgray:Effort} {blue,bold:●}{darkgray:────}  {blue,bold:low   }"));
         let xhigh = render_footer(FOOTER, &LEVELS, "xhigh").unwrap();
-        assert!(
-            xhigh.contains("{darkgray:Effort} {#fab387:━━━}{#fab387,bold:●}{darkgray:─}  {#fab387,bold:xhigh }")
-        );
+        assert!(xhigh.contains(
+            "{darkgray:Effort} {#fab387:━━━}{#fab387,bold:●}{darkgray:─}  {#fab387,bold:xhigh }"
+        ));
         let max = render_footer(FOOTER, &LEVELS, "max").unwrap();
         assert!(max.contains("{darkgray:Effort} {red:━━━━}{red,bold:●}  {red,bold:max   }"));
         let six = ["low", "medium", "high", "xhigh", "max", "ultra"];
         let ultra = render_footer(FOOTER, &six, "ultra").unwrap();
-        assert!(ultra.contains("{darkgray:Effort} {magenta:━━━━━}{magenta,bold:●} {magenta,bold:ultra }"));
+        assert!(
+            ultra.contains(
+                "{darkgray:Effort} {magenta:━━━━━}{magenta,bold:●} {magenta,bold:ultra }"
+            )
+        );
     }
 
     #[test]

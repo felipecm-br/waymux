@@ -295,7 +295,11 @@ pub fn report(snap: &Snapshot) -> String {
                     let reset = i(&g["reset"]).map_or_else(
                         || "-".into(),
                         |r| {
-                            let fmt = if r - now > 86_400 { "%a %H:%M" } else { "%H:%M" };
+                            let fmt = if r - now > 86_400 {
+                                "%a %H:%M"
+                            } else {
+                                "%H:%M"
+                            };
                             format!("{} (in {})", clock(Some(r), fmt), hm(Some(r - now)))
                         },
                     );
@@ -528,7 +532,11 @@ fn reset_col(now: i64, ts: Option<i64>, exhausted: bool) -> String {
     let Some(r) = ts else {
         return format!("{glyph} -");
     };
-    let fmt = if r - now > 86_400 { "%a %H:%M" } else { "%H:%M" };
+    let fmt = if r - now > 86_400 {
+        "%a %H:%M"
+    } else {
+        "%H:%M"
+    };
     format!(
         "{glyph} {} ({})",
         rpad(&hm(Some(r - now)), 6),
@@ -686,7 +694,13 @@ fn visual_claude(c: &Colors, a: &Value, now: i64) -> String {
         );
     }
     if let Some(r) = f(&a["rate"]).filter(|&r| r >= 1.0) {
-        let _ = write!(out, " {}·{RESET} {}{}%/h{RESET}", c.muted, c.fg, super::num(r));
+        let _ = write!(
+            out,
+            " {}·{RESET} {}{}%/h{RESET}",
+            c.muted,
+            c.fg,
+            super::num(r)
+        );
     }
     let _ = write!(
         out,
