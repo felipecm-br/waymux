@@ -1,7 +1,7 @@
 use crate::icons::Registry;
 use crate::rpc_client;
 use crate::theme::{BOLD, RESET, ThemePalette};
-use crate::tmux_cmd::tmux_out;
+use crate::tmux_cmd::tmux_fields_out;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -750,10 +750,12 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
     let (tmux_raw, acpd_map, (sess_agent, sess_etimes), theme, reg) = std::thread::scope(|scope| {
         let tmux_h = scope.spawn(move || {
             if need_origin {
-                tmux_out(&[
+                tmux_fields_out(&[
                     "display-message",
                     "-p",
-                    "#{session_name}\t#{window_index}",
+                    // tmux 3.4 prints a tab in `display-message -p` as `_`; a session name
+                    // cannot hold `:`, so split there (from the right) instead.
+                    "#{session_name}:#{window_index}",
                     ";",
                     "list-panes",
                     "-a",
@@ -762,7 +764,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
                 ])
                 .unwrap_or_default()
             } else {
-                tmux_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default()
+                tmux_fields_out(&["list-panes", "-a", "-F", fmt]).unwrap_or_default()
             }
         });
         let rpc_h = scope.spawn(rpc_client::fetch_agent_states);
@@ -780,7 +782,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
 
     let list_out = if need_origin {
         if let Some((first, rest)) = tmux_raw.split_once('\n') {
-            if let Some((ts, tw)) = first.split_once('\t') {
+            if let Some((ts, tw)) = first.rsplit_once(':') {
                 if cur_session.is_empty() {
                     cur_session = ts.to_string();
                 }
@@ -790,7 +792,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
             }
             rest
         } else {
-            if let Some((ts, tw)) = tmux_raw.split_once('\t') {
+            if let Some((ts, tw)) = tmux_raw.rsplit_once(':') {
                 if cur_session.is_empty() {
                     cur_session = ts.to_string();
                 }

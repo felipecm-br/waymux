@@ -43,6 +43,45 @@ pub fn tmux_out(args: &[&str]) -> Option<String> {
     }
 }
 
+/// `tmux_out` for a format whose fields are split by 0x1f (unit separator).
+pub fn tmux_fields_out(args: &[&str]) -> Option<String> {
+    tmux_out(args).map(decode_fields)
+}
+
+/// tmux 3.4 (Ubuntu 24.04, Debian) escapes `-F` and `display -p` output: 0x1f comes out as
+/// the four characters `\037` and a backslash as `\\`, so a line has no field to split.
+/// Newer tmux prints both raw. Decoding runs only when no raw separator is present, so a path
+/// holding a literal `\037` stays as it is on a tmux that does not escape.
+pub fn decode_fields(out: String) -> String {
+    if out.contains('\x1f') || !out.contains("\\037") {
+        return out;
+    }
+    let mut decoded = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(i) = rest.find('\\') {
+        decoded.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        let octal = tail
+            .get(..3)
+            .filter(|d| d.bytes().all(|b| (b'0'..=b'7').contains(&b)));
+        if let Some(c) = octal
+            .and_then(|d| u8::from_str_radix(d, 8).ok())
+            .filter(u8::is_ascii)
+        {
+            decoded.push(char::from(c));
+            rest = &tail[3..];
+        } else if let Some(stripped) = tail.strip_prefix('\\') {
+            decoded.push('\\');
+            rest = stripped;
+        } else {
+            decoded.push('\\');
+            rest = tail;
+        }
+    }
+    decoded.push_str(rest);
+    decoded
+}
+
 pub fn tmux_out_raw(args: &[&str]) -> Option<String> {
     let output = command().args(args).stderr(Stdio::null()).output().ok()?;
     if output.status.success() {
@@ -126,6 +165,27 @@ pub fn tmux_load_and_paste_bracketed(
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod decode_fields_tests {
+    use super::decode_fields;
+
+    #[test]
+    fn tmux_34_escaped_output_splits_again() {
+        let escaped = "ma\\\\in\\037%0\\037/tmp/a b\nmain\\0371\\037zsh".to_string();
+        assert_eq!(
+            decode_fields(escaped),
+            "ma\\in\x1f%0\x1f/tmp/a b\nmain\x1f1\x1fzsh"
+        );
+    }
+
+    #[test]
+    fn raw_output_is_left_alone() {
+        let raw = "main\x1f%0\x1f/tmp/odd\\037name".to_string();
+        assert_eq!(decode_fields(raw.clone()), raw);
+        assert_eq!(decode_fields("C:\\path".to_string()), "C:\\path");
     }
 }
 

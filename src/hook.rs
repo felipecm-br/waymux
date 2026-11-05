@@ -950,7 +950,10 @@ mod tests {
 
     #[test]
     fn test_background_commands_empty_when_the_turn_left_nothing_running() {
-        assert!(super::background_commands(&claude_tree(&[]), 31).is_empty());
+        assert_eq!(
+            super::background_commands(&claude_tree(&[]), 31),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -964,7 +967,7 @@ mod tests {
             (30, 20, "/bin/sh -c waymux hook tmux Stop".to_string()),
             (31, 30, "waymux hook tmux Stop".to_string()),
         ];
-        assert!(super::background_commands(&procs, 31).is_empty());
+        assert_eq!(super::background_commands(&procs, 31), Vec::<String>::new());
     }
 
     #[test]
@@ -977,7 +980,7 @@ mod tests {
             (42, 41, "waymux hook tmux Stop claude".to_string()),
             (45, 20, tool_shell("sleep 300")),
         ]);
-        assert!(super::background_commands(&procs, 42).is_empty());
+        assert_eq!(super::background_commands(&procs, 42), Vec::<String>::new());
     }
 
     #[test]
@@ -987,7 +990,7 @@ mod tests {
             (30, 10, "waymux hook tmux Stop".to_string()),
             (40, 10, tool_shell("sleep 300")),
         ];
-        assert!(super::background_commands(&procs, 30).is_empty());
+        assert_eq!(super::background_commands(&procs, 30), Vec::<String>::new());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::tmux_cmd::tmux_out;
+use crate::tmux_cmd::{tmux_fields_out, tmux_out};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
@@ -134,7 +134,7 @@ fn usable_pane(pane: &str) -> Option<String> {
     if pane.is_empty() {
         return None;
     }
-    let info = tmux_out(&[
+    let info = tmux_fields_out(&[
         "display-message",
         "-p",
         "-t",
@@ -171,14 +171,14 @@ fn find_target_pane(workspace_dir: &str) -> Option<String> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        && let Some(panes) = tmux_out(&["list-panes", "-s", "-t", sess, "-F", PANE_FORMAT])
+        && let Some(panes) = tmux_fields_out(&["list-panes", "-s", "-t", sess, "-F", PANE_FORMAT])
         && let Some(pane) = choose_in_session(&panes, workspace_dir)
     {
         return Some(pane);
     }
 
     // 4. Any session.
-    let panes = tmux_out(&["list-panes", "-a", "-F", PANE_FORMAT])?;
+    let panes = tmux_fields_out(&["list-panes", "-a", "-F", PANE_FORMAT])?;
     choose_global(&panes, workspace_dir)
 }
 

@@ -4,6 +4,9 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **The Cockpit and prompt injection work on tmux 3.4 (`src/tmux_cmd.rs`, `src/cockpit/items.rs`, `src/inject.rs`)**: tmux 3.4 (Ubuntu 24.04, Debian) escapes its `-F` and `display -p` output, printing the 0x1f field separator as the four characters `\037` and a tab as `_`. Pane lines then had no field to split: the Cockpit listed nothing and injection found no pane. waymux now decodes that escaping when no raw separator is present, and reads the origin `session:window` instead of a tab-separated pair.
+- Tests: four `assert!(….is_empty())` in `src/hook.rs` become `assert_eq!` for clippy 1.99 (`assert_is_empty`), which CI runs.
+
 ## [0.12.1] - 2026-11-05
 
 - **The Cockpit animates `background` rows (`src/cockpit/items.rs`, `src/presets/cockpit-picker.toml`)**: 0.12.0 listed them with a still `󰫈`, while the tmux tab animated the slow hexfill. They now carry the `@SLOW@` marker, which wm animates with its `hexfill` spinner (`results.slow_spinner_prefix`), next to the fast minidot of working rows. Needs wm ≥ 0.8.0: an older wm rejects the new preset keys and the Cockpit does not open.
