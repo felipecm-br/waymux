@@ -40,6 +40,9 @@ reverse = false
 spinner_prefix = "@SPIN@"
 spinner_inline = true
 spinner = "minidot"
+# Agents waiting on their own build or test run: same color, a much slower spinner (wm ≥ 0.8).
+slow_spinner_prefix = "@SLOW@"
+slow_spinner = "hexfill"
 current_prefix = ""
 unselected_prefix = ""
 multi = false

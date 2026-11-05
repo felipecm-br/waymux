@@ -499,6 +499,8 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 fn state_prio_icon<'a>(reg: &'a Registry, st: &str, agent_like: bool) -> (u8, &'a str) {
     let ico = match st {
         "busy" | "working" => "@SPIN@",
+        // Waiting on its own build or test run: wm animates this marker with the slow hexfill.
+        "background" => "@SLOW@",
         _ => match reg.state(st) {
             Some(glyph) => glyph,
             None if agent_like => reg.state("busy").unwrap_or_default(),
@@ -1423,7 +1425,7 @@ mod tests {
         assert_eq!(state_prio_icon(&reg, "idle", false), (6, "󰗡"));
         // The Cockpit animates one spinner, so a background row shows the full cell, with
         // the working rows.
-        assert_eq!(state_prio_icon(&reg, "background", true), (5, "\u{f0ac8}"));
+        assert_eq!(state_prio_icon(&reg, "background", true), (5, "@SLOW@"));
         assert_eq!(state_prio_icon(&reg, "review", true), (REVIEW_PRIO, "󰷋"));
         assert_eq!(state_prio_icon(&reg, "normal", false), (7, "·"));
         assert_eq!(state_prio_icon(&reg, "normal", true), (6, "󰑮"));
