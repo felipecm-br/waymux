@@ -454,7 +454,7 @@ fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
 /// `run_in_background` and Monitor alike): `zsh -c source ~/.claude/shell-snapshots/…`.
 const CLAUDE_TOOL_SHELL: &str = "/.claude/shell-snapshots/";
 
-/// Longest background command kept as the `working` reason.
+/// Longest background command kept as the `background` reason.
 const MAX_BACKGROUND_CHARS: usize = 80;
 
 /// One process: pid, parent pid and the command line with its arguments joined by spaces.
@@ -540,14 +540,14 @@ fn background_commands(procs: &[Proc], hook_pid: u32) -> Vec<String> {
         .collect()
 }
 
-/// The `working` reason when Claude Code ends its turn with background Bash calls still
+/// The `background` reason when Claude Code ends its turn with background Bash calls still
 /// running, so the pane neither chimes done nor joins triage's review queue until they exit.
 fn background_reason() -> Option<String> {
     let cmds = background_commands(&process_table(), std::process::id());
     let first = cmds.first()?;
     Some(match cmds.len() {
-        1 => format!("background: {first}"),
-        n => format!("background ({n}): {first}"),
+        1 => first.clone(),
+        n => format!("{first} (+{} more)", n - 1),
     })
 }
 
@@ -740,7 +740,7 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
             remember_pane_tool(&tmux_pane, None);
             remember_pane_command(&tmux_pane, None);
             match background_reason() {
-                Some(reason) => send_acp_state(&tmux_pane, "working", Some(&reason)),
+                Some(reason) => send_acp_state(&tmux_pane, "background", Some(&reason)),
                 None => send_acp_state(&tmux_pane, "idle", None),
             }
         }

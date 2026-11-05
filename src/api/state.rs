@@ -538,29 +538,30 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
             (None, false)
         } else {
             let prev = states.get(&update.pane_id).map(|s| s.state.clone());
-            let finished_at =
-                if update.state == AgentState::Idle && prev == Some(AgentState::Working) {
-                    let now_ms = crate::sys::unix_ms();
-                    // Persist on the pane so a restarted daemon still knows (theme switches
-                    // restart it); rehydrate_from_tmux reads it back.
-                    let pane = update.pane_id.clone();
-                    tokio::spawn(async move {
-                        let _ = crate::tmux_cmd::async_command()
-                            .args([
-                                "set-option",
-                                "-p",
-                                "-t",
-                                &pane,
-                                "@ai_agent_finished_at",
-                                &now_ms.to_string(),
-                            ])
-                            .output()
-                            .await;
-                    });
-                    now_ms
-                } else {
-                    states.get(&update.pane_id).map_or(0, |s| s.finished_at)
-                };
+            let finished_at = if update.state == AgentState::Idle
+                && prev.as_ref().is_some_and(AgentState::is_busy)
+            {
+                let now_ms = crate::sys::unix_ms();
+                // Persist on the pane so a restarted daemon still knows (theme switches
+                // restart it); rehydrate_from_tmux reads it back.
+                let pane = update.pane_id.clone();
+                tokio::spawn(async move {
+                    let _ = crate::tmux_cmd::async_command()
+                        .args([
+                            "set-option",
+                            "-p",
+                            "-t",
+                            &pane,
+                            "@ai_agent_finished_at",
+                            &now_ms.to_string(),
+                        ])
+                        .output()
+                        .await;
+                });
+                now_ms
+            } else {
+                states.get(&update.pane_id).map_or(0, |s| s.finished_at)
+            };
             let changed_at = match states.get(&update.pane_id) {
                 Some(s) if s.state == update.state => s.changed_at,
                 _ => crate::sys::unix_ms(),
@@ -586,7 +587,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
 
     super::queue::on_state(state, &update.pane_id, &update.state).await;
     // The end of a turn (or a stop on a prompt): save the pane's work tree.
-    if prev_state == Some(AgentState::Working)
+    if prev_state.as_ref().is_some_and(AgentState::is_busy)
         && (update.state == AgentState::Permission
             || update.state == AgentState::AwaitingInput
             || (update.state == AgentState::Idle && update.message.as_deref() != Some(DISMISSED)))
@@ -606,7 +607,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     // The pane left its prompt (answered there, or the agent moved on): a held prompt is moot.
     if matches!(
         update.state,
-        AgentState::Working | AgentState::Idle | AgentState::Closed
+        AgentState::Working | AgentState::Background | AgentState::Idle | AgentState::Closed
     ) {
         super::approvals::release(state, &update.pane_id).await;
     }
@@ -677,7 +678,10 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
                     return;
                 }
             }
-            if prev_state_for_idle == Some(AgentState::Working) {
+            if prev_state_for_idle
+                .as_ref()
+                .is_some_and(AgentState::is_busy)
+            {
                 log_flow_event(flow_log_hook.as_ref(), "agent_finished", &pane_id, "");
             }
             for adapter in adapters.iter() {
@@ -962,7 +966,11 @@ mod tests {
         );
         let err = "workin".parse::<AgentState>().unwrap_err();
         assert!(err.contains("Unknown agent state 'workin'"));
-        assert!(err.contains("Expected one of: working, idle"));
+        assert!(err.contains("Expected one of: working, background, idle"));
+        assert_eq!(
+            "background".parse::<AgentState>(),
+            Ok(AgentState::Background)
+        );
     }
 
     #[tokio::test]
@@ -1030,6 +1038,15 @@ mod tests {
         dispatch_update(&state, update(AgentState::Idle)).await;
         let finished = state.pane_states.lock().await["%999998"].finished_at;
         assert!(finished > 0);
+
+        // A turn that waited on a background task, then ended without a tool, also finishes.
+        let other = |st: AgentState| IncomingUpdate {
+            pane_id: "%999997".into(),
+            ..update(st)
+        };
+        dispatch_update(&state, other(AgentState::Background)).await;
+        dispatch_update(&state, other(AgentState::Idle)).await;
+        assert!(state.pane_states.lock().await["%999997"].finished_at > 0);
 
         // Later updates keep the completion time until the next finish.
         dispatch_update(&state, update(AgentState::Permission)).await;

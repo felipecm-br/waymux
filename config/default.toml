@@ -30,6 +30,10 @@ idle_debounce_ms = 0
 
 [theme]
 active_spinner = "dot"
+# Spinner for `background` (the agent waits on its own build or test run). Unset: the built-in
+# `hexfill` below. Keep it slower than active_spinner: the status bar is read in peripheral
+# vision, which tells animation rates apart but not glyph shapes.
+# background_spinner = "hexfill"
 
 # State colors are semantic and come from a built-in palette (src/status_palette.rs),
 # picked per light/dark theme mode so permission, question, stalled and error stay
@@ -40,6 +44,9 @@ icon = "󰗡"
 
 [theme.states.busy]
 icon = "󰝲"
+
+[theme.states.background]
+icon = "󰫈"
 
 [theme.states.question]
 icon = "󱜻"
@@ -75,3 +82,5 @@ arc = { interval = 150, frames = ["◜", "◠", "◝", "◞", "◡", "◟"] }
 nerd = { interval = 100, frames = [" ", " ", " ", " "] }
 nerdarc = { interval = 120, frames = ["◜", " ", "◝", "◞", "◡", "◟", " "] }
 dot = { interval = 100, frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"] }
+# Built in as the background spinner: a honeycomb cell that fills and empties every 2.5 s.
+hexfill = { interval = 250, frames = ["󰫃", "󰫄", "󰫅", "󰫆", "󰫇", "󰫈", "󰫇", "󰫆", "󰫅", "󰫄"] }

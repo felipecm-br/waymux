@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 pub enum AgentState {
     Idle,
     Working,
+    /// The turn ended but a background task the agent started (a build, a test run) still runs:
+    /// busy, with nothing for the human to do until the agent resumes.
+    Background,
     AwaitingInput,
     Permission,
     Stalled,
@@ -30,6 +33,7 @@ impl AgentState {
         match self {
             AgentState::Idle => "idle",
             AgentState::Working => "working",
+            AgentState::Background => "background",
             AgentState::AwaitingInput => "awaiting_input",
             AgentState::Permission => "permission",
             AgentState::Stalled => "stalled",
@@ -38,9 +42,16 @@ impl AgentState {
         }
     }
 
+    /// Busy on the agent's side: thinking, or waiting on its own background task. A move from
+    /// here to idle is the end of a turn.
+    pub fn is_busy(&self) -> bool {
+        matches!(self, AgentState::Working | AgentState::Background)
+    }
+
     pub fn from_tmux_raw(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
             "busy" | "working" => Some(AgentState::Working),
+            "background" => Some(AgentState::Background),
             "question" | "awaiting_input" => Some(AgentState::AwaitingInput),
             "permission" => Some(AgentState::Permission),
             "stalled" | "hanging" => Some(AgentState::Stalled),
@@ -58,13 +69,14 @@ impl std::str::FromStr for AgentState {
         match s.trim().to_ascii_lowercase().as_str() {
             "idle" => Ok(AgentState::Idle),
             "working" | "busy" => Ok(AgentState::Working),
+            "background" => Ok(AgentState::Background),
             "awaiting_input" | "question" => Ok(AgentState::AwaitingInput),
             "permission" => Ok(AgentState::Permission),
             "stalled" | "hanging" => Ok(AgentState::Stalled),
             "error" => Ok(AgentState::Error),
             "closed" => Ok(AgentState::Closed),
             invalid => Err(format!(
-                "Invalid params: Unknown agent state '{invalid}'. Expected one of: working, idle, awaiting_input, permission, stalled, error, closed."
+                "Invalid params: Unknown agent state '{invalid}'. Expected one of: working, background, idle, awaiting_input, permission, stalled, error, closed."
             )),
         }
     }
@@ -103,11 +115,12 @@ pub(crate) fn write<T>(lock: &std::sync::RwLock<T>, value: T) {
 
 fn urgency_score(state: &AgentState) -> u8 {
     match state {
-        AgentState::Permission => 6,
-        AgentState::AwaitingInput => 5,
-        AgentState::Stalled => 4,
-        AgentState::Error => 3,
-        AgentState::Working => 2,
+        AgentState::Permission => 7,
+        AgentState::AwaitingInput => 6,
+        AgentState::Stalled => 5,
+        AgentState::Error => 4,
+        AgentState::Working => 3,
+        AgentState::Background => 2,
         AgentState::Idle => 1,
         AgentState::Closed => 0,
     }
@@ -132,6 +145,19 @@ pub(crate) fn state_icon_color(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_background_is_busy_parses_and_ranks_under_working() {
+        assert_eq!(
+            AgentState::from_tmux_raw("background"),
+            Some(AgentState::Background)
+        );
+        assert_eq!(AgentState::Background.as_str(), "background");
+        assert!(AgentState::Background.is_busy() && AgentState::Working.is_busy());
+        assert!(!AgentState::Idle.is_busy() && !AgentState::Permission.is_busy());
+        assert!(urgency_score(&AgentState::Working) > urgency_score(&AgentState::Background));
+        assert!(urgency_score(&AgentState::Background) > urgency_score(&AgentState::Idle));
+    }
     use crate::config::{AgentStateTheme, ThemeConfig};
     use std::collections::HashMap;
 
@@ -147,6 +173,7 @@ mod tests {
         );
         let theme = ThemeConfig {
             active_spinner: "dot".to_string(),
+            background_spinner: None,
             states,
         };
         // Icon from config, color from the built-in palette when the config leaves it empty.

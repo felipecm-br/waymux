@@ -25,7 +25,11 @@ pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<
 
     let mut adapters = crate::api::ApiState::new(
         vec![
-            Box::new(TmuxAdapter::new(config.theme.clone(), active_spinner)),
+            Box::new(TmuxAdapter::new(
+                config.theme.clone(),
+                active_spinner,
+                config.background_spinner(),
+            )),
             Box::new(WaybarAdapter::new(config.theme.clone())),
             Box::new(SoundAdapter::new(config.sound.clone())),
         ],

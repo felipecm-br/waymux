@@ -33,14 +33,15 @@ Then:
 | State | Meaning | Who sets it |
 | --- | --- | --- |
 | `working` | Agent is running tools or thinking | `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse` hooks |
+| `background` | The turn ended while a background Bash call or Monitor still runs; busy, nothing for the user to do | `Stop` hook, when Claude Code tool shells are still alive |
 | `permission` | Waiting for the user to approve a tool | `Notification` / `PermissionRequest` hook |
 | `awaiting_input` (alias `question`) | Agent asked the user something | `PreToolUse` of a question tool |
-| `stalled` | No output and no CPU for 20 s while working (Linux only) | Daemon stall detector |
+| `stalled` | No output and no CPU for 20 s while `working` (never `background`; Linux only) | Daemon stall detector |
 | `error` | Agent reported an error; `usage limit` when Claude Code's turn ended on a rate limit | RPC or hook (`StopFailure`) |
 | `idle` | Finished; the Cockpit shows it as "done, not reviewed" until the worktree is opened in lazygitrs | `Stop` hook |
 | `closed` | Session ended | `SessionEnd` hook |
 
-The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission, then question, then error/stalled, oldest first.
+The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission, then question, then error/stalled, oldest first. Triage never visits a `background` pane.
 
 ## 4. CLI for agents
 

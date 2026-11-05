@@ -27,6 +27,7 @@ const DEFAULT_STATES: &[(&str, &str)] = &[
     ("idle", "󰗡"),
     ("busy", "󰑮"),
     ("working", "󰑮"),
+    ("background", "\u{f0ac8}"),
     ("question", "󱜻"),
     ("permission", "󰳌"),
     ("stalled", "󰔟"),

@@ -170,7 +170,7 @@ It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notif
 
 `SessionStart` leaves the pane `idle` (a fresh session waits at the prompt; `compact` is left untouched) and `UserPromptSubmit` starts the spinner. The window icon follows the agent binary running in the pane, so the agent named in the hook command only applies to unrecognized commands. Devin imports `~/.claude/settings.json` and runs Claude's hooks next to its own; state updates are idempotent and sounds fire only on transitions, so the duplicates are harmless.
 
-`Stop` reports `idle` only when the agent has nothing left running. When a Claude Code turn ends with a `run_in_background` Bash call or a Monitor still running, the pane stays `working` with `background: <command>` (or `background (2): …`) as the reason: no done chime, no review-queue entry, and triage treats it as a working agent. The hook finds these as Claude Code tool shells (`~/.claude/shell-snapshots/…`) still alive under the `claude` process that ran it; the turn's own calls have already finished by then. Claude Code starts a new turn when the task exits, and that turn's `Stop` settles the state. Linux only (`/proc`); a hook run from inside a tool shell, such as a test suite under an agent, never counts its caller's tasks.
+`Stop` reports `idle` only when the agent has nothing left running. When a Claude Code turn ends with a `run_in_background` Bash call or a Monitor still running, the pane goes `background`, with the command (`cargo test`, or `cargo test (+1 more)`) as the reason. The agent is busy and nothing waits on you: no done chime, no review-queue entry, no stall alert, and triage skips the pane. The status bar animates it with its own, slower spinner (`hexfill`, `[theme] background_spinner`), and the Cockpit shows `󰫈` with the working rows. The hook finds these as Claude Code tool shells (`~/.claude/shell-snapshots/…`) still alive under the `claude` process that ran it; the turn's own calls have already finished by then. Claude Code starts a new turn when the task exits, and that turn's `Stop` settles the state. Linux only (`/proc`); a hook run from inside a tool shell, such as a test suite under an agent, never counts its caller's tasks.
 
 ---
 
@@ -231,7 +231,7 @@ Protected endpoints authenticate via local Bearer token stored at `$XDG_RUNTIME_
 - **Delivery queue** (`queue/push`, `queue/list`, `queue/cancel`): see below.
 - **Held approvals** (`approval/hold`, `approval/get`, `approval/answer`): see [Held approvals](#held-approvals).
 - **`agent/recap`** (`{pane_id}`): what the agent did since its pane was last focused (see [Away recap](#away-recap)). `agentState/list` reports `queued` and `changed_at` (epoch ms the pane entered its state) per pane.
-- **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
+- **`POST /api/status`**: REST endpoint for direct agent state updates (`working`, `background`, `idle`, `awaiting_input`, `question`, `permission`, `stalled`, `error`, `closed`).
 - **`GET /health` & `GET /ready`**: Liveness and readiness probes.
 
 ### Risk rules
@@ -306,7 +306,7 @@ The daemon reads `~/.config/waymux/config.toml` when present (see [`config/defau
 
 **Icon registry.** `[icons]` maps program/agent names to Nerd Font glyphs (`devin = ""`, `agent` is the generic fallback) and `[theme.states.<state>].icon` sets the state glyphs. Both merge over built-in defaults. waymux uses them for the window rename, the Cockpit, state badges and alert bells. `waymux icon` and `waymux icons` hand the same registry to shell scripts and tmux plugins, so an icon is defined once.
 
-**Reloading.** `systemctl --user reload waymux` (or `kill -HUP`) re-reads the config without dropping agent state: theme, spinner, sounds, `idle_debounce_ms` and `flow_log_hook` change at once (running spinners keep their frames until the window next starts one). A config that fails to parse is logged and the running one kept. `listen_addr`, `port`, `pid_file` and `log_level` need a restart.
+**Reloading.** `systemctl --user reload waymux` (or `kill -HUP`) re-reads the config without dropping agent state: theme, spinners (`active_spinner`, `background_spinner`), sounds, `idle_debounce_ms` and `flow_log_hook` change at once (running spinners keep their frames until the window next starts one). A config that fails to parse is logged and the running one kept. `listen_addr`, `port`, `pid_file` and `log_level` need a restart.
 
 **Logging.** `log_level` sets the daemon's log filter: a level (`debug`) or a full `tracing` directive (`waymux=debug,axum=warn`). `RUST_LOG` overrides it.
 

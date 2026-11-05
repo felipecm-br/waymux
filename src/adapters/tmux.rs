@@ -130,8 +130,28 @@ async fn unset_tmux_pane_state(pane_id: &str) {
     }
 }
 
+/// Which animation a window runs: the agent thinking, or waiting on its own background task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Spin {
+    Working,
+    Background,
+}
+
+impl Spin {
+    /// The `@ai_agent_state_raw` value and the `[theme.states]` key for the icon and color.
+    fn raw(self) -> &'static str {
+        match self {
+            Spin::Working => "busy",
+            Spin::Background => "background",
+        }
+    }
+}
+
+/// The animation running on each window, by window id.
+type Spinners = HashMap<String, (Spin, tokio::task::JoinHandle<()>)>;
+
 pub struct TmuxAdapter {
-    spinners: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
+    spinners: Arc<Mutex<Spinners>>,
     pane_states: Arc<Mutex<HashMap<String, AgentState>>>,
     pane_windows: Arc<Mutex<HashMap<String, String>>>,
     window_panes: Arc<Mutex<HashMap<String, HashMap<String, AgentState>>>>,
@@ -179,12 +199,17 @@ pub fn burst_message(items: &[String]) -> String {
 struct Display {
     spinner_frames: Vec<String>,
     spinner_interval: u64,
+    background: Spinner,
     theme: Option<ThemeConfig>,
     mode: Mode,
 }
 
 impl Display {
-    fn new(theme: Option<ThemeConfig>, active_spinner: Option<Spinner>) -> Self {
+    fn new(
+        theme: Option<ThemeConfig>,
+        active_spinner: Option<Spinner>,
+        background: Spinner,
+    ) -> Self {
         let (spinner_frames, spinner_interval) = match active_spinner {
             Some(s) if !s.frames.is_empty() => (s.frames, s.interval),
             _ => (vec![], 0),
@@ -192,6 +217,7 @@ impl Display {
         Self {
             spinner_frames,
             spinner_interval,
+            background,
             theme,
             mode: status_palette::detect_mode(),
         }
@@ -200,16 +226,31 @@ impl Display {
     fn icon_color(&self, state: &str) -> (String, String) {
         state_icon_color(self.theme.as_ref(), state, self.mode)
     }
+
+    fn frames(&self, spin: Spin) -> (Vec<String>, u64) {
+        match spin {
+            Spin::Working => (self.spinner_frames.clone(), self.spinner_interval),
+            Spin::Background => (self.background.frames.clone(), self.background.interval),
+        }
+    }
 }
 
 impl TmuxAdapter {
-    pub fn new(theme: Option<ThemeConfig>, active_spinner: Option<Spinner>) -> Self {
+    pub fn new(
+        theme: Option<ThemeConfig>,
+        active_spinner: Option<Spinner>,
+        background_spinner: Spinner,
+    ) -> Self {
         Self {
             spinners: Arc::new(Mutex::new(HashMap::new())),
             pane_states: Arc::new(Mutex::new(HashMap::new())),
             pane_windows: Arc::new(Mutex::new(HashMap::new())),
             window_panes: Arc::new(Mutex::new(HashMap::new())),
-            display: std::sync::RwLock::new(Display::new(theme, active_spinner)),
+            display: std::sync::RwLock::new(Display::new(
+                theme,
+                active_spinner,
+                background_spinner,
+            )),
             bell: Arc::new(Mutex::new(BellBurst::default())),
         }
     }
@@ -278,7 +319,12 @@ impl TmuxAdapter {
                 self.window_panes.lock().await.remove(window_id);
             }
             Some(AgentState::Working) => {
-                self.start_spinner(window_id.to_string()).await;
+                self.start_spinner(window_id.to_string(), Spin::Working)
+                    .await;
+            }
+            Some(AgentState::Background) => {
+                self.start_spinner(window_id.to_string(), Spin::Background)
+                    .await;
             }
             Some(state) => {
                 self.stop_spinner(window_id).await;
@@ -302,37 +348,41 @@ impl TmuxAdapter {
 
     async fn stop_spinner(&self, target_id: &str) {
         let mut spinners = self.spinners.lock().await;
-        if let Some(task) = spinners.remove(target_id) {
+        if let Some((_, task)) = spinners.remove(target_id) {
             task.abort();
         }
     }
 
-    async fn start_spinner(&self, target_id: String) {
+    /// Runs `spin` on the window; a window running the other animation switches to this one.
+    async fn start_spinner(&self, target_id: String, spin: Spin) {
         {
-            let spinners = self.spinners.lock().await;
-            if spinners.contains_key(&target_id) {
-                return;
+            let mut spinners = self.spinners.lock().await;
+            match spinners.get(&target_id) {
+                Some((running, _)) if *running == spin => return,
+                Some(_) => {
+                    if let Some((_, task)) = spinners.remove(&target_id) {
+                        task.abort();
+                    }
+                }
+                None => {}
             }
         }
 
         let target_clone = target_id.clone();
-        let (frames, interval, (icon, color)) = {
+        let raw = spin.raw();
+        let ((frames, interval), (icon, color)) = {
             let display = super::read(&self.display);
-            (
-                display.spinner_frames.clone(),
-                display.spinner_interval,
-                display.icon_color("busy"),
-            )
+            (display.frames(spin), display.icon_color(raw))
         };
 
         let task = tokio::spawn(async move {
             if frames.is_empty() {
-                set_tmux_window_state(&target_clone, &icon, "busy", &color).await;
+                set_tmux_window_state(&target_clone, &icon, raw, &color).await;
                 return;
             }
 
             if frames.len() == 1 {
-                set_tmux_window_state(&target_clone, &frames[0], "busy", &color).await;
+                set_tmux_window_state(&target_clone, &frames[0], raw, &color).await;
                 return;
             }
 
@@ -341,14 +391,14 @@ impl TmuxAdapter {
             loop {
                 let frame = &frames[i % frames.len()];
 
-                set_tmux_window_state(&target_clone, frame, "busy", &color).await;
+                set_tmux_window_state(&target_clone, frame, raw, &color).await;
 
                 i += 1;
                 tokio::time::sleep(tokio::time::Duration::from_millis(interval)).await;
             }
         });
 
-        self.spinners.lock().await.insert(target_id, task);
+        self.spinners.lock().await.insert(target_id, (spin, task));
     }
 
     pub fn should_notify_clients(clients_output: &str, session: &str, window_id: &str) -> bool {
@@ -478,7 +528,10 @@ impl OutputAdapter for TmuxAdapter {
     /// Running spinners keep their frames; the next spinner a window starts uses the new ones.
     fn reload(&self, config: &crate::config::Config) {
         let (_, spinner) = config.active_spinner();
-        super::write(&self.display, Display::new(config.theme.clone(), spinner));
+        super::write(
+            &self.display,
+            Display::new(config.theme.clone(), spinner, config.background_spinner()),
+        );
     }
 
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()> {
@@ -512,6 +565,7 @@ impl OutputAdapter for TmuxAdapter {
         } else {
             let pane_raw = match &update.state {
                 AgentState::Working => "busy",
+                AgentState::Background => "background",
                 AgentState::Idle => "idle",
                 AgentState::AwaitingInput => "question",
                 AgentState::Permission => "permission",
@@ -596,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_reload_replaces_theme_and_spinner() {
-        let adapter = TmuxAdapter::new(None, None);
+        let adapter = TmuxAdapter::new(None, None, crate::config::hexfill());
         let config: crate::config::Config = toml::from_str(
             r##"
             [theme]
@@ -614,6 +668,62 @@ mod tests {
         assert_eq!(display.spinner_frames, ["|", "/"]);
         assert_eq!(display.spinner_interval, 100);
         assert_eq!(display.icon_color("idle").0, "I");
+    }
+
+    #[tokio::test]
+    async fn test_window_swaps_animation_when_its_state_changes() {
+        let adapter = TmuxAdapter::new(None, None, crate::config::hexfill());
+        adapter.start_spinner("@9".into(), Spin::Working).await;
+        assert_eq!(adapter.spinners.lock().await["@9"].0, Spin::Working);
+        adapter.start_spinner("@9".into(), Spin::Background).await;
+        assert_eq!(adapter.spinners.lock().await["@9"].0, Spin::Background);
+        assert_eq!(adapter.spinners.lock().await.len(), 1);
+        adapter.stop_spinner("@9").await;
+        assert!(adapter.spinners.lock().await.is_empty());
+        assert_eq!(Spin::Background.raw(), "background");
+    }
+
+    #[tokio::test]
+    async fn test_a_thinking_pane_outranks_a_background_one_in_its_window() {
+        let adapter = TmuxAdapter::new(None, None, crate::config::hexfill());
+        for (pane, state) in [
+            ("%71", AgentState::Background),
+            ("%72", AgentState::Working),
+        ] {
+            adapter.set_pane_window_mapping(pane, "@70").await;
+            let update = AgentUpdate {
+                pane_id: pane.into(),
+                state,
+                message: None,
+            };
+            assert!(adapter.update(&update).await.is_ok());
+        }
+        assert_eq!(
+            adapter.get_window_effective_state("@70").await,
+            Some(AgentState::Working)
+        );
+        adapter.stop_spinner("@70").await;
+    }
+
+    #[test]
+    fn test_reload_takes_the_background_spinner() {
+        let adapter = TmuxAdapter::new(None, None, crate::config::hexfill());
+        let config: crate::config::Config = toml::from_str(
+            r#"
+            [theme]
+            active_spinner = "dot"
+            background_spinner = "slow"
+            [spinners]
+            slow = { interval = 900, frames = ["x", "y"] }
+            "#,
+        )
+        .unwrap();
+        adapter.reload(&config);
+        let display = super::super::read(&adapter.display);
+        assert_eq!(
+            display.frames(Spin::Background),
+            (vec!["x".into(), "y".into()], 900)
+        );
     }
 
     #[tokio::test]
@@ -635,9 +745,10 @@ mod tests {
         );
         let theme = ThemeConfig {
             active_spinner: "dot".to_string(),
+            background_spinner: None,
             states,
         };
-        let adapter = TmuxAdapter::new(Some(theme), None);
+        let adapter = TmuxAdapter::new(Some(theme), None, crate::config::hexfill());
 
         // Test non-closed state update
         let update_idle = AgentUpdate {
@@ -667,7 +778,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_tmux_adapter_multi_pane_urgency_aggregation() {
-        let adapter = TmuxAdapter::new(None, None);
+        let adapter = TmuxAdapter::new(None, None, crate::config::hexfill());
 
         // Manually bind %1 and %2 to the same window @10
         adapter.set_pane_window_mapping("%1", "@10").await;

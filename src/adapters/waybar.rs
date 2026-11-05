@@ -57,6 +57,7 @@ impl OutputAdapter for WaybarAdapter {
             let (raw_state, tooltip) = match active.state {
                 AgentState::Idle => ("idle", "Agent Idle"),
                 AgentState::Working => ("busy", "Agent Working"),
+                AgentState::Background => ("background", "Agent Waiting on a Background Task"),
                 AgentState::AwaitingInput => ("question", "Awaiting Input"),
                 AgentState::Permission => ("permission", "Permission Required"),
                 AgentState::Stalled => ("stalled", "Agent Stalled / Hanging"),

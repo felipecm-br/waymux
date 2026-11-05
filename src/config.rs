@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Spinner {
     pub interval: u64,
@@ -17,10 +17,36 @@ pub struct AgentStateTheme {
     pub color: String,
 }
 
+/// Built-in `background` spinner: a honeycomb cell (`md-hexagon_slice_1..6`) that fills and
+/// empties every 2.5 s, against the working spinner's 12 frames a second. Growing and shrinking
+/// ink reads as breathing, not rotation, and the hexagon matches no other state icon.
+pub fn hexfill() -> Spinner {
+    Spinner {
+        interval: 250,
+        frames: [
+            "\u{f0ac3}",
+            "\u{f0ac4}",
+            "\u{f0ac5}",
+            "\u{f0ac6}",
+            "\u{f0ac7}",
+            "\u{f0ac8}",
+            "\u{f0ac7}",
+            "\u{f0ac6}",
+            "\u{f0ac5}",
+            "\u{f0ac4}",
+        ]
+        .map(String::from)
+        .to_vec(),
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct ThemeConfig {
     pub active_spinner: String,
+    /// Spinner for the `background` state, from `[spinners]`; the built-in `hexfill` when unset.
+    #[serde(default)]
+    pub background_spinner: Option<String>,
     #[serde(default)]
     pub states: HashMap<String, AgentStateTheme>,
 }
@@ -245,6 +271,18 @@ impl Config {
         (name, spinner)
     }
 
+    /// The `background` state's spinner: `[theme] background_spinner` from `[spinners]`, else
+    /// [`hexfill`]. It must differ from the working spinner in rate, not just shape: the status
+    /// bar sits in peripheral vision, which tells motion rates apart but not glyph shapes.
+    pub fn background_spinner(&self) -> Spinner {
+        self.theme
+            .as_ref()
+            .and_then(|t| t.background_spinner.as_ref())
+            .and_then(|name| self.spinners.as_ref()?.get(name).cloned())
+            .filter(|s| !s.frames.is_empty())
+            .unwrap_or_else(hexfill)
+    }
+
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Config = toml::from_str(&content)?;
@@ -292,6 +330,34 @@ pub fn load_default_theme() -> Option<ThemeConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_background_spinner_is_hexfill_unless_a_defined_one_is_named() {
+        let parse = |toml: &str| -> Config { toml::from_str(toml).unwrap() };
+        assert_eq!(parse("").background_spinner(), hexfill());
+        let named = parse(
+            r#"
+            [theme]
+            active_spinner = "dot"
+            background_spinner = "breathe"
+            [spinners]
+            breathe = { interval = 400, frames = ["a", "b"] }
+            "#,
+        );
+        assert_eq!(named.background_spinner().frames, ["a", "b"]);
+        let unknown = parse(
+            r#"
+            [theme]
+            active_spinner = "dot"
+            background_spinner = "nope"
+            "#,
+        );
+        assert_eq!(unknown.background_spinner(), hexfill());
+        // A cell that fills and empties: 6 slices up, 4 back, so the cycle never jumps.
+        assert_eq!(hexfill().frames.len(), 10);
+        let f = hexfill().frames;
+        assert!((1..5).all(|k| f[k] == f[10 - k]));
+    }
 
     #[test]
     fn test_resolve_names_the_broken_file_and_settings_expand_home() {

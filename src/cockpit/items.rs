@@ -508,7 +508,7 @@ fn state_prio_icon<'a>(reg: &'a Registry, st: &str, agent_like: bool) -> (u8, &'
     let prio = match (crate::triage::service_class(st), st) {
         (Some(class), _) => class + 1,
         (None, "review") => REVIEW_PRIO,
-        (None, "busy" | "working") => 5,
+        (None, "busy" | "working" | "background") => 5,
         (None, "idle") => 6,
         (None, _) if agent_like => 6,
         _ => 7,
@@ -1025,7 +1025,7 @@ fn render_items(
             "question" | "awaiting_input" => &theme.s_question,
             "stalled" | "hanging" => &theme.s_stalled,
             "error" => &theme.s_error,
-            "busy" | "working" => &theme.s_busy,
+            "busy" | "working" | "background" => &theme.s_busy,
             "idle" => &theme.s_idle,
             "review" => &theme.s_review,
             _ => &theme.c_normal,
@@ -1421,6 +1421,9 @@ mod tests {
         assert_eq!(state_prio_icon(&reg, "busy", true), (5, "@SPIN@"));
         assert_eq!(state_prio_icon(&reg, "working", false), (5, "@SPIN@"));
         assert_eq!(state_prio_icon(&reg, "idle", false), (6, "󰗡"));
+        // The Cockpit animates one spinner, so a background row shows the full cell, with
+        // the working rows.
+        assert_eq!(state_prio_icon(&reg, "background", true), (5, "\u{f0ac8}"));
         assert_eq!(state_prio_icon(&reg, "review", true), (REVIEW_PRIO, "󰷋"));
         assert_eq!(state_prio_icon(&reg, "normal", false), (7, "·"));
         assert_eq!(state_prio_icon(&reg, "normal", true), (6, "󰑮"));

@@ -130,6 +130,8 @@ pub fn collect_notifying_panes() -> TriageQueue {
 /// 5. panes recorded as working, then any pane with a recorded agent state
 /// 6. panes running an agent binary or with an agent in their title
 ///
+/// A `background` pane is never visited: its agent waits on its own task, not on you.
+///
 /// tmux is reached only through the closures, so the order is testable.
 fn select_notifying(
     daemon: &HashMap<String, AgentPaneEntry>,
@@ -186,8 +188,20 @@ fn select_notifying(
         return notifying;
     }
 
+    let background: HashSet<&str> = daemon
+        .iter()
+        .filter(|(_, v)| v.state == "background")
+        .map(|(p, _)| p.as_str())
+        .chain(
+            recorded
+                .iter()
+                .filter(|(_, st)| *st == "background")
+                .map(|(p, _)| *p),
+        )
+        .collect();
+
     let bell = last_bell();
-    if exists(&bell) {
+    if exists(&bell) && !background.contains(bell.as_str()) {
         return vec![bell];
     }
 
@@ -220,8 +234,10 @@ fn select_notifying(
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
-            (parts.len() >= 3 && (is_agent_binary_name(parts[1]) || contains_agent_name(parts[2])))
-                .then(|| parts[0].to_string())
+            (parts.len() >= 3
+                && !background.contains(parts[0])
+                && (is_agent_binary_name(parts[1]) || contains_agent_name(parts[2])))
+            .then(|| parts[0].to_string())
         })
         .collect()
 }
@@ -616,6 +632,18 @@ mod tests {
         assert_eq!(select(&none, "%4\tidle\n%7\tbusy\n", "%gone", ""), ["%7"]);
         assert_eq!(select(&none, "%4\tidle\n%8\tnormal\n", "", ""), ["%4"]);
 
+        // A background agent waits on its own task: never the bell's pane, never the last resort.
+        let waiting_on_a_build = daemon(&[("%2", "background", 10)]);
+        assert_eq!(
+            select(
+                &waiting_on_a_build,
+                "%2\tbackground\n",
+                "%2",
+                "%2\tclaude\t-\n"
+            ),
+            Vec::<String>::new()
+        );
+
         // Last resort: panes running an agent binary or titled after one.
         let commands = "%1\tzsh\tshell\n%2\tclaude\t-\n%3\tnode\tOpenCode session\n%4\tvim\n";
         assert_eq!(select(&none, "", "", commands), ["%2", "%3"]);
@@ -649,6 +677,7 @@ mod tests {
                 "hanging",
                 "working",
                 "busy",
+                "background",
                 "idle",
                 "closed",
                 "",

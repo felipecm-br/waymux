@@ -25,7 +25,7 @@ pub enum Mode {
 pub fn canonical_state(state: &str) -> &str {
     match state {
         "awaiting_input" => "question",
-        "working" => "busy",
+        "working" | "background" => "busy",
         "hanging" => "stalled",
         other => other,
     }
@@ -293,6 +293,7 @@ mod tests {
         );
         let theme = ThemeConfig {
             active_spinner: "dot".to_string(),
+            background_spinner: None,
             states,
         };
         assert_eq!(

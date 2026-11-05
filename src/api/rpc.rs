@@ -671,7 +671,8 @@ async fn dismiss(state: &ApiState, params: DismissParams) -> RpcResult {
             clear_bell(true);
             Ok(serde_json::json!({ "status": "dismissed", "pane_id": pane_id }))
         }
-        Some(AgentState::Working) => Ok(serde_json::json!({
+        // Busy panes keep their state: focusing one is not an answer to anything.
+        Some(AgentState::Working | AgentState::Background) => Ok(serde_json::json!({
             "status": "ignored",
             "pane_id": pane_id,
             "reason": "agent_working",
