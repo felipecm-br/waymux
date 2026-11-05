@@ -271,4 +271,53 @@ mod tests {
         assert_eq!(data.notes[0].status, "Sent");
         assert!(format_and_mark_sent(&mut data).is_none());
     }
+
+    #[test]
+    fn test_resolve_load_count_and_render_pending_notes() {
+        assert!(resolve_notes_file("").is_none());
+        assert!(resolve_notes_file("-").is_none());
+        assert!(resolve_notes_file("/nonexistent/waymux-dir").is_none());
+
+        let dir = std::env::temp_dir().join(format!("waymux-notes-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let legacy = dir.join(".lines.json");
+        let notes = serde_json::json!({
+            "notes": [
+                {"file": "", "line": 1, "comment": "a".repeat(70)},
+                {"file": "b.rs", "line": 2, "comment": "c2"},
+                {"file": "c.rs", "line": 3, "comment": "c3"},
+                {"file": "d.rs", "line": 4, "comment": "c4"},
+                {"file": "e.rs", "line": 5, "comment": "c5"},
+                {"file": "f.rs", "line": 6, "comment": "c6"}
+            ]
+        });
+        fs::write(&legacy, notes.to_string()).unwrap();
+
+        let dir_str = dir.to_string_lossy().into_owned();
+        assert_eq!(
+            resolve_notes_file(&dir_str).as_deref(),
+            Some(legacy.as_path())
+        );
+        assert_eq!(count_pending_in_file(&legacy), 6);
+        let rendered = render_pending_notes(&dir_str);
+        assert!(rendered.contains("Pending AI Review Notes (6):"));
+        assert!(rendered.contains("unknown:1"));
+        assert!(rendered.contains("... and 1 more notes"));
+        assert_eq!(run_cli(&["count".into(), dir_str.clone()]), 0);
+        assert_eq!(run_cli(&["list".into(), dir_str.clone()]), 0);
+        assert_eq!(run_cli(&["send".into(), "/nonexistent/dir".into()]), 0);
+        assert_eq!(
+            run_cli(&[
+                "send".into(),
+                dir_str.clone(),
+                "s".into(),
+                "1".into(),
+                "bad_pane".into()
+            ]),
+            1
+        );
+        assert_eq!(run_cli(&["bogus".into()]), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

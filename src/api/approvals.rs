@@ -223,7 +223,7 @@ mod tests {
             super::super::state::Settings {
                 approvals: Some(ApprovalsConfig {
                     enabled: true,
-                    hold_seconds: Some(10),
+                    hold_seconds: Some(2),
                 }),
                 ..state.settings()
             },
@@ -280,9 +280,25 @@ mod tests {
             "deny never needs the risk ack"
         );
         assert_eq!(
+            check_answer(
+                &h,
+                7,
+                Decision::Allow,
+                "rm -rf build",
+                &ack,
+                1_000 + DWELL_MS
+            ),
+            Ok(()),
+            "exact dwell boundary allows answer"
+        );
+        assert_eq!(
             check_answer(&h, 7, Decision::Allow, "rm -rf build", &ack, 5_000),
             Ok(())
         );
+        assert_eq!(AnswerError::Gone.code(), "gone");
+        assert_eq!(AnswerError::Changed.code(), "changed");
+        assert_eq!(AnswerError::TooSoon.code(), "too_soon");
+        assert_eq!(AnswerError::RiskAckRequired.code(), "risk_ack_required");
     }
 
     #[tokio::test]
@@ -309,20 +325,29 @@ mod tests {
         let state = enabled_state();
         let waiter = {
             let s = state.clone();
-            tokio::spawn(async move { hold(&s, "%2", "Bash", "go test ./...").await })
+            tokio::spawn(async move { hold(&s, "%2", "Bash", "rm -rf build").await })
         };
-        let id = loop {
-            if let Some(id) = get(&state, "%2").await["id"].as_u64() {
-                break id;
+        let id = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if let Some(id) = get(&state, "%2").await["id"].as_u64() {
+                    break id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        };
+        })
+        .await
+        .expect("prompt registered");
         assert_eq!(
-            answer(&state, "%2", id, Decision::Allow, "go test ./...", &[]).await,
+            get(&state, "%2").await["rules"],
+            serde_json::json!(["recursive delete"])
+        );
+        let ack = vec!["recursive delete".to_string()];
+        assert_eq!(
+            answer(&state, "%2", id, Decision::Allow, "rm -rf build", &ack).await,
             Err(AnswerError::TooSoon)
         );
         tokio::time::sleep(std::time::Duration::from_millis(DWELL_MS + 20)).await;
-        answer(&state, "%2", id, Decision::Allow, "go test ./...", &[])
+        answer(&state, "%2", id, Decision::Allow, "rm -rf build", &ack)
             .await
             .unwrap();
         assert_eq!(waiter.await.unwrap(), (Some(Decision::Allow), "answered"));
@@ -336,17 +361,25 @@ mod tests {
             let s = state.clone();
             tokio::spawn(async move { hold(&s, "%3", "Bash", "ls").await })
         };
-        while get(&state, "%3").await.is_null() {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while get(&state, "%3").await.is_null() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("prompt registered");
         let second = {
             let s = state.clone();
             tokio::spawn(async move { hold(&s, "%3", "Bash", "pwd").await })
         };
         assert_eq!(first.await.unwrap(), (None, "released"));
-        while get(&state, "%3").await["line"] != "pwd" {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while get(&state, "%3").await["line"] != "pwd" {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("second prompt registered");
         release(&state, "%3").await;
         assert_eq!(second.await.unwrap(), (None, "released"));
     }

@@ -32,7 +32,7 @@ pub mod tmux_cmd;
 pub mod triage;
 pub mod wt;
 
-#[cfg(feature = "fuzzing")]
+#[cfg(any(test, feature = "fuzzing"))]
 pub mod fuzzing;
 
 use std::path::Path;

@@ -540,4 +540,69 @@ mod tests {
         assert!(rank("error", false) < rank("working", false));
         assert!(rank("working", false) < rank("idle", false));
     }
+
+    #[test]
+    fn test_page_response_embeds_csp_nonce_and_security_headers() {
+        let (headers, body) = page_response();
+        let map: std::collections::HashMap<_, _> = headers.into_iter().collect();
+        assert_eq!(
+            map.get(&axum::http::header::CACHE_CONTROL)
+                .map(String::as_str),
+            Some("no-store")
+        );
+        assert_eq!(
+            map.get(&axum::http::header::X_FRAME_OPTIONS)
+                .map(String::as_str),
+            Some("DENY")
+        );
+        let csp = map
+            .get(&axum::http::header::CONTENT_SECURITY_POLICY)
+            .expect("CSP header");
+        assert!(csp.contains("default-src 'none'"), "{csp}");
+        assert!(body.contains("<script nonce=\""), "script nonce missing");
+        assert!(body.contains("<style nonce=\""), "style nonce missing");
+    }
+
+    #[test]
+    fn test_phone_token_issue_matches_and_rotates() {
+        let dir = std::env::temp_dir().join(format!("waymux-phone-tok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("phone-token");
+        let tok = PhoneToken {
+            token: RwLock::new(None),
+            path: Some(file.clone()),
+        };
+        assert!(!tok.matches("anything"));
+        let first = tok.issue(false).expect("mint token");
+        assert!(tok.matches(&first));
+        assert!(!tok.matches("wrong"));
+        assert_eq!(tok.issue(false).as_deref(), Some(first.as_str()));
+        assert_eq!(std::fs::read_to_string(&file).unwrap().trim(), first);
+
+        let second = tok.issue(true).expect("rotate token");
+        assert_ne!(first, second);
+        assert!(!tok.matches(&first));
+        assert!(tok.matches(&second));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_snapshot_and_send_alert_validation() {
+        let state = ApiState::new(Vec::new(), 0);
+        let snap = snapshot(&state).await;
+        assert!(snap["agents"].is_array());
+        assert!(snap["now"].as_u64().is_some());
+
+        let bad_cfg = crate::config::PhoneConfig {
+            ntfy: Some("ftp://invalid".into()),
+            ntfy_file: None,
+            url: None,
+            alert_after_seconds: Some(0),
+        };
+        assert!(send_alert(&bad_cfg, "test").await.is_err());
+
+        // diff on unknown agent returns Err("unknown_agent")
+        assert_eq!(diff(&state, "%999").await, Err("unknown_agent"));
+    }
 }

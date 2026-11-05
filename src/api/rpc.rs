@@ -1168,6 +1168,179 @@ mod tests {
         assert_eq!(error_code(tmux_down), SERVER_ERROR);
     }
 
+    #[tokio::test]
+    async fn test_rpc_queue_approval_phone_and_batch_dispatch() {
+        let state = ApiState::new(Vec::new(), 0);
+        state.pane_states.lock().await.insert(
+            "%1".into(),
+            crate::api::state::PaneStateInfo {
+                last_timestamp: 100,
+                seq_id: 1,
+                state: AgentState::Working,
+                message: Some("Bash: ls".into()),
+                finished_at: 0,
+                changed_at: 100,
+            },
+        );
+
+        // queue/push, queue/list, queue/cancel, and list_states with queued count
+        assert_eq!(
+            error_code(rpc(&state, "queue/push", json!({"pane_id": "", "text": "hi"})).await),
+            INVALID_PARAMS
+        );
+        assert_eq!(
+            error_code(
+                rpc(
+                    &state,
+                    "queue/push",
+                    json!({"pane_id": "%1", "text": "   "})
+                )
+                .await
+            ),
+            INVALID_PARAMS
+        );
+        match rpc(
+            &state,
+            "queue/push",
+            json!({"pane_id": "%1", "text": "run cargo test"}),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => assert_eq!(result["position"], 1),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        let listed = list_states(&state).await;
+        assert_eq!(listed["%1"]["queued"], 1);
+        assert_eq!(listed["%1"]["message"], "Bash: ls");
+        match rpc(&state, "queue/list", json!({"pane_id": "%1"})).await {
+            RpcResponse::Success { result, .. } => {
+                assert_eq!(result["%1"][0]["text"], "run cargo test");
+            }
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        match rpc(&state, "queue/cancel", json!({"pane_id": "%1"})).await {
+            RpcResponse::Success { result, .. } => assert_eq!(result["dropped"], 1),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+
+        // hook/token, phone/token, phone/snapshot, phone/diff, phone/prompt, phone/alert
+        match rpc(&state, "hook/token", json!({"pane_id": "%1"})).await {
+            RpcResponse::Success { result, .. } => assert!(result["token"].as_str().is_some()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        assert_eq!(
+            error_code(rpc(&state, "hook/token", json!({"pane_id": "bad"})).await),
+            INVALID_PARAMS
+        );
+        match rpc(
+            &state,
+            "phone/token",
+            json!({"rotate": false, "prompt": false}),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => assert!(result["token"].as_str().is_some()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        match rpc(
+            &state,
+            "phone/token",
+            json!({"rotate": true, "prompt": true}),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => assert!(result["token"].as_str().is_some()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        match rpc(&state, "phone/snapshot", Value::Null).await {
+            RpcResponse::Success { result, .. } => assert!(result["agents"].is_array()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        assert_eq!(
+            error_code(rpc(&state, "phone/diff", json!({"pane_id": "%99"})).await),
+            INVALID_PARAMS
+        );
+        match rpc(
+            &state,
+            "phone/prompt",
+            json!({"pane_id": "%1", "text": "check status"}),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => assert_eq!(result["status"], "queued"),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        assert_eq!(
+            error_code(rpc(&state, "phone/alert", Value::Null).await),
+            INVALID_PARAMS
+        );
+
+        // approval/get, approval/hold, approval/answer, agent/recap, dismiss noop
+        assert_eq!(
+            error_code(rpc(&state, "approval/get", Value::Null).await),
+            INVALID_PARAMS
+        );
+        match rpc(&state, "approval/get", json!({"pane_id": "%1"})).await {
+            RpcResponse::Success { result, .. } => assert!(result.is_null()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        match rpc(
+            &state,
+            "approval/hold",
+            json!({"pane_id": "%1", "tool": "Bash", "line": "ls"}),
+        )
+        .await
+        {
+            RpcResponse::Success { result, .. } => assert!(result["decision"].is_null()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        assert_eq!(
+            error_code(
+                rpc(
+                    &state,
+                    "approval/answer",
+                    json!({"pane_id": "%1", "id": 99, "decision": "allow", "line": "ls"})
+                )
+                .await
+            ),
+            INVALID_PARAMS
+        );
+        match rpc(&state, "agent/recap", json!({"pane_id": "%1"})).await {
+            RpcResponse::Success { result, .. } => assert!(result.is_null()),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+        match rpc(&state, "agentState/dismiss", json!({"pane_id": "%unseen"})).await {
+            RpcResponse::Success { result, .. } => assert_eq!(result["status"], "noop"),
+            RpcResponse::Error { error, .. } => panic!("{error:?}"),
+        }
+
+        // handle_rpc batch, notification, parse error, and bad jsonrpc version
+        let r_parse = handle_rpc(State(state.clone()), Bytes::from_static(b"{not json")).await;
+        assert_eq!(r_parse.status(), StatusCode::OK);
+        let r_empty = handle_rpc(State(state.clone()), Bytes::from_static(b"[]")).await;
+        assert_eq!(r_empty.status(), StatusCode::OK);
+        let r_notif = handle_rpc(
+            State(state.clone()),
+            Bytes::from_static(br#"[{"jsonrpc":"2.0","method":"agentState/list"}]"#),
+        )
+        .await;
+        assert_eq!(r_notif.status(), StatusCode::NO_CONTENT);
+        let r_single_notif = handle_rpc(
+            State(state.clone()),
+            Bytes::from_static(br#"{"jsonrpc":"2.0","method":"agentState/list"}"#),
+        )
+        .await;
+        assert_eq!(r_single_notif.status(), StatusCode::NO_CONTENT);
+        let r_batch = handle_rpc(
+            State(state),
+            Bytes::from_static(
+                br#"[{"jsonrpc":"1.0","method":"agentState/list","id":1},{"not":"rpc","id":2}]"#,
+            ),
+        )
+        .await;
+        assert_eq!(r_batch.status(), StatusCode::OK);
+    }
+
     #[test]
     fn test_rows_skips_short_lines() {
         let out = rows(

@@ -8,6 +8,12 @@ examine_globs = [
     "src/api/rpc.rs",
     "src/api/state.rs",
     "src/hook.rs",
+    "src/delivery.rs",
+    "src/api/queue.rs",
+    "src/api/approvals.rs",
+    "src/risk.rs",
+    "src/checkpoint.rs",
+    "src/quota/claude.rs",
 ]
 
 exclude_re = [
@@ -16,7 +22,12 @@ exclude_re = [
     "(in|replace) (scan_running_agents|stat_stamp|git_meta_stamp|git_meta_cache_file|invalidate_git_meta_cache|resolve_pr_metadata|try_cached_git_metadata|resolve_git_metadata|prefetch_git_metadata|generate_items|review_min_secs|review_snapshot|finish_review|is_dirty|mtime_secs)\\b",
     "(in|replace) (clear_bell|kill|target|stdout|run|call)\\b",
     "(in|replace) (log_flow_event|get_process_tree_cpu_ticks|(ApiState::)?(rehydrate_from_tmux|clean_stale_panes|check_pane_stalls))\\b",
-    "(in|replace) (is_stdin_tty|read_stdin_json|get_active_tmux_pane|set_ai_agent_title|set_lazygitrs_icon|write_pane_state_file|send_acp_state|print_hook_response|run_tmux_hook|run_lazygit_hook|remember_pane_tool|recall_pane_tool)\\b",
+    "(in|replace) (is_stdin_tty|read_stdin_json|get_active_tmux_pane|set_ai_agent_title|set_lazygitrs_icon|write_pane_state_file|send_acp_state|send_acp_state_with_session|held_decision|print_hook_response|run_tmux_hook|run_lazygit_hook|remember_pane_tool|recall_pane_tool|remember_pane_command|recall_pane_command)\\b",
+    "(in|replace) (offload|prune_old_pastes|read_saved_hook_state|hook_state|type_now|current_pane|dispatch_prompt)\\b",
+    "(in|replace) (type_into_pane|watch_for_stall|type_prompt|schedule)\\b",
+    "(in|replace) (print_decision)\\b",
+    "(in|replace) (state_root|output|pane_dir|(Repo::)?(ensure_store|main_git|store_git|temp_index))\\b",
+    "(in|replace) (claude_dir|inputs|record|prune_samples|live_sessions|tail_history|agent|run_statusline)\\b",
 ]
 
 additional_cargo_test_args = ["--lib"]

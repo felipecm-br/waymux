@@ -12,9 +12,9 @@
 //! `default_model`, and `notes` (`[{text, level?}]`, `level` `warn` for yellow). Every field
 //! is passed through to `--json` unchanged.
 
-mod claude;
+pub(crate) mod claude;
 mod popup;
-mod render;
+pub(crate) mod render;
 
 use serde_json::Value;
 use std::fs;
@@ -190,7 +190,11 @@ fn run_provider(cmd: &str, now: i64, state: &Path, force: bool) -> Vec<Value> {
     let Ok(out) = command.output() else {
         return Vec::new();
     };
-    match serde_json::from_slice::<Value>(&out.stdout) {
+    parse_provider_output(&out.stdout)
+}
+
+pub(crate) fn parse_provider_output(bytes: &[u8]) -> Vec<Value> {
+    match serde_json::from_slice::<Value>(bytes) {
         Ok(Value::Array(agents)) => agents.into_iter().filter(Value::is_object).collect(),
         Ok(Value::Object(mut obj)) => match obj.remove("agents") {
             Some(Value::Array(agents)) => agents.into_iter().filter(Value::is_object).collect(),
@@ -202,7 +206,7 @@ fn run_provider(cmd: &str, now: i64, state: &Path, force: bool) -> Vec<Value> {
 
 /// The first available agent in `order` with headroom (green or unknown), else the first
 /// yellow one, else the one whose quota comes back soonest.
-fn recommend(agents: &[Value], order: &[String]) -> (String, String) {
+pub(crate) fn recommend(agents: &[Value], order: &[String]) -> (String, String) {
     let cands: Vec<&Value> = order
         .iter()
         .flat_map(|o| {

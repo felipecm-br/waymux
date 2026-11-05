@@ -288,6 +288,20 @@ fn model(inp: &Inputs, now: i64, srate: f64, icon: &str) -> Value {
     })
 }
 
+pub(crate) fn statusline_head(payload: &Value) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(name) = payload["model"]["display_name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+    {
+        parts.push(name.to_string());
+    }
+    if let Some(ctx) = payload["context_window"]["used_percentage"].as_f64() {
+        parts.push(format!("ctx {}%", ctx.floor()));
+    }
+    parts.join(" · ")
+}
+
 /// `quota statusline`: records Claude Code's `rate_limits` and prints the model, context and
 /// quota as one line.
 pub fn run_statusline() -> i32 {
@@ -299,17 +313,7 @@ pub fn run_statusline() -> i32 {
     let now = chrono::Utc::now().timestamp();
     record(&state, &payload, now);
 
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(name) = payload["model"]["display_name"]
-        .as_str()
-        .filter(|s| !s.is_empty())
-    {
-        parts.push(name.to_string());
-    }
-    if let Some(ctx) = payload["context_window"]["used_percentage"].as_f64() {
-        parts.push(format!("ctx {}%", ctx.floor()));
-    }
-    let head = parts.join(" · ");
+    let head = statusline_head(&payload);
     let snap = super::Snapshot::collect(true, false);
     let quota = render::line(&snap);
     let sep = if !head.is_empty() && !quota.is_empty() {
@@ -321,7 +325,7 @@ pub fn run_statusline() -> i32 {
     0
 }
 
-fn record(state: &Path, payload: &Value, now: i64) {
+pub(crate) fn record(state: &Path, payload: &Value, now: i64) {
     let rl = &payload["rate_limits"];
     if !rl.is_object() {
         return;

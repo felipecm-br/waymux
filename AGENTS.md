@@ -60,7 +60,7 @@
 - `src/wt/mod.rs`: `waymux wt` (and `argv[0] == "awt"`) Git worktree orchestrator. Delegates to `awt-*.sh` helpers found in `~/.config/waymaker/scripts`, `~/.config/matchmaker/scripts`, then `$WAYMUX_SHARE_DIR/scripts` (default `~/.local/share/waymux/scripts`); a missing helper exits 127 with the searched paths.
 - `scripts/awt/`: The bundled `awt-*.sh` helpers that `install.sh` copies to `~/.local/share/waymux/scripts`. Keep them free of author-specific paths (`AWT_SWEEP_ROOTS`, `AWT_SWEEP_KEEP_BRANCHES` hold the personal defaults).
 - `src/init.rs`: `waymux init {--tmux|--systemd|--hooks}`: plugin line, the shipped `systemd/waymux.service` (embedded with `include_str!`), and a Claude Code hooks block.
-- `src/fuzzing.rs` & `fuzz/`: feature `fuzzing` exposes one entry point per untrusted input (hook stdin, `lines.json`, `config.toml`, `/rpc` bodies) for the `cargo fuzz` targets in `fuzz/fuzz_targets/`; `fuzz/seeds/` holds real samples and every past crash. CI fuzzes each target 60s weekly.
+- `src/fuzzing.rs` & `fuzz/`: feature `fuzzing` exposes one entry point per untrusted input (hook stdin, `lines.json`, `config.toml`, `/rpc` bodies, quota provider stdout, `quota statusline` stdin, and `switch` `rows_command` stdout) for the `cargo fuzz` targets in `fuzz/fuzz_targets/`; `fuzz/seeds/` holds real samples and every past crash. CI fuzzes each target 60s weekly.
 - `src/test_strategies.rs`: test-only `proptest` strategies (agent/tmux/`gh`-shaped JSON and hostile strings) shared by the property tests; `proptest-regressions/` keeps shrunk failures so they replay on every run.
 - `tests/common/mod.rs`: the shared harness for the end-to-end tests below (`Env`: temp `HOME`, runtime and tmux dirs, a `PATH` with only `git`, repository helpers).
 - `tests/tmux.rs`: End-to-end tests of `agent-action`, `window-create`, `window-delete`, `triage --jump`, `switch` (fake agents detected through `ps`, the typed command, the draft guard) and `launch` (the `@ai_launch` tag, `--popup` starting the pick in a new window) against a private tmux server per test (`Env::tmux`), skipped without tmux.
@@ -101,7 +101,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-> Current baseline: **258 unit tests** (in `src/`, 15 of them `proptest` properties) and **52 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings**, **0 surviving mutants** across the 5 core logic modules (`cargo mutants`), and **81% line coverage** (CI fails below 80%: `cargo llvm-cov --summary-only --fail-under-lines 80`).
+> Current baseline: **285 unit tests** (in `src/`, 15 of them `proptest` properties) and **53 integration tests** (`tests/cli.rs`, `tests/cockpit.rs`, `tests/tmux.rs`, `tests/wt.rs`) passing, with **0 Clippy warnings**, **0 surviving mutants** across the 11 core logic modules (`cargo mutants`), and **85% line coverage** (CI fails below 84%: `cargo llvm-cov --summary-only --fail-under-lines 84`).
 
 ### Dependency Audit & Performance Budgets (also run in CI)
 

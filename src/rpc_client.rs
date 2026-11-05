@@ -422,3 +422,58 @@ pub fn status_cli() -> i32 {
     }
     0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn serve_once(resp: &'static str) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn test_http_get_and_post_json_against_local_listener() {
+        let port = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"status\":\"healthy\"}",
+        );
+        let (code, val) = http_get_json(port, "/health", 1000).unwrap();
+        assert_eq!(code, 200);
+        assert_eq!(val["status"], "healthy");
+
+        let port2 = serve_once(
+            "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\r\n{\"result\":{\"ok\":true}}",
+        );
+        let (code2, body2) = http_post_json(
+            port2,
+            "/rpc",
+            Some("secret"),
+            &serde_json::json!({"jsonrpc": "2.0", "method": "ping", "id": 1}),
+            1000,
+        )
+        .unwrap();
+        assert_eq!(code2, 201);
+        assert!(body2.contains("\"ok\":true"));
+
+        // Closed port returns None cleanly.
+        assert!(http_get_json(1, "/health", 50).is_none());
+    }
+
+    #[test]
+    fn test_hook_token_cli_requires_pane_argument() {
+        assert_eq!(hook_token_cli(&[]), 2);
+        assert_eq!(hook_token_cli(&["   ".into()]), 2);
+        assert_eq!(daemon_port(), 4040);
+        assert_eq!(dismiss_pane_cli(&[String::new()]), 0);
+    }
+}

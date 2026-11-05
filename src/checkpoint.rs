@@ -185,9 +185,10 @@ impl Repo {
                 )?;
             let mut add = self.main_git(&tmp);
             add.args(["add", "-A", "--", "."]);
-            for path in untracked.split('\0').filter(|p| !p.is_empty()) {
-                let big = std::fs::metadata(self.top.join(path))
-                    .is_ok_and(|m| m.len() > MAX_UNTRACKED_BYTES);
+            for path in untracked.split('\0') {
+                let big = !path.is_empty()
+                    && std::fs::metadata(self.top.join(path))
+                        .is_ok_and(|m| m.len() > MAX_UNTRACKED_BYTES);
                 if big {
                     add.arg(format!(":(top,exclude,literal){path}"));
                 }
@@ -373,28 +374,31 @@ impl Repo {
 
         if !write.is_empty() {
             let tmp = self.temp_index();
-            let read = ok(self
+            let mut checked_out = false;
+            if ok(self
                 .store_git()
                 .env("GIT_INDEX_FILE", &tmp)
-                .args(["read-tree", &target.commit]));
-            let mut child = self
-                .store_git()
-                .current_dir(&self.top)
-                .env("GIT_INDEX_FILE", &tmp)
-                .env("GIT_WORK_TREE", &self.top)
-                .args(["checkout-index", "-f", "-z", "--stdin"])
-                .stdin(Stdio::piped())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            if let Some(mut stdin) = child.stdin.take() {
-                use std::io::Write;
-                let _ = stdin.write_all(write.join("\0").as_bytes());
+                .args(["read-tree", &target.commit]))
+            {
+                let mut child = self
+                    .store_git()
+                    .current_dir(&self.top)
+                    .env("GIT_INDEX_FILE", &tmp)
+                    .env("GIT_WORK_TREE", &self.top)
+                    .args(["checkout-index", "-f", "-z", "--stdin"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let _ = stdin.write_all(write.join("\0").as_bytes());
+                }
+                checked_out = child.wait().is_ok_and(|s| s.success());
             }
-            let checked_out = child.wait().is_ok_and(|s| s.success());
             let _ = std::fs::remove_file(&tmp);
-            if !(read && checked_out) {
+            if !checked_out {
                 return Err(format!(
                     "could not write the files; restore checkpoint {} to undo",
                     safety.n
@@ -421,7 +425,26 @@ fn current_pane() -> String {
 
 /// `waymux checkpoint <list|diff N|restore N [--force]> [-w <pane>]`
 pub fn run_cli(args: &[String]) -> i32 {
-    let mut pane = current_pane();
+    run_cli_in(
+        args,
+        |pane| pane_dir(pane).and_then(|d| Repo::open(&d, None)),
+        current_pane,
+        |pane| {
+            crate::rpc_client::fetch_agent_states()
+                .get(pane)
+                .map(|e| e.state.clone())
+                .unwrap_or_default()
+        },
+    )
+}
+
+fn run_cli_in(
+    args: &[String],
+    open_repo: impl FnOnce(&str) -> Option<Repo>,
+    pane_env: impl FnOnce() -> String,
+    active_state: impl FnOnce(&str) -> String,
+) -> i32 {
+    let mut pane = pane_env();
     let mut force = false;
     let mut rest = Vec::new();
     let mut it = args.iter();
@@ -437,7 +460,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         eprintln!("{usage}\n(no pane: pass -w <pane> outside tmux)");
         return 1;
     }
-    let Some(repo) = pane_dir(&pane).and_then(|d| Repo::open(&d, None)) else {
+    let Some(repo) = open_repo(&pane) else {
         eprintln!("pane {pane} is not in a git work tree");
         return 1;
     };
@@ -472,10 +495,7 @@ pub fn run_cli(args: &[String]) -> i32 {
             }
         }
         ("restore", Some(n)) => {
-            let state = crate::rpc_client::fetch_agent_states()
-                .get(&pane)
-                .map(|e| e.state.clone())
-                .unwrap_or_default();
+            let state = active_state(&pane);
             if !force
                 && matches!(
                     state.as_str(),
@@ -670,13 +690,51 @@ mod tests {
         sb.git(&["add", "-A"]);
         sb.git(&["commit", "-qm", "init"]);
         let repo = sb.open();
-        for i in 1..=4 {
+        for i in 1..=5 {
             sb.write("f", &i.to_string());
-            repo.create("%1", "idle", 2).unwrap().unwrap();
+            let c = repo.create("%1", "idle", 5).unwrap().unwrap();
+            let now = crate::sys::unix_ms() / 1000;
+            assert!(c.time >= now - 5 && c.time <= now + 5, "time={}", c.time);
         }
+        repo.prune("%1", 3);
         let ns: Vec<u64> = repo.list("%1").iter().map(|c| c.n).collect();
-        assert_eq!(ns, [3, 4]);
+        assert_eq!(ns, [3, 4, 5]);
+        // Restoring with keep=2 keeps the target checkpoint plus the new safety checkpoint.
+        sb.write("f", "uncommitted");
+        let (_, _, safety) = repo.restore("%1", 4, 2).unwrap();
+        assert_eq!(safety, 6);
+        let ns_after: Vec<u64> = repo.list("%1").iter().map(|c| c.n).collect();
+        assert_eq!(ns_after, [4, 5, 6]);
         assert!(repo.list("%2").is_empty(), "panes are separate");
+    }
+
+    #[test]
+    fn test_snapshot_leaves_out_untracked_files_over_max_bytes() {
+        assert_eq!(MAX_UNTRACKED_BYTES, 52_428_800);
+        let sb = Sandbox::new("big");
+        sb.write("small.txt", "kept\n");
+        let exact = sb.repo().join("exact.bin");
+        std::fs::File::create(&exact)
+            .unwrap()
+            .set_len(MAX_UNTRACKED_BYTES)
+            .unwrap();
+        let over = sb.repo().join("over.bin");
+        std::fs::File::create(&over)
+            .unwrap()
+            .set_len(MAX_UNTRACKED_BYTES + 1)
+            .unwrap();
+        let repo = sb.open();
+        let c = repo.create("%1", "idle", 50).unwrap().unwrap();
+        let files = Command::new("git")
+            .arg("--git-dir")
+            .arg(&repo.store)
+            .args(["ls-tree", "--name-only", &c.commit])
+            .output()
+            .unwrap();
+        let names = String::from_utf8_lossy(&files.stdout);
+        assert!(names.contains("small.txt"), "{names}");
+        assert!(names.contains("exact.bin"), "{names}");
+        assert!(!names.contains("over.bin"), "{names}");
     }
 
     #[test]
@@ -692,7 +750,110 @@ mod tests {
     #[test]
     fn test_pane_key_and_hash_are_stable() {
         assert_eq!(pane_key("%12"), "12");
-        assert_eq!(path_hash("/a"), path_hash("/a"));
+        assert_eq!(path_hash("/a"), "07d66707b49cd92d");
         assert_ne!(path_hash("/a"), path_hash("/b"));
+    }
+
+    #[test]
+    fn test_run_cli_in_list_diff_restore_and_guards() {
+        let sb = Sandbox::new("cli");
+        sb.write("f.txt", "v1\n");
+        sb.git(&["add", "-A"]);
+        sb.git(&["commit", "-qm", "init"]);
+        let s = |v: &[&str]| v.iter().map(|x| (*x).to_string()).collect::<Vec<_>>();
+
+        // No pane -> 1, not a repo -> 1
+        assert_eq!(
+            run_cli_in(&[], |_| unreachable!(), String::new, |_| String::new()),
+            1
+        );
+        assert_eq!(
+            run_cli_in(&s(&["-w", "%1"]), |_| None, String::new, |_| String::new()),
+            1
+        );
+
+        // Empty list -> 0
+        assert_eq!(
+            run_cli_in(
+                &s(&["-w", "%1", "list"]),
+                |_| Some(sb.open()),
+                String::new,
+                |_| String::new()
+            ),
+            0
+        );
+
+        // Create a checkpoint and test list, diff, restore (blocked & forced), and invalid args
+        sb.write("f.txt", "v2\n");
+        sb.open().create("%1", "idle", 50).unwrap();
+        assert_eq!(
+            run_cli_in(
+                &s(&["ls"]),
+                |_| Some(sb.open()),
+                || "%1".into(),
+                |_| String::new()
+            ),
+            0
+        );
+        assert_eq!(
+            run_cli_in(
+                &s(&["diff", "1", "-w", "%1"]),
+                |_| Some(sb.open()),
+                String::new,
+                |_| String::new()
+            ),
+            0
+        );
+        assert_eq!(
+            run_cli_in(
+                &s(&["diff", "99", "-w", "%1"]),
+                |_| Some(sb.open()),
+                String::new,
+                |_| String::new()
+            ),
+            1
+        );
+        // Active state without --force refuses restore
+        for st in ["working", "permission", "question", "awaiting_input"] {
+            assert_eq!(
+                run_cli_in(
+                    &s(&["restore", "1", "-w", "%1"]),
+                    |_| Some(sb.open()),
+                    String::new,
+                    |_| st.into()
+                ),
+                1
+            );
+        }
+        // With --force or idle state, restore succeeds
+        sb.write("f.txt", "v3\n");
+        assert_eq!(
+            run_cli_in(
+                &s(&["restore", "1", "--force", "-w", "%1"]),
+                |_| Some(sb.open()),
+                String::new,
+                |_| "working".into()
+            ),
+            0
+        );
+        assert_eq!(sb.read("f.txt").as_deref(), Some("v2\n"));
+        assert_eq!(
+            run_cli_in(
+                &s(&["restore", "99", "-w", "%1"]),
+                |_| Some(sb.open()),
+                String::new,
+                |_| "idle".into()
+            ),
+            1
+        );
+        assert_eq!(
+            run_cli_in(
+                &s(&["bogus", "-w", "%1"]),
+                |_| Some(sb.open()),
+                String::new,
+                |_| String::new()
+            ),
+            1
+        );
     }
 }

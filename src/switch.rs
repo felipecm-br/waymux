@@ -118,7 +118,7 @@ impl Row {
     }
 
     /// The plain label (menu matching and `--peek`) and its colored form.
-    fn labels(&self, icon: &str) -> (String, String) {
+    pub(crate) fn labels(&self, icon: &str) -> (String, String) {
         if let Some((head, text)) = &self.label {
             return (
                 format!(" {head}{text}"),
@@ -374,7 +374,11 @@ fn hook_menu(cmd: &str, process: &str, pane: &str, plain: &[String]) -> Option<M
         let _ = stdin.write_all(plain.join("\n").as_bytes());
     }
     let out = child.wait_with_output().ok()?;
-    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
+    parse_hook_menu(&out.stdout, process)
+}
+
+pub(crate) fn parse_hook_menu(bytes: &[u8], process: &str) -> Option<Menu> {
+    let v: Value = serde_json::from_slice(bytes).ok()?;
     let rows: Vec<Row> = serde_json::from_value(v["rows"].clone()).ok()?;
     Some(Menu {
         agent: v["agent"].as_str().unwrap_or(process).to_string(),
@@ -530,7 +534,7 @@ fn wm_bin() -> Option<std::path::PathBuf> {
 }
 
 /// The effort the agent runs at now: its marked effort row.
-fn current_effort(menu: &Menu) -> Option<String> {
+pub(crate) fn current_effort(menu: &Menu) -> Option<String> {
     menu.rows
         .iter()
         .find(|r| r.kind == "effort" && r.active)
@@ -540,7 +544,7 @@ fn current_effort(menu: &Menu) -> Option<String> {
 /// The rows the menu shows: an agent whose effort the footer gauge steps (`Ctrl+H` / `Ctrl+L`),
 /// through its flag levels or its rows' own `efforts`, shows its models only; the others keep
 /// their effort rows.
-fn menu_rows(menu: &Menu) -> Vec<&Row> {
+pub(crate) fn menu_rows(menu: &Menu) -> Vec<&Row> {
     let gauge = !crate::launch::effort::levels_for(&menu.agent).is_empty()
         || menu.rows.iter().any(|r| !r.efforts.is_empty());
     menu.rows
@@ -896,6 +900,44 @@ mod tests {
             2,
             "agents without the flag keep effort rows"
         );
+    }
+
+    #[test]
+    fn test_builtin_menus_devin_codex_labels_and_cli_flags() {
+        let devin = builtin_menu("devin", &[], &models(), &Value::Null);
+        assert_eq!(devin.rows.len(), 4);
+        for r in &devin.rows {
+            let (plain, col) = r.labels("D");
+            assert_eq!(strip_ansi(&col), plain);
+        }
+        let codex = builtin_menu("codex", &[], &models(), &Value::Null);
+        assert_eq!(codex.rows.len(), 1);
+        let (plain, col) = codex.rows[0].labels("X");
+        assert_eq!(strip_ansi(&col), plain);
+        let eff = Row::effort("high", "/effort high".into(), true);
+        let (e_plain, e_col) = eff.labels("C");
+        assert_eq!(strip_ansi(&e_col), e_plain);
+
+        let settings = json!({"modelSettings": {"claude-sonnet-4": {"effortLevel": "low"}}});
+        let claude = builtin_menu(
+            "claude",
+            &lines(&["Sonnet 4.5 · ctx 2%"]),
+            &models(),
+            &settings,
+        );
+        assert_eq!(claude.current, "sonnet");
+        assert_eq!(current_effort(&claude).as_deref(), Some("low"));
+        assert_eq!(
+            builtin_menu("unknown", &[], &models(), &Value::Null)
+                .rows
+                .len(),
+            0
+        );
+
+        assert_eq!(run_cli(&["--help".into()]), 0);
+        assert_eq!(run_cli(&["-t".into(), String::new()]), 1);
+        assert_eq!(run_cli(&["-t".into(), String::new(), "--agent".into()]), 1);
+        assert_eq!(run_cli(&["-t".into(), String::new(), "--peek".into()]), 1);
     }
 
     #[test]
