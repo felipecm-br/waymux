@@ -170,7 +170,7 @@ It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notif
 
 `SessionStart` leaves the pane `idle` (a fresh session waits at the prompt; `compact` is left untouched) and `UserPromptSubmit` starts the spinner. The window icon follows the agent binary running in the pane, so the agent named in the hook command only applies to unrecognized commands. Devin imports `~/.claude/settings.json` and runs Claude's hooks next to its own; state updates are idempotent and sounds fire only on transitions, so the duplicates are harmless.
 
-`Stop` reports `idle` only when the agent has nothing left running. When a Claude Code turn ends with a `run_in_background` Bash call or a Monitor still running, the pane goes `background`, with the command (`cargo test`, or `cargo test (+1 more)`) as the reason. The agent is busy and nothing waits on you: no done chime, no review-queue entry, no stall alert, and triage skips the pane. The status bar animates it with its own, slower spinner (`hexfill`, `[theme] background_spinner`), and the Cockpit shows `󰫈` with the working rows. The hook finds these as Claude Code tool shells (`~/.claude/shell-snapshots/…`) still alive under the `claude` process that ran it; the turn's own calls have already finished by then. Claude Code starts a new turn when the task exits, and that turn's `Stop` settles the state. Linux only (`/proc`); a hook run from inside a tool shell, such as a test suite under an agent, never counts its caller's tasks.
+`Stop` reports `idle` only when the agent has nothing left running. When a Claude Code turn ends with a `run_in_background` Bash call or a Monitor still running, the pane goes `background`, with the command (`cargo test`, or `cargo test (+1 more)`) as the reason. The agent is busy and nothing waits on you: no done chime, no review-queue entry, no stall alert, and triage skips the pane. The status bar animates it with its own, slower spinner (`hexfill`, `[theme] background_spinner`), and the Cockpit lists it with the working rows, animated with the same fill (the `@SLOW@` marker, which wm ≥ 0.8.0 animates through `results.slow_spinner_prefix`). The hook finds these as Claude Code tool shells (`~/.claude/shell-snapshots/…`) still alive under the `claude` process that ran it; the turn's own calls have already finished by then. Claude Code starts a new turn when the task exits, and that turn's `Stop` settles the state. Linux only (`/proc`); a hook run from inside a tool shell, such as a test suite under an agent, never counts its caller's tasks.
 
 ---
 
@@ -378,6 +378,8 @@ Four optional extension scripts are not bundled and are looked up in the same he
 | :--- | :--- |
 | Status bar never changes | `waymux doctor` (daemon and hooks rows); `waymux list` should show your pane while the agent works |
 | `waymux cockpit` does nothing | `wm` must be on `PATH` (`./install.sh --with-stack`) |
+| The Cockpit opens with an error about `slow_spinner_prefix` | `wm` is older than 0.8.0: update it (`./install.sh --with-stack`) |
+| The Cockpit lists nothing on Ubuntu 24.04 or Debian | waymux before 0.12.2 could not read tmux 3.4's escaped `list-panes` output: update waymux |
 | `waymux wt ...` prints "awt-*.sh not found" | Rerun `install.sh` to restore `~/.local/share/waymux/scripts` |
 | No sound | `doctor`'s sound row; set `[sound] player = "..."` in the config to force one |
 | `daemon already running` | Another daemon holds `$XDG_RUNTIME_DIR/waymux/waymux.pid`: `systemctl --user restart waymux` |
