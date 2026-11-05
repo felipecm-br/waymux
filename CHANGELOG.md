@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-05
+
 - **The Cockpit and prompt injection work on tmux 3.4 (`src/tmux_cmd.rs`, `src/cockpit/items.rs`, `src/inject.rs`)**: tmux 3.4 (Ubuntu 24.04, Debian) escapes its `-F` and `display -p` output, printing the 0x1f field separator as the four characters `\037` and a tab as `_`. Pane lines then had no field to split: the Cockpit listed nothing and injection found no pane. waymux now decodes that escaping when no raw separator is present, and reads the origin `session:window` instead of a tab-separated pair.
 - Tests: four `assert!(….is_empty())` in `src/hook.rs` become `assert_eq!` for clippy 1.99 (`assert_is_empty`), which CI runs.
 
