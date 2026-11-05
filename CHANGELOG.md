@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-05
+
 - **The Cockpit animates `background` rows (`src/cockpit/items.rs`, `src/presets/cockpit-picker.toml`)**: 0.12.0 listed them with a still `󰫈`, while the tmux tab animated the slow hexfill. They now carry the `@SLOW@` marker, which wm animates with its `hexfill` spinner (`results.slow_spinner_prefix`), next to the fast minidot of working rows. Needs wm ≥ 0.8.0: an older wm rejects the new preset keys and the Cockpit does not open.
 
 ## [0.12.0] - 2026-11-05
