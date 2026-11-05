@@ -170,6 +170,8 @@ It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notif
 
 `SessionStart` leaves the pane `idle` (a fresh session waits at the prompt; `compact` is left untouched) and `UserPromptSubmit` starts the spinner. The window icon follows the agent binary running in the pane, so the agent named in the hook command only applies to unrecognized commands. Devin imports `~/.claude/settings.json` and runs Claude's hooks next to its own; state updates are idempotent and sounds fire only on transitions, so the duplicates are harmless.
 
+`Stop` reports `idle` only when the agent has nothing left running. When a Claude Code turn ends with a `run_in_background` Bash call or a Monitor still running, the pane stays `working` with `background: <command>` (or `background (2): …`) as the reason: no done chime, no review-queue entry, and triage treats it as a working agent. The hook finds these as Claude Code tool shells (`~/.claude/shell-snapshots/…`) still alive under the `claude` process that ran it; the turn's own calls have already finished by then. Claude Code starts a new turn when the task exits, and that turn's `Stop` settles the state. Linux only (`/proc`); a hook run from inside a tool shell, such as a test suite under an agent, never counts its caller's tasks.
+
 ---
 
 ## 🏛️ Architecture & Ecosystem

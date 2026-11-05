@@ -450,6 +450,107 @@ fn send_acp_state(pane_id: &str, state: &str, message: Option<&str>) {
     send_acp_state_with_session(pane_id, state, message, None);
 }
 
+/// In the command line of the shell Claude Code runs every Bash call in (foreground,
+/// `run_in_background` and Monitor alike): `zsh -c source ~/.claude/shell-snapshots/…`.
+const CLAUDE_TOOL_SHELL: &str = "/.claude/shell-snapshots/";
+
+/// Longest background command kept as the `working` reason.
+const MAX_BACKGROUND_CHARS: usize = 80;
+
+/// One process: pid, parent pid and the command line with its arguments joined by spaces.
+type Proc = (u32, u32, String);
+
+/// Every process from `/proc`; empty where there is none.
+fn process_table() -> Vec<Proc> {
+    let Ok(dir) = fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    dir.filter_map(|e| {
+        let pid: u32 = e.ok()?.file_name().to_str()?.parse().ok()?;
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // The command name can hold spaces and parentheses: the parent pid is the second
+        // field after the last `)`.
+        let parent = stat
+            .rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()?;
+        let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        let cmdline = String::from_utf8_lossy(&cmdline)
+            .trim_end_matches('\0')
+            .replace('\0', " ");
+        Some((pid, parent, cmdline))
+    })
+    .collect()
+}
+
+fn is_claude_process(cmdline: &str) -> bool {
+    let argv0 = cmdline.split(' ').next().unwrap_or_default();
+    Path::new(argv0).file_name().is_some_and(|n| n == "claude")
+        || cmdline.contains("@anthropic-ai/claude-code")
+}
+
+/// The command a Claude Code tool shell runs: the `eval '…'` argument, unquoted.
+fn tool_shell_command(cmdline: &str) -> String {
+    let cmd = cmdline
+        .split_once("eval '")
+        .map_or(cmdline, |(_, rest)| {
+            rest.split_once("' < /dev/null").map_or(rest, |(c, _)| c)
+        })
+        .replace("'\\''", "'");
+    let cmd = cmd.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cmd.chars().count() > MAX_BACKGROUND_CHARS {
+        let cut: String = cmd.chars().take(MAX_BACKGROUND_CHARS - 1).collect();
+        format!("{cut}…")
+    } else {
+        cmd
+    }
+}
+
+/// Bash calls still running under the Claude Code process that ran this hook. At `Stop` the
+/// turn's own calls have returned, so whatever is left runs in the background, and Claude
+/// Code starts a new turn (ending in another `Stop`) when it exits.
+///
+/// Empty when the hook was not run by Claude Code itself: when something an agent ran (a test
+/// suite, a nested shell) calls `waymux hook`, the way up to `claude` passes through a tool
+/// shell, and that agent's background calls are not this pane's.
+fn background_commands(procs: &[Proc], hook_pid: u32) -> Vec<String> {
+    let find = |pid: u32| procs.iter().find(|p| p.0 == pid);
+    let mut cursor = hook_pid;
+    let agent = loop {
+        let Some(&(_, ppid, _)) = find(cursor) else {
+            return Vec::new();
+        };
+        if ppid <= 1 {
+            return Vec::new();
+        }
+        match find(ppid) {
+            Some((_, _, cmd)) if cmd.contains(CLAUDE_TOOL_SHELL) => return Vec::new(),
+            Some((_, _, cmd)) if is_claude_process(cmd) => break ppid,
+            Some(_) => cursor = ppid,
+            None => return Vec::new(),
+        }
+    };
+    procs
+        .iter()
+        .filter(|p| p.1 == agent && p.2.contains(CLAUDE_TOOL_SHELL))
+        .map(|p| tool_shell_command(&p.2))
+        .collect()
+}
+
+/// The `working` reason when Claude Code ends its turn with background Bash calls still
+/// running, so the pane neither chimes done nor joins triage's review queue until they exit.
+fn background_reason() -> Option<String> {
+    let cmds = background_commands(&process_table(), std::process::id());
+    let first = cmds.first()?;
+    Some(match cmds.len() {
+        1 => format!("background: {first}"),
+        n => format!("background ({n}): {first}"),
+    })
+}
+
 fn send_acp_state_with_session(
     pane_id: &str,
     state: &str,
@@ -638,7 +739,10 @@ fn run_tmux_hook(event_type: &str, agent_hint: Option<&str>) -> i32 {
         "Stop" => {
             remember_pane_tool(&tmux_pane, None);
             remember_pane_command(&tmux_pane, None);
-            send_acp_state(&tmux_pane, "idle", None);
+            match background_reason() {
+                Some(reason) => send_acp_state(&tmux_pane, "working", Some(&reason)),
+                None => send_acp_state(&tmux_pane, "idle", None),
+            }
         }
         // Claude Code fires StopFailure instead of Stop when an API error ended the turn.
         "StopFailure" => {
@@ -808,6 +912,116 @@ pub fn run_cli(args: &[String]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    fn tool_shell(cmd: &str) -> String {
+        format!(
+            "/usr/bin/zsh -c source /home/u/.claude/shell-snapshots/snapshot-zsh-1-a.sh 2>/dev/null || true && eval '{cmd}' < /dev/null && pwd -P >| /tmp/claude-571e-cwd"
+        )
+    }
+
+    /// tmux pane shell 10 > claude 20 > { hook shell 30 > waymux 31, tool shell 40 > cargo 41,
+    /// MCP server 50 }.
+    fn claude_tree(extra: &[super::Proc]) -> Vec<super::Proc> {
+        let mut procs = vec![
+            (10, 1, "-zsh".to_string()),
+            (20, 10, "claude --model opus".to_string()),
+            (30, 20, "/bin/sh -c waymux hook tmux Stop".to_string()),
+            (31, 30, "waymux hook tmux Stop".to_string()),
+            (50, 20, "node /usr/lib/mcp-server.js".to_string()),
+        ];
+        procs.extend_from_slice(extra);
+        procs
+    }
+
+    #[test]
+    fn test_background_commands_lists_tool_shells_left_under_claude() {
+        let procs = claude_tree(&[
+            (
+                40,
+                20,
+                tool_shell("cargo mutants -F \"is_invisible.*true\""),
+            ),
+            (41, 40, "cargo mutants".to_string()),
+        ]);
+        assert_eq!(
+            super::background_commands(&procs, 31),
+            vec!["cargo mutants -F \"is_invisible.*true\""]
+        );
+    }
+
+    #[test]
+    fn test_background_commands_empty_when_the_turn_left_nothing_running() {
+        assert!(super::background_commands(&claude_tree(&[]), 31).is_empty());
+    }
+
+    #[test]
+    fn test_background_commands_ignores_tool_shells_of_an_outer_agent() {
+        // Claude 20 runs inside a tool shell 15 of another Claude 5, which also has 16 running.
+        let procs = vec![
+            (5, 1, "claude".to_string()),
+            (15, 5, tool_shell("claude --model opus")),
+            (16, 5, tool_shell("sleep 300")),
+            (20, 15, "claude --model opus".to_string()),
+            (30, 20, "/bin/sh -c waymux hook tmux Stop".to_string()),
+            (31, 30, "waymux hook tmux Stop".to_string()),
+        ];
+        assert!(super::background_commands(&procs, 31).is_empty());
+    }
+
+    #[test]
+    fn test_background_commands_ignores_hooks_run_from_a_tool_shell() {
+        // `cargo test` in Claude's tool shell 40 runs `waymux hook tmux Stop` while 45 runs
+        // in the background: that hook belongs to the test's fake pane, not to this Claude.
+        let procs = claude_tree(&[
+            (40, 20, tool_shell("cargo test")),
+            (41, 40, "cargo test".to_string()),
+            (42, 41, "waymux hook tmux Stop claude".to_string()),
+            (45, 20, tool_shell("sleep 300")),
+        ]);
+        assert!(super::background_commands(&procs, 42).is_empty());
+    }
+
+    #[test]
+    fn test_background_commands_needs_a_claude_ancestor() {
+        let procs = vec![
+            (10, 1, "codex".to_string()),
+            (30, 10, "waymux hook tmux Stop".to_string()),
+            (40, 10, tool_shell("sleep 300")),
+        ];
+        assert!(super::background_commands(&procs, 30).is_empty());
+    }
+
+    #[test]
+    fn test_tool_shell_command_unquotes_and_truncates() {
+        assert_eq!(
+            super::tool_shell_command(&tool_shell("echo '\\''hi'\\''; sleep 1")),
+            "echo 'hi'; sleep 1"
+        );
+        let long = super::tool_shell_command(&tool_shell(&"x".repeat(200)));
+        assert_eq!(long.chars().count(), super::MAX_BACKGROUND_CHARS);
+        assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn test_is_claude_process_matches_native_and_npm_installs() {
+        assert!(super::is_claude_process(
+            "/home/u/.local/bin/claude --resume"
+        ));
+        assert!(super::is_claude_process(
+            "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+        ));
+        assert!(!super::is_claude_process("waymux hook tmux Stop claude"));
+    }
+
+    #[test]
+    fn test_process_table_finds_this_process_and_its_parent() {
+        let procs = super::process_table();
+        let me = std::process::id();
+        let Some(entry) = procs.iter().find(|p| p.0 == me) else {
+            return; // no /proc on this platform
+        };
+        assert_eq!(entry.1, std::os::unix::process::parent_id());
+    }
+
     #[test]
     fn test_stop_failure_names_a_usage_limit() {
         let reason = |v: serde_json::Value| stop_failure_reason(&v);
