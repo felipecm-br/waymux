@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-05
+
 - **New `background` state for an agent waiting on its own build or test run (`src/adapters/`, `src/hook.rs`, `src/api/`, `src/cockpit/items.rs`, `src/config.rs`)**: 0.11.2 kept such a pane `working`, so it looked like an agent thinking, `Prefix+I` still visited it once nothing else was waiting, and the stall detector turned a quiet wait (`sleep`, a CI watch: no output and no CPU for 20 s) into a red `stalled` alert with its bell. `Stop` now reports `background`, with the command as the reason. The stall detector, triage and the review queue skip it, focusing the pane does not dismiss it, queued prompts wait for `idle`, and its move to `idle` counts as the end of the turn (completion time, checkpoint, `agent_finished`). The status bar animates it with a second spinner, slower than the working one: `[theme] background_spinner` names one from `[spinners]`, else the built-in `hexfill`, a honeycomb cell that fills and empties every 2.5 s (`md-hexagon_slice_1..6`). The status bar sits in peripheral vision, which tells animation rates apart but not glyph shapes, so the difference is in the rate. A window with a working and a background pane shows working. The Cockpit lists it with the working rows as `󰫈`. RPC and `POST /api/status` accept `background`.
 
 ## [0.11.2] - 2026-11-05
