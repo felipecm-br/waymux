@@ -244,6 +244,178 @@ pub fn wait_cli(args: &[String]) -> i32 {
     }
 }
 
+// ───────────────────────────── goal ─────────────────────────────
+
+const GOAL_USAGE: &str =
+    "goal <pane> --check <command> [--max <rounds>] [--for <duration>] [--nudge <text>] [--json]";
+/// Lines of the failing check's output the nudge quotes.
+const GOAL_TAIL_LINES: usize = 40;
+/// How long the agent has to start working on a nudge.
+const GOAL_TAKE_SECS: u64 = 120;
+
+/// The prompt that sends the agent back to work: the check, its status and the end of its output.
+pub fn goal_nudge(
+    check: &str,
+    code: i32,
+    output: &str,
+    round: u32,
+    max: u32,
+    extra: Option<&str>,
+) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    let tail = lines[lines.len().saturating_sub(GOAL_TAIL_LINES)..].join("\n");
+    let mut text = format!(
+        "The goal is not met yet (check {round}/{max}): `{check}` exited {code}. Keep going until it passes; \
+         do not stop to ask unless you are blocked."
+    );
+    if let Some(extra) = extra {
+        text.push_str("\n\n");
+        text.push_str(extra);
+    }
+    if !tail.trim().is_empty() {
+        text.push_str("\n\nEnd of its output:\n```\n");
+        text.push_str(&tail);
+        text.push_str("\n```");
+    }
+    text
+}
+
+/// Waits for `state` on `pane`: `Ok(true)` reached, `Ok(false)` timed out, `Err` exit code.
+fn wait_for(pane: &str, state: &str, secs: u64) -> Result<bool, i32> {
+    let params =
+        serde_json::json!({ "pane_id": pane, "target_state": state, "timeout_secs": secs.max(1) });
+    match rpc_call(
+        "agentState/wait",
+        &params,
+        secs.saturating_mul(1000).saturating_add(3000),
+    ) {
+        Ok(r) => match r["status"].as_str() {
+            Some("reached") => Ok(true),
+            Some("closed") => {
+                eprintln!("waymux goal: {pane} closed");
+                Err(exit::FAILURE)
+            }
+            _ => Ok(false),
+        },
+        Err(CallError::Unreachable) => Err(unreachable("goal")),
+        Err(CallError::Rejected(reason)) => {
+            eprintln!("waymux goal: {reason}");
+            Err(exit::FAILURE)
+        }
+    }
+}
+
+/// `waymux goal`: `/goal` for any agent. Each time the pane's agent comes to rest, runs the
+/// check in the pane's directory; while it fails, queues a nudge with the end of its output and
+/// waits for the next rest. Exit 0 once the check passes, 1 after `--max` failed checks (5), a
+/// round longer than `--for` (30m), or a nudge the agent did not take.
+pub fn goal_cli(args: &[String]) -> i32 {
+    let (mut target, mut check, mut max, mut limit, mut nudge, mut json) =
+        (None, None, 5u32, Duration::from_secs(30 * 60), None, false);
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        if arg == "--json" {
+            json = true;
+        } else if let Some(v) = flag_value(arg, "--check", &mut it) {
+            match v {
+                Some(v) if !v.trim().is_empty() => check = Some(v.to_string()),
+                _ => return usage(GOAL_USAGE),
+            }
+        } else if let Some(v) = flag_value(arg, "--max", &mut it) {
+            match v.and_then(|v| v.parse::<u32>().ok()).filter(|n| *n > 0) {
+                Some(n) => max = n,
+                None => return usage(GOAL_USAGE),
+            }
+        } else if let Some(v) = flag_value(arg, "--for", &mut it) {
+            match v.and_then(parse_duration) {
+                Some(d) => limit = d,
+                None => return usage(GOAL_USAGE),
+            }
+        } else if let Some(v) = flag_value(arg, "--nudge", &mut it) {
+            match v {
+                Some(v) => nudge = Some(v.to_string()),
+                None => return usage(GOAL_USAGE),
+            }
+        } else if target.is_none() && !arg.starts_with('-') {
+            target = Some(arg.as_str());
+        } else {
+            return usage(GOAL_USAGE);
+        }
+    }
+    let (Some(target), Some(check)) = (target, check) else {
+        return usage(GOAL_USAGE);
+    };
+    let pane = match pane_or_exit("goal", target) {
+        Ok(pane) => pane,
+        Err(code) => return code,
+    };
+    let dir = crate::checkpoint::pane_dir(&pane).unwrap_or_else(|| PathBuf::from("."));
+    let finish = |status: &str, rounds: u32, code: i32| {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({ "pane_id": pane, "status": status, "checks": rounds })
+            );
+        }
+        code
+    };
+    for round in 1..=max {
+        match wait_for(&pane, "idle", limit.as_secs()) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!("waymux goal: {pane} still busy after {}s", limit.as_secs());
+                return finish("timeout", round - 1, exit::FAILURE);
+            }
+            Err(code) => return finish("error", round - 1, code),
+        }
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{check} 2>&1"))
+            .current_dir(&dir)
+            .stdin(std::process::Stdio::null())
+            .output();
+        let (code, output) = match out {
+            Ok(o) => (
+                o.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&o.stdout).to_string(),
+            ),
+            Err(e) => (-1, e.to_string()),
+        };
+        if code == 0 {
+            if !json {
+                println!("󰄬 Goal met on {pane}: `{check}` passed (check {round})");
+            }
+            return finish("met", round, exit::OK);
+        }
+        if round == max {
+            eprintln!("waymux goal: `{check}` still fails (exit {code}) after {max} checks");
+            return finish("gave_up", round, exit::FAILURE);
+        }
+        let text = goal_nudge(&check, code, &output, round, max, nudge.as_deref());
+        let sent = crate::delivery::dispatch_prompt(&pane, &text, "goal");
+        if !json {
+            println!(
+                "󰇮 Check {round}/{max} failed (exit {code}): {}",
+                sent.message(&pane)
+            );
+        }
+        if matches!(sent, crate::delivery::Dispatch::Refused(_)) {
+            return finish("refused", round, exit::FAILURE);
+        }
+        match wait_for(&pane, "working", GOAL_TAKE_SECS) {
+            Ok(true) => {}
+            Ok(false) => {
+                eprintln!(
+                    "waymux goal: {pane} did not take the nudge in {GOAL_TAKE_SECS}s (waymux queue ls)"
+                );
+                return finish("not_taken", round, exit::FAILURE);
+            }
+            Err(code) => return finish("error", round, code),
+        }
+    }
+    finish("gave_up", max, exit::FAILURE)
+}
+
 // ───────────────────────────── events ─────────────────────────────
 
 const EVENTS_USAGE: &str =
@@ -537,6 +709,16 @@ pub const METHODS: &[MethodSpec] = &[
         "queue/cancel",
         &["pane_id", "id?"],
         "Drop one queued prompt, or all of a pane's",
+    ),
+    method(
+        "queue/edit",
+        &["pane_id", "id", "text"],
+        "Replace the text of a prompt not typed yet",
+    ),
+    method(
+        "queue/send",
+        &["pane_id", "id?"],
+        "Type a queued prompt now, over a draft hold (next, when the agent is busy)",
     ),
     method(
         "approval/hold",
@@ -1190,6 +1372,47 @@ mod tests {
             report_message(None, Some("build")).as_deref(),
             Some("build")
         );
+    }
+
+    #[test]
+    fn test_goal_nudge_quotes_the_check_and_the_tail_only() {
+        let out = (1..=100)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let text = goal_nudge(
+            "cargo test",
+            101,
+            &out,
+            2,
+            5,
+            Some("Fix the flaky test first."),
+        );
+        assert!(text.starts_with("The goal is not met yet (check 2/5): `cargo test` exited 101."));
+        assert!(text.contains("Fix the flaky test first."));
+        assert!(
+            text.contains("line 100") && text.contains("line 61") && !text.contains("line 60\n")
+        );
+        assert!(!goal_nudge("make", 1, "  \n", 1, 1, None).contains("End of its output"));
+    }
+
+    #[test]
+    fn test_goal_rejects_bad_arguments_before_any_call() {
+        assert_eq!(
+            goal_cli(&strings(&["%1"])),
+            exit::USAGE,
+            "--check is required"
+        );
+        assert_eq!(goal_cli(&strings(&["%1", "--check", " "])), exit::USAGE);
+        assert_eq!(
+            goal_cli(&strings(&["%1", "--check", "true", "--max", "0"])),
+            exit::USAGE
+        );
+        assert_eq!(
+            goal_cli(&strings(&["%1", "--check", "true", "--for", "soon"])),
+            exit::USAGE
+        );
+        assert_eq!(goal_cli(&strings(&["--check", "true"])), exit::USAGE);
     }
 
     #[test]

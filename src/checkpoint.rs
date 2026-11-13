@@ -419,20 +419,23 @@ fn current_pane() -> String {
     std::env::var("TMUX_PANE").unwrap_or_default()
 }
 
-/// `waymux checkpoint <list|diff N|restore N [--force]> [-w <pane>]`
+/// `waymux checkpoint <list [--time]|diff N|restore N [--force]> [-w <pane>]`
 pub fn run_cli(args: &[String]) -> i32 {
     let mut pane = current_pane();
     let mut force = false;
+    let mut time = false;
     let mut rest = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "-w" | "--pane" => pane = it.next().cloned().unwrap_or_default(),
             "--force" | "-f" => force = true,
+            "--time" | "-t" => time = true,
             _ => rest.push(a.as_str()),
         }
     }
-    let usage = "Usage: waymux checkpoint <list | diff <n> | restore <n> [--force]> [-w <pane>]";
+    let usage =
+        "Usage: waymux checkpoint <list [--time] | diff <n> | restore <n> [--force]> [-w <pane>]";
     if pane.is_empty() {
         eprintln!("{usage}\n(no pane: pass -w <pane> outside tmux)");
         return 1;
@@ -449,12 +452,13 @@ pub fn run_cli(args: &[String]) -> i32 {
                 println!("No checkpoints for {pane} in {}", repo.top.display());
             }
             for c in list {
-                println!(
-                    "{}\t{}\t{}",
-                    c.n,
-                    &c.commit[..c.commit.len().min(10)],
-                    c.subject
-                );
+                let short = &c.commit[..c.commit.len().min(10)];
+                // --time: the unix time the turn ended, before the subject (pickers show the age)
+                if time {
+                    println!("{}\t{short}\t{}\t{}", c.n, c.time, c.subject);
+                } else {
+                    println!("{}\t{short}\t{}", c.n, c.subject);
+                }
             }
             0
         }

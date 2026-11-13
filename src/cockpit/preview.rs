@@ -32,16 +32,62 @@ fn risk_banner(pane_id: &str) -> Option<String> {
     Some(format!("󰳌 risky: {} · y twice to allow", rules.join(", ")))
 }
 
-/// What the agent did since you last focused its pane, once you have been away a while.
-fn recap(pane_id: &str) -> Option<String> {
-    let res = crate::rpc_client::rpc_call(
+/// What the agent did since you last focused its pane (once you have been away a while) and
+/// what its last turn did.
+fn recap(pane_id: &str) -> Vec<String> {
+    let Ok(res) = crate::rpc_client::rpc_call(
         "agent/recap",
         &serde_json::json!({ "pane_id": pane_id }),
         150,
-    )
-    .ok()?;
-    let activity: crate::activity::Activity = serde_json::from_value(res).ok()?;
-    crate::activity::recap_line(&activity, crate::sys::unix_ms())
+    ) else {
+        return Vec::new();
+    };
+    let Ok(activity) = serde_json::from_value::<crate::activity::Activity>(res) else {
+        return Vec::new();
+    };
+    let now = crate::sys::unix_ms();
+    [
+        crate::activity::recap_line(&activity, now),
+        crate::activity::last_turn_line(&activity, now),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// The prompts waiting in the pane's delivery queue, one short line each.
+fn queued(pane_id: &str) -> Vec<String> {
+    let Ok(res) = crate::rpc_client::rpc_call(
+        "queue/list",
+        &serde_json::json!({ "pane_id": pane_id }),
+        150,
+    ) else {
+        return Vec::new();
+    };
+    queue_lines(&res, pane_id)
+}
+
+fn queue_lines(res: &serde_json::Value, pane_id: &str) -> Vec<String> {
+    let items = res[pane_id].as_array().cloned().unwrap_or_default();
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![format!("󰇮 {} queued (Prompt Stash · Tab):", items.len())];
+    for item in items.iter().take(3) {
+        let text = item["text"].as_str().unwrap_or("");
+        let first: String = text.lines().next().unwrap_or("").chars().take(60).collect();
+        let status = match item["status"].as_str().unwrap_or("") {
+            "held" => " · held: draft in the prompt",
+            "stalled" => " · stalled",
+            "typed" => " · typed",
+            _ => "",
+        };
+        out.push(format!("  {} {first}{status}", item["id"]));
+    }
+    if items.len() > 3 {
+        out.push(format!("  +{} more", items.len() - 3));
+    }
+    out
 }
 
 pub fn run_cli(args: &[String]) -> i32 {
@@ -90,8 +136,15 @@ pub fn run_cli(args: &[String]) -> i32 {
     if let Some(banner) = risk_banner(&pane_id) {
         let _ = writeln!(out, "{}{BOLD}{banner}{RESET}\n", theme.c_error);
     }
-    if let Some(recap) = recap(&pane_id) {
-        let _ = writeln!(out, "{c_gray}{recap}{RESET}\n");
+    let header: Vec<String> = recap(&pane_id)
+        .into_iter()
+        .chain(queued(&pane_id))
+        .collect();
+    if !header.is_empty() {
+        for line in &header {
+            let _ = writeln!(out, "{c_gray}{line}{RESET}");
+        }
+        out.push('\n');
     }
     let lines: Vec<&str> = raw_terminal.lines().collect();
     if let Some(last_non_empty) = lines.iter().rposition(|l| !l.trim().is_empty()) {
@@ -111,4 +164,25 @@ pub fn run_cli(args: &[String]) -> i32 {
 
     print!("{out}");
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_queue_lines_show_count_status_and_cap() {
+        let res = serde_json::json!({ "%1": [
+            { "id": 4, "text": "first line\nsecond", "status": "held" },
+            { "id": 5, "text": "b", "status": "queued" },
+            { "id": 6, "text": "c", "status": "stalled" },
+            { "id": 7, "text": "d", "status": "queued" },
+        ]});
+        let lines = queue_lines(&res, "%1");
+        assert_eq!(lines[0], "󰇮 4 queued (Prompt Stash · Tab):");
+        assert_eq!(lines[1], "  4 first line · held: draft in the prompt");
+        assert_eq!(lines[3], "  6 c · stalled");
+        assert_eq!(lines.last().unwrap(), "  +1 more");
+        assert!(queue_lines(&res, "%2").is_empty());
+    }
 }

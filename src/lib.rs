@@ -115,6 +115,12 @@ const COMMANDS: &[CommandSpec] = &[
         plumbing: false,
     },
     CommandSpec {
+        name: "goal",
+        usage: "goal <pane> --check <command> [--max <rounds>] [--for <duration>] [--nudge <text>] [--json]",
+        about: "Keep an agent going until a check command passes (/goal for any agent)",
+        plumbing: false,
+    },
+    CommandSpec {
         name: "wait",
         usage: "wait <pane> [--state <state>] [--for <duration>] [--json]",
         about: "Block until a pane's agent is idle (or in --state); exit 1 when the time runs out",
@@ -152,8 +158,8 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         name: "queue",
-        usage: "queue <add <pane_id> <text> | ls [pane_id] | rm <pane_id> [id]>",
-        about: "List, add or drop prompts held until an agent is at rest",
+        usage: "queue <add <pane_id> <text> | ls [pane_id] | rm <pane_id> [id] | edit <pane_id> <id> <text|-> | send <pane_id> [id]>",
+        about: "List, add, edit, send now or drop prompts held until an agent is at rest",
         plumbing: false,
     },
     CommandSpec {
@@ -176,7 +182,7 @@ const COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         name: "checkpoint",
-        usage: "checkpoint <list | diff <n> | restore <n> [--force]> [-w <pane>]",
+        usage: "checkpoint <list [--time] | diff <n> | restore <n> [--force]> [-w <pane>]",
         about: "List, diff or restore the work tree an agent turn left",
         plumbing: false,
     },
@@ -287,7 +293,7 @@ OPTIONS:\n    \
         println!("    {:<16} {}", c.name, c.about);
     }
     println!(
-        "\nEXIT STATUS (run, wait, events, report, api):\n    \
+        "\nEXIT STATUS (run, wait, goal, events, report, api):\n    \
 0 success · 1 failure or timeout · 2 usage · 3 no such pane or method, or ambiguous · \
 4 daemon unreachable\n    `run --wait` exits with the command's own status."
     );
@@ -394,6 +400,7 @@ pub fn entry() -> anyhow::Result<()> {
         "queue" => Some(delivery::run_cli(&args[2..])),
         "run" => Some(verbs::run_cli(&args[2..])),
         "wait" => Some(verbs::wait_cli(&args[2..])),
+        "goal" => Some(verbs::goal_cli(&args[2..])),
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),

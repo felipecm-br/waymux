@@ -124,8 +124,9 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux events [--json] [--pane <pane>] [--for <dur>] [--interval <dur>]` | Print one line per agent state change, starting with the state each pane is in: TSV (`ts`, `pane`, `state`, `previous`, `message`) or NDJSON |
 | `waymux report <state> [--pane <pane>] [--msg <text>] [--progress <0-100>]` | Report a state for this pane from any script, so a long build shows in the status bar, the Cockpit and `wait` like an agent |
 | `waymux api <list\|describe <method>\|call <method> [<json>\|@<file>\|-]> [--json]` | List or describe the JSON-RPC methods (answered without the daemon), or call one without writing the HTTP request |
-| `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
-| `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
+| `waymux goal <pane> --check <command> [--max <rounds>] [--for <dur>] [--nudge <text>] [--json]` | `/goal` for any agent: each time the agent rests, run the check in the pane's directory; while it fails, queue a nudge quoting the end of its output. Exit `0` once it passes, `1` after `--max` (5) failed checks, a round longer than `--for` (30 minutes), or a nudge the agent did not take |
+| `waymux checkpoint <list [--time]\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List (`--time`: with the unix time each turn ended) what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
+| `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]\|edit <pane> <id> <text\|->\|send <pane> [id]>` | Add, list, edit or drop prompts the daemon holds until the agent is at rest, or `send` one now over a draft hold (see [Delivery queue](#delivery-queue)) |
 | `waymux phone-token [--prompt] [--rotate] [--url]` | Print the phone page's token, the link that pairs a phone, or replace it to unpair every phone; `--prompt` handles the second token, which may also type prompts (see [Phone](#phone)) |
 | `waymux phone-alert` | Send a test alert to the `[phone]` ntfy topic |
 | `waymux wt <subcommand>` | Git worktree orchestrator (`-c`/`new`, `<branch>`, `rm`, `rebase`, `ship`, `pr`, `clone`, `sweep`, `reap`, `popup`; `wt --help`) |
@@ -286,6 +287,7 @@ At the end of every agent turn (`working` → `idle`, `permission` or `question`
 
 ```bash
 waymux checkpoint list              # one row per saved turn of this pane ($TMUX_PANE), or -w %12
+waymux checkpoint list --time       # n, commit, unix time the turn ended, subject
 waymux checkpoint diff 2            # what turn 2 changed
 waymux checkpoint restore 1         # files back as turn 1 left them; prints how to undo
 ```
@@ -305,6 +307,8 @@ With `[approvals] enabled = true` in `config.toml` (`hold_seconds`, 10 to 300, d
 
 The daemon counts, per pane, finished turns (working for at least 5 s, then idle), files edited (`Edit`, `Write`, ...), shell commands and the last test command (`cargo test`, `pytest`, `go test`, ...), from the hook's tool summaries. Focusing the pane (`pane-focus-in` → `waymux dismiss`) starts the count again. Once you have been away from a pane for 10 minutes, the Cockpit preview opens with one muted line: `󰋚 Since you last looked (42m): 3 turns · 6 files: retry.rs, retry_test.rs +4 · 11 commands · tests: cargo test`.
 
+Every finished turn also leaves a summary of that turn alone, which the preview always shows once there is one, focus or not: `󰄬 Last turn (3m ago, worked 2m): 2 files: retry.rs, retry_test.rs · 4 commands · last: cargo test --lib`. Prompts waiting in the pane's [delivery queue](#delivery-queue) follow, one line each with their status.
+
 ### Alert bursts
 
 Blocking alerts (permission, question, stalled, error) within 1.5 s of each other play one sound, and status-bar alerts within 2 s share one line (`3 agents need you › 3:api, 4:web and 5:docs`). A line is cleared by the timer of its latest alert only.
@@ -315,7 +319,10 @@ Blocking alerts (permission, question, stalled, error) within 1.5 s of each othe
 
 - the pane is `idle` from the agent itself (a pane with no agent state is typed into at once, as before; the `idle` that focusing a pane sets to clear a prompt badge does not count, since the agent may still be on its prompt), and
 - it has stayed idle, with no state change, for 1 s, so a flicker to idle between two tool calls does not count, and
-- the previous prompt was taken: one prompt per rest.
+- the previous prompt was taken: one prompt per rest, and
+- the agent's composer is empty. A prompt is never typed into a half-written one: when the last screen lines show text after the prompt marker (`❯`, `›`, `>`) that is not a dim placeholder, the head is marked `held`, a tmux message says so once, and the composer is checked again every 1.5 s while the pane rests (up to 10 minutes; a state change starts over). Sending the draft (the agent works, then rests) or stashing it lets the prompt go; `waymux queue send <pane> [id]` (`queue/send`) types it at once over the hold, moving it to the front.
+
+`waymux queue edit <pane> <id> <text|->` (`queue/edit`) replaces the text of a prompt not typed yet.
 
 A typed prompt stays at the head until the pane shows `working`. One the agent does not take within 5 s is marked `stalled`, never typed again, and announced with a tmux message; it holds the prompts behind it until the pane next works or `waymux queue rm <pane> <id>` drops it. A queue holds 8 prompts of at most 16 KiB each (`queue_full`, `too_large`), lives in daemon memory only, and is dropped when the pane closes.
 

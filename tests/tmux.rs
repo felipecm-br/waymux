@@ -650,3 +650,87 @@ fn run_places_a_split_or_a_named_window_and_resolves_names() {
     assert_eq!(out.status.code(), Some(3));
     assert!(String::from_utf8_lossy(&out.stderr).contains("no pane matches 'nope'"));
 }
+
+/// A daemon on its own port for `env`, with the config it needs; killed on drop.
+struct TestDaemon(std::process::Child);
+
+impl Drop for TestDaemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn start_daemon(env: &common::Env, port: u16) -> Option<TestDaemon> {
+    let config = env.dir.join("config.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "listen_addr = \"127.0.0.1\"\nport = {port}\npid_file = \"{}\"\nshutdown_timeout_secs = 1\nidle_debounce_ms = 0\n\n[sound]\nenabled = false\n",
+            env.dir.join("waymux.pid").display()
+        ),
+    )
+    .unwrap();
+    let child = env
+        .command(&["daemon", "--config", &config.display().to_string()])
+        .env("WAYMUX_PORT", port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let daemon = TestDaemon(child);
+    let up = eventually(|| {
+        env.command(&["health"])
+            .env("WAYMUX_PORT", port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    });
+    up.then_some(daemon)
+}
+
+#[test]
+fn queue_holds_a_prompt_while_the_user_has_a_draft_and_send_forces_it() {
+    let env = Env::new();
+    let input = fake_agent(&env, "claude", "  Opus 5.5\\n❯ half typed");
+    let Some(tmux) = env.tmux(&env.dir.join("bin/claude").display().to_string()) else {
+        eprintln!("tmux not installed; skipping");
+        return;
+    };
+    let pane = first_pane(&tmux);
+    let port = common::unused_port();
+    let Some(_daemon) = start_daemon(&env, port) else {
+        panic!("daemon did not start");
+    };
+    let wm = |args: &[&str]| {
+        let out = env
+            .command(args)
+            .env("WAYMUX_PORT", port.to_string())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    wm(&[
+        "api",
+        "call",
+        "agentState/update",
+        &format!(r#"{{"pane_id":"{pane}","state":"idle"}}"#),
+    ]);
+    wm(&["queue", "add", &pane, "queued note"]);
+
+    // At rest, but the composer holds a draft: held, nothing typed.
+    assert!(
+        eventually(|| wm(&["queue", "ls", &pane]).contains("\theld\t")),
+        "{}",
+        wm(&["queue", "ls", &pane])
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1800));
+    assert!(!input.exists(), "typed over the user's draft");
+
+    // send: typed now, over the hold.
+    wm(&["queue", "send", &pane]);
+    assert!(eventually(|| std::fs::read_to_string(&input)
+        .unwrap_or_default()
+        .contains("queued note")));
+}

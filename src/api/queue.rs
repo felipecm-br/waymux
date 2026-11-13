@@ -9,6 +9,10 @@
 //! the agent does not take within the stall window is marked `stalled` and never typed again,
 //! so text is never typed twice; it holds the ones behind it until the pane next works or the
 //! user drops it with `waymux queue rm`.
+//!
+//! A prompt is never typed into a half-written one: when the pane's composer holds a draft at
+//! delivery time, the head is `held` and checked again while the pane rests. Sending or stashing
+//! the draft lets it go; `queue/send` types it at once over the hold.
 
 use super::state::ApiState;
 use crate::adapters::AgentState;
@@ -22,13 +26,26 @@ pub const REST_MS: u64 = 1000;
 pub const STALL_MS: u64 = 5000;
 pub const MAX_ITEMS: usize = 8;
 pub const MAX_BYTES: usize = 16 * 1024;
+/// How often a held head looks at the composer again while the pane stays at rest.
+pub const HOLD_POLL_MS: u64 = 1500;
+/// Checks per rest before a held head waits for the next state change instead (10 minutes).
+pub const HOLD_MAX_POLLS: u32 = 400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ItemStatus {
     Queued,
+    /// Waiting: the user has a draft in the composer.
+    Held,
     Typed,
     Stalled,
+}
+
+impl ItemStatus {
+    /// Not typed yet: may be delivered, edited, sent now or dropped.
+    pub fn waiting(self) -> bool {
+        matches!(self, ItemStatus::Queued | ItemStatus::Held)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +55,9 @@ pub struct QueueItem {
     pub by: String,
     pub status: ItemStatus,
     pub queued_at: u64,
+    /// `queue/send`: typed over a draft hold.
+    #[serde(skip)]
+    pub force: bool,
 }
 
 #[derive(Debug, Default)]
@@ -46,6 +66,8 @@ pub struct PaneQueue {
     /// The pane state seq a delivery is already scheduled for (0 for a pane with no agent
     /// state; seqs start at 1), so a burst of updates schedules one delivery.
     scheduled: Option<u64>,
+    /// Composer checks the held head has made in this rest.
+    held_polls: u32,
 }
 
 pub type Queues = HashMap<String, PaneQueue>;
@@ -55,6 +77,8 @@ pub enum PushError {
     Empty,
     TooLarge,
     Full,
+    /// No waiting item with that id (typed, stalled or gone).
+    NotFound,
 }
 
 impl PushError {
@@ -63,6 +87,7 @@ impl PushError {
             PushError::Empty => "empty",
             PushError::TooLarge => "too_large",
             PushError::Full => "queue_full",
+            PushError::NotFound => "not_found",
         }
     }
 }
@@ -104,6 +129,7 @@ pub async fn push(
             by: by.to_string(),
             status: ItemStatus::Queued,
             queued_at: crate::sys::unix_ms(),
+            force: false,
         });
         queue.items.len()
     };
@@ -124,10 +150,7 @@ pub async fn cancel(state: &ApiState, pane_id: &str, id: Option<u64>) -> usize {
                 .items
                 .iter()
                 .position(|i| i.id == id && i.status != ItemStatus::Typed),
-            None => queue
-                .items
-                .iter()
-                .rposition(|i| i.status == ItemStatus::Queued),
+            None => queue.items.iter().rposition(|i| i.status.waiting()),
         };
         let dropped = pos.and_then(|p| queue.items.remove(p)).is_some();
         if queue.items.is_empty() {
@@ -139,6 +162,66 @@ pub async fn cancel(state: &ApiState, pane_id: &str, id: Option<u64>) -> usize {
         kick(state, pane_id).await;
     }
     dropped
+}
+
+/// Replaces the text of a prompt not typed yet.
+pub async fn edit(state: &ApiState, pane_id: &str, id: u64, text: &str) -> Result<(), PushError> {
+    if text.trim().is_empty() {
+        return Err(PushError::Empty);
+    }
+    if text.len() > MAX_BYTES {
+        return Err(PushError::TooLarge);
+    }
+    let mut queues = state.queues.lock().await;
+    let item = queues
+        .get_mut(pane_id)
+        .and_then(|q| {
+            q.items
+                .iter_mut()
+                .find(|i| i.id == id && i.status.waiting())
+        })
+        .ok_or(PushError::NotFound)?;
+    item.text = text.to_string();
+    Ok(())
+}
+
+/// Moves a waiting prompt (`id`, else the head) to the front and types it over any draft hold:
+/// at once when the pane is at rest (`true`), else as soon as it is (`false`). Never ahead of a
+/// prompt being typed.
+pub async fn send_now(state: &ApiState, pane_id: &str, id: Option<u64>) -> Result<bool, PushError> {
+    let (seq, ready) = {
+        let states = state.pane_states.lock().await;
+        match states.get(pane_id) {
+            Some(info) => (Some(info.seq_id), info.at_rest()),
+            None => (None, true),
+        }
+    };
+    {
+        let mut queues = state.queues.lock().await;
+        let queue = queues.get_mut(pane_id).ok_or(PushError::NotFound)?;
+        if queue.items.front().is_some_and(|i| !i.status.waiting()) {
+            return Err(PushError::NotFound);
+        }
+        let pos = match id {
+            Some(id) => queue
+                .items
+                .iter()
+                .position(|i| i.id == id && i.status.waiting()),
+            None => (!queue.items.is_empty()).then_some(0),
+        }
+        .ok_or(PushError::NotFound)?;
+        let mut item = queue.items.remove(pos).ok_or(PushError::NotFound)?;
+        item.force = true;
+        item.status = ItemStatus::Queued;
+        queue.items.push_front(item);
+        if ready {
+            queue.scheduled = Some(seq.unwrap_or(0));
+        }
+    }
+    if ready {
+        deliver(state, pane_id, seq).await;
+    }
+    Ok(ready)
 }
 
 pub async fn list(state: &ApiState, pane_id: Option<&str>) -> serde_json::Value {
@@ -174,11 +257,7 @@ pub async fn on_state(state: &ApiState, pane_id: &str, new_state: &AgentState) {
             if let Some(queue) = queues.get_mut(pane_id) {
                 // The agent took the typed prompt (or, for a stalled one, took it late or the
                 // user dealt with the pane).
-                if queue
-                    .items
-                    .front()
-                    .is_some_and(|i| i.status != ItemStatus::Queued)
-                {
+                if queue.items.front().is_some_and(|i| !i.status.waiting()) {
                     queue.items.pop_front();
                 }
                 if queue.items.is_empty() {
@@ -208,22 +287,24 @@ async fn kick(state: &ApiState, pane_id: &str) {
         let Some(queue) = queues.get_mut(pane_id) else {
             return;
         };
-        if !queue
-            .items
-            .front()
-            .is_some_and(|i| i.status == ItemStatus::Queued)
+        if !queue.items.front().is_some_and(|i| i.status.waiting())
             || queue.scheduled == Some(seq.unwrap_or(0))
         {
             return;
         }
         queue.scheduled = Some(seq.unwrap_or(0));
+        queue.held_polls = 0;
     }
     schedule(state.clone(), pane_id.to_string(), seq);
 }
 
 fn schedule(state: ApiState, pane_id: String, seq: Option<u64>) {
+    schedule_after(state, pane_id, seq, REST_MS);
+}
+
+fn schedule_after(state: ApiState, pane_id: String, seq: Option<u64>, ms: u64) {
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(REST_MS)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
         deliver(&state, &pane_id, seq).await;
     });
 }
@@ -234,7 +315,7 @@ async fn deliver(state: &ApiState, pane_id: &str, scheduled: Option<u64>) {
         states.get(pane_id).map(|i| (i.seq_id, i.at_rest()))
     };
     let resting = still_resting(scheduled, current);
-    let (id, text) = {
+    let (id, force) = {
         let mut queues = state.queues.lock().await;
         let Some(queue) = queues.get_mut(pane_id) else {
             return;
@@ -245,15 +326,42 @@ async fn deliver(state: &ApiState, pane_id: &str, scheduled: Option<u64>) {
         if !resting {
             return;
         }
-        let Some(head) = queue.items.front_mut() else {
+        let Some(head) = queue.items.front() else {
             return;
         };
-        if head.status != ItemStatus::Queued {
+        if !head.status.waiting() {
+            return;
+        }
+        (head.id, head.force)
+    };
+
+    // A hookless pane has no composer we know how to read; an agent's is checked for a draft.
+    if !force && current.is_some() {
+        let probe = state.draft_probe.clone();
+        let pane = pane_id.to_string();
+        let draft = tokio::task::spawn_blocking(move || probe(&pane))
+            .await
+            .unwrap_or(false);
+        if draft {
+            hold(state, pane_id, id, scheduled).await;
+            return;
+        }
+    }
+
+    let text = {
+        let mut queues = state.queues.lock().await;
+        let Some(head) = queues.get_mut(pane_id).and_then(|q| q.items.front_mut()) else {
+            return;
+        };
+        if head.id != id || !head.status.waiting() {
             return;
         }
         head.status = ItemStatus::Typed;
-        (head.id, head.text.clone())
+        head.text.clone()
     };
+    if let Some(queue) = state.queues.lock().await.get_mut(pane_id) {
+        queue.held_polls = 0;
+    }
 
     let pane = pane_id.to_string();
     let typed = tokio::task::spawn_blocking(move || type_prompt(&pane, &text))
@@ -288,6 +396,49 @@ async fn deliver(state: &ApiState, pane_id: &str, scheduled: Option<u64>) {
         tokio::time::sleep(std::time::Duration::from_millis(STALL_MS)).await;
         mark_stalled(&watch, &pane, id, "was typed but the agent did not take it").await;
     });
+}
+
+/// The user is mid-draft: mark the head held, say so once, and look again while the pane rests.
+/// The poll owns the rest's schedule slot, so a push or kick in the meantime does not start a
+/// second one; a state change (the user sent the draft) schedules afresh.
+async fn hold(state: &ApiState, pane_id: &str, id: u64, scheduled: Option<u64>) {
+    let first = {
+        let mut queues = state.queues.lock().await;
+        let Some(queue) = queues.get_mut(pane_id) else {
+            return;
+        };
+        let Some(head) = queue
+            .items
+            .front_mut()
+            .filter(|h| h.id == id && h.status.waiting())
+        else {
+            return;
+        };
+        head.status = ItemStatus::Held;
+        queue.held_polls += 1;
+        if queue.held_polls > HOLD_MAX_POLLS {
+            return;
+        }
+        if queue.scheduled.is_some() {
+            // A newer rest already has its own delivery.
+            return;
+        }
+        queue.scheduled = Some(scheduled.unwrap_or(0));
+        queue.held_polls == 1
+    };
+    if first {
+        tracing::info!("Queued prompt {id} for pane {pane_id} held: draft in the composer");
+        let _ = crate::tmux_cmd::async_command()
+            .args([
+                "display-message",
+                &format!(
+                    "󰇮 Prompt held for {pane_id}: you have a draft there; it goes once you send or stash it (waymux queue send {pane_id})"
+                ),
+            ])
+            .output()
+            .await;
+    }
+    schedule_after(state.clone(), pane_id.to_string(), scheduled, HOLD_POLL_MS);
 }
 
 /// Marks item `id` stalled when it is still the typed head, and tells the user.
@@ -480,6 +631,97 @@ mod tests {
         state.queues.lock().await.get_mut("%5").unwrap().items[0].status = ItemStatus::Stalled;
         assert_eq!(cancel(&state, "%5", Some(a)).await, 1);
         assert_eq!(queued_count(&state, "%5").await, 0);
+    }
+
+    fn with_draft(draft: bool) -> ApiState {
+        let mut state = ApiState::new(vec![], 0);
+        state.draft_probe = std::sync::Arc::new(move |_| draft);
+        state
+    }
+
+    #[tokio::test]
+    async fn test_draft_in_composer_holds_the_head() {
+        let state = with_draft(true);
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%8".into(), pane(AgentState::Idle, 4));
+        push(&state, "%8", "review notes", "t").await.unwrap();
+        deliver(&state, "%8", Some(4)).await;
+        let l = list(&state, Some("%8")).await;
+        assert_eq!(l["%8"][0]["status"], "held", "never typed over a draft");
+        // The hold owns the rest's slot: a second push does not schedule another delivery.
+        assert_eq!(state.queues.lock().await["%8"].scheduled, Some(4));
+        assert_eq!(state.queues.lock().await["%8"].held_polls, 1);
+        // Working (the user sent the draft) keeps the held prompt: it was never typed.
+        on_state(&state, "%8", &AgentState::Working).await;
+        assert_eq!(queued_count(&state, "%8").await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_hold_releases_when_the_composer_empties() {
+        let state = with_draft(false);
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%9".into(), pane(AgentState::Idle, 2));
+        push(&state, "%9", "go", "t").await.unwrap();
+        state.queues.lock().await.get_mut("%9").unwrap().items[0].status = ItemStatus::Held;
+        deliver(&state, "%9", Some(2)).await;
+        // Typed (tmux has no server in tests, so it is marked stalled): no longer held.
+        let l = list(&state, Some("%9")).await;
+        assert_ne!(l["%9"][0]["status"], "held");
+        assert_ne!(l["%9"][0]["status"], "queued");
+    }
+
+    #[tokio::test]
+    async fn test_send_now_moves_to_front_and_bypasses_the_hold() {
+        let state = with_draft(true);
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%10".into(), pane(AgentState::Working, 1));
+        push(&state, "%10", "a", "t").await.unwrap();
+        let (b, _) = push(&state, "%10", "b", "t").await.unwrap();
+        // Busy: b goes first, typed as soon as the agent rests, over any draft.
+        assert_eq!(send_now(&state, "%10", Some(b)).await, Ok(false));
+        let l = list(&state, Some("%10")).await;
+        assert_eq!(l["%10"][0]["text"], "b");
+        assert!(state.queues.lock().await["%10"].items[0].force);
+        // At rest: typed now even with a draft (stalled here: no tmux server).
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%10".into(), pane(AgentState::Idle, 2));
+        assert_eq!(send_now(&state, "%10", Some(b)).await, Ok(true));
+        assert_ne!(list(&state, Some("%10")).await["%10"][0]["status"], "held");
+        assert_eq!(
+            send_now(&state, "%10", Some(999)).await,
+            Err(PushError::NotFound)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edit_only_waiting_items() {
+        let state = ApiState::new(vec![], 0);
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%11".into(), pane(AgentState::Working, 1));
+        let (a, _) = push(&state, "%11", "old", "t").await.unwrap();
+        edit(&state, "%11", a, "new").await.unwrap();
+        assert_eq!(list(&state, Some("%11")).await["%11"][0]["text"], "new");
+        assert_eq!(edit(&state, "%11", a, " ").await, Err(PushError::Empty));
+        state.queues.lock().await.get_mut("%11").unwrap().items[0].status = ItemStatus::Typed;
+        assert_eq!(
+            edit(&state, "%11", a, "late").await,
+            Err(PushError::NotFound)
+        );
     }
 
     #[tokio::test]

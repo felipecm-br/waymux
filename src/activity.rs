@@ -3,6 +3,10 @@
 //! summaries (`Bash: cargo test`, `Edit: retry.rs`); focusing the pane (`agentState/dismiss`
 //! on `pane-focus-in`) starts the count again. The Cockpit preview shows it as one line once
 //! you have been away from the pane for [`AWAY_MS`].
+//!
+//! Each finished turn also leaves a [`Turn`]: the files it edited, the commands it ran and how
+//! long it worked, so the Cockpit can say in one line what the last turn did without the
+//! scrollback ([`last_turn_line`]).
 
 use crate::adapters::AgentState;
 use serde::{Deserialize, Serialize};
@@ -27,8 +31,25 @@ pub struct Activity {
     pub seen_at: u64,
     /// Epoch ms the count started (the last focus, or when the daemon first saw the pane).
     pub since: u64,
+    /// The last finished turn; kept across focus.
+    #[serde(default)]
+    pub last_turn: Option<Turn>,
     #[serde(skip)]
     working_since: Option<u64>,
+    /// The turn in progress.
+    #[serde(skip)]
+    turn: Turn,
+}
+
+/// What one turn did.
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Turn {
+    pub files: Vec<String>,
+    pub commands: u64,
+    pub last_command: Option<String>,
+    /// Epoch ms the turn ended, and how long it worked.
+    pub ended_at: u64,
+    pub worked_ms: u64,
 }
 
 fn is_shell_tool(tool: &str) -> bool {
@@ -104,23 +125,31 @@ impl Activity {
     pub fn record(&mut self, state: &AgentState, message: Option<&str>, dismissed: bool, now: u64) {
         match state {
             AgentState::Working => {
-                self.working_since.get_or_insert(now);
+                if self.working_since.is_none() {
+                    self.working_since = Some(now);
+                    self.turn = Turn::default();
+                }
                 let Some((tool, detail)) = message.and_then(|m| m.split_once(": ")) else {
                     return;
                 };
                 if is_shell_tool(tool) {
                     self.commands += 1;
+                    self.turn.commands += 1;
                     let cmd = short(detail);
                     if is_test_command(detail) {
                         self.last_test = Some(cmd.clone());
                     }
+                    self.turn.last_command = Some(cmd.clone());
                     self.last_command = Some(cmd);
-                } else if is_edit_tool(tool)
-                    && !detail.is_empty()
-                    && self.files.len() < MAX_FILES
-                    && !self.files.iter().any(|f| f == detail)
-                {
-                    self.files.push(detail.to_string());
+                } else if is_edit_tool(tool) && !detail.is_empty() {
+                    if self.files.len() < MAX_FILES && !self.files.iter().any(|f| f == detail) {
+                        self.files.push(detail.to_string());
+                    }
+                    if self.turn.files.len() < MAX_FILES
+                        && !self.turn.files.iter().any(|f| f == detail)
+                    {
+                        self.turn.files.push(detail.to_string());
+                    }
                 }
             }
             AgentState::Idle if !dismissed => {
@@ -128,6 +157,10 @@ impl Activity {
                     && now.saturating_sub(start) >= MIN_TURN_MS
                 {
                     self.turns += 1;
+                    let mut turn = std::mem::take(&mut self.turn);
+                    turn.ended_at = now;
+                    turn.worked_ms = now.saturating_sub(start);
+                    self.last_turn = Some(turn);
                 }
             }
             _ => {}
@@ -140,6 +173,8 @@ impl Activity {
             seen_at: now,
             since: now,
             working_since: self.working_since,
+            last_turn: self.last_turn.take(),
+            turn: std::mem::take(&mut self.turn),
             ..Self::default()
         };
     }
@@ -200,12 +235,89 @@ pub fn recap_line(a: &Activity, now: u64) -> Option<String> {
     Some(format!("󰋚 {head}: {}", parts.join(" · ")))
 }
 
+/// One line for the Cockpit preview: what the last finished turn did (files, commands, the
+/// last command) and when, or `None` before the first turn.
+pub fn last_turn_line(a: &Activity, now: u64) -> Option<String> {
+    let t = a.last_turn.as_ref()?;
+    let ago = match crate::cockpit::items::format_age(now.saturating_sub(t.ended_at) / 1000) {
+        a if a.is_empty() => "just now".to_string(),
+        a => format!("{a} ago"),
+    };
+    let worked = crate::cockpit::items::format_age(t.worked_ms / 1000);
+    let mut parts = Vec::new();
+    match t.files.len() {
+        0 => {}
+        n => {
+            let names = t
+                .files
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = if n > 3 {
+                format!(" +{}", n - 3)
+            } else {
+                String::new()
+            };
+            parts.push(format!(
+                "{n} file{}: {names}{more}",
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if t.commands > 0 {
+        parts.push(format!(
+            "{} command{}",
+            t.commands,
+            if t.commands == 1 { "" } else { "s" }
+        ));
+    }
+    if let Some(c) = &t.last_command {
+        parts.push(format!("last: {c}"));
+    }
+    if parts.is_empty() {
+        parts.push("no edits or commands".into());
+    }
+    Some(format!(
+        "󰄬 Last turn ({ago}, worked {worked}): {}",
+        parts.join(" · ")
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn work(a: &mut Activity, msg: &str, now: u64) {
         a.record(&AgentState::Working, Some(msg), false, now);
+    }
+
+    #[test]
+    fn test_last_turn_is_only_the_last_finished_turn_and_survives_focus() {
+        let mut a = Activity::new(0);
+        assert!(last_turn_line(&a, 0).is_none());
+        work(&mut a, "Edit: old.rs", 1_000);
+        a.record(&AgentState::Idle, None, false, 10_000);
+        work(&mut a, "Edit: retry.rs", 20_000);
+        work(&mut a, "Bash: cargo test --lib", 21_000);
+        work(&mut a, "Edit: retry.rs", 22_000);
+        a.record(&AgentState::Idle, None, false, 140_000);
+        let t = a.last_turn.clone().unwrap();
+        assert_eq!(t.files, vec!["retry.rs".to_string()]);
+        assert_eq!((t.commands, t.worked_ms), (1, 120_000));
+        a.mark_seen(150_000);
+        let line = last_turn_line(&a, 200_000).unwrap();
+        assert!(line.contains("1 file: retry.rs"), "{line}");
+        assert!(
+            line.contains("1 command · last: cargo test --lib"),
+            "{line}"
+        );
+        assert!(line.contains("worked 2m"), "{line}");
+        // A redraw blip (< MIN_TURN_MS) keeps the last real turn.
+        work(&mut a, "Edit: blip.rs", 300_000);
+        a.record(&AgentState::Idle, None, false, 301_000);
+        assert_eq!(a.last_turn.unwrap().files, vec!["retry.rs".to_string()]);
     }
 
     #[test]

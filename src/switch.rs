@@ -633,6 +633,20 @@ fn show_menu(menu: &Menu, icon: &str, cfg: &SwitchConfig) -> Option<Row> {
         .map(|i| rows[i].clone())
 }
 
+/// Whether the agent's composer in `pane` holds text the user typed and has not sent: the
+/// delivery queue holds a prompt rather than type it into a half-written one.
+pub fn composer_has_draft(pane: &str) -> bool {
+    let Some(raw) = tmux_out(&["capture-pane", "-p", "-e", "-t", pane]) else {
+        return false;
+    };
+    let lines: Vec<String> = raw
+        .lines()
+        .filter(|l| !strip_ansi(l).trim().is_empty())
+        .map(str::to_string)
+        .collect();
+    has_draft(&lines[lines.len().saturating_sub(8)..])
+}
+
 /// Whether the prompt line holds typed text: something after the marker (`❯`, `›`, `>`) that is
 /// not a dim placeholder.
 fn has_draft(lines: &[String]) -> bool {

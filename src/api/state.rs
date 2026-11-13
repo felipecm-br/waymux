@@ -36,6 +36,10 @@ pub struct StallRecord {
     pub last_activity_instant: tokio::time::Instant,
 }
 
+/// Whether a pane's composer holds an unsent draft (`crate::switch::composer_has_draft`);
+/// tests swap it for a stub.
+pub type DraftProbe = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ApiState {
     pub adapters: Arc<Vec<Box<dyn OutputAdapter>>>,
@@ -61,6 +65,8 @@ pub struct ApiState {
     pub phone_token: Arc<super::phone::PhoneToken>,
     /// The phone token that may also type prompts (see `super::phone`).
     pub phone_prompt_token: Arc<super::phone::PhoneToken>,
+    /// Draft check before the queue types into a pane.
+    pub draft_probe: DraftProbe,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -126,6 +132,7 @@ impl ApiState {
             hook_tokens: Arc::default(),
             phone_token: Arc::default(),
             phone_prompt_token: Arc::default(),
+            draft_probe: Arc::new(crate::switch::composer_has_draft),
         }
     }
 

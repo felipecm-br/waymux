@@ -180,7 +180,8 @@ fn current_pane() -> String {
     std::env::var("TMUX_PANE").unwrap_or_default()
 }
 
-/// `waymux queue add <pane> <text…> | ls [pane] | rm <pane> [id]`
+/// `waymux queue add <pane> <text…> | ls [pane] | rm <pane> [id] | edit <pane> <id> <text|-> |
+/// send <pane> [id]`
 pub fn run_cli(args: &[String]) -> i32 {
     let sub = args.first().map_or("ls", String::as_str);
     match sub {
@@ -244,8 +245,71 @@ pub fn run_cli(args: &[String]) -> i32 {
             println!("Dropped {n} queued prompt(s) for {pane}");
             i32::from(n == 0)
         }
+        "edit" => {
+            // `waymux queue edit <pane> <id> <text…|->`: `-` reads the new text from stdin
+            let pane = args.get(1).cloned().unwrap_or_default();
+            let id = args.get(2).and_then(|i| i.parse::<u64>().ok());
+            let mut text = args.get(3..).map(|a| a.join(" ")).unwrap_or_default();
+            if text == "-" {
+                use std::io::Read;
+                text.clear();
+                let _ = std::io::stdin().read_to_string(&mut text);
+            }
+            let (false, Some(id)) = (pane.is_empty(), id) else {
+                eprintln!("Usage: waymux queue edit <pane_id> <id> <text|->");
+                return 1;
+            };
+            let params =
+                serde_json::json!({ "pane_id": pane, "id": id, "text": prepare_prompt(&text) });
+            match rpc_call("queue/edit", &params, 500) {
+                Ok(_) => {
+                    println!("Edited queued prompt {id} for {pane}");
+                    0
+                }
+                Err(CallError::Rejected(code)) => {
+                    eprintln!("Not edited ({code}): only a prompt not typed yet can change");
+                    1
+                }
+                Err(CallError::Unreachable) => {
+                    eprintln!("waymux daemon is not running");
+                    1
+                }
+            }
+        }
+        "send" | "now" => {
+            // `waymux queue send <pane> [id]`: type it now, over a draft hold
+            let pane = args.get(1).cloned().unwrap_or_else(current_pane);
+            if pane.is_empty() {
+                eprintln!("Usage: waymux queue send <pane_id> [id]");
+                return 1;
+            }
+            let mut params = serde_json::json!({ "pane_id": pane });
+            if let Some(id) = args.get(2).and_then(|i| i.parse::<u64>().ok()) {
+                params["id"] = serde_json::json!(id);
+            }
+            match rpc_call("queue/send", &params, 3000) {
+                Ok(res) if res["sent"].as_bool() == Some(true) => {
+                    println!("󰇮 Typed into {pane}");
+                    0
+                }
+                Ok(_) => {
+                    println!("󰇮 Next for {pane}: typed as soon as the agent is at rest");
+                    0
+                }
+                Err(CallError::Rejected(code)) => {
+                    eprintln!("Nothing to send for {pane} ({code})");
+                    1
+                }
+                Err(CallError::Unreachable) => {
+                    eprintln!("waymux daemon is not running");
+                    1
+                }
+            }
+        }
         _ => {
-            eprintln!("Usage: waymux queue <add <pane> <text> | ls [pane] | rm <pane> [id]>");
+            eprintln!(
+                "Usage: waymux queue <add <pane> <text> | ls [pane] | rm <pane> [id] | edit <pane> <id> <text|-> | send <pane> [id]>"
+            );
             1
         }
     }

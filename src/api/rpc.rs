@@ -88,6 +88,13 @@ pub struct QueueListParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct QueueEditParams {
+    pub pane_id: String,
+    pub id: u64,
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct QueueCancelParams {
     pub pane_id: String,
     #[serde(default)]
@@ -407,6 +414,21 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
             let p: QueueCancelParams = strict(params)?;
             let dropped = super::queue::cancel(state, &p.pane_id, p.id).await;
             Ok(json!({ "dropped": dropped }))
+        }
+        "queue/edit" => {
+            let p: QueueEditParams = strict(params)?;
+            let text = crate::delivery::strip_invisible(&p.text);
+            match super::queue::edit(state, &p.pane_id, p.id, &text).await {
+                Ok(()) => Ok(json!({ "id": p.id, "edited": true })),
+                Err(e) => Err(RpcError::new(INVALID_PARAMS, e.code())),
+            }
+        }
+        "queue/send" => {
+            let p: QueueCancelParams = strict(params)?;
+            match super::queue::send_now(state, &p.pane_id, p.id).await {
+                Ok(now) => Ok(json!({ "sent": now, "status": if now { "typed" } else { "next" } })),
+                Err(e) => Err(RpcError::new(INVALID_PARAMS, e.code())),
+            }
         }
         "tmux.split_pane" => {
             let p: SplitPaneParams = strict(params)?;
