@@ -47,6 +47,12 @@ The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission
 
 - `waymux list`: TSV `pane_id  state  last_timestamp_ms`, one line per tracked pane.
 - `waymux status`: health plus the same states, human-readable.
+- `waymux run [--split below|right|left|above] [--ratio <pct>] --wait [--capture] [--for <dur>] -- <command>`: run a command in a new window (or a split of your own pane) without taking the user's focus; exits with the command's status, and `--capture` prints the last 200 lines of its screen. Without `--wait` it prints the new pane id and returns at once (a dev server: `waymux run --name server -- npm run dev`).
+- `waymux wait <pane> [--state <state>] [--for <dur>]`: block until that pane's agent is idle (exit 1 on timeout, default 5 minutes).
+- `waymux events --json [--pane <pane>] [--for <dur>]`: NDJSON of state changes (`ts`, `pane_id`, `state`, `previous`, `message`).
+- `waymux report <state> [--progress <0-100>] [--msg <text>]`: report a state for your own pane from a script.
+- `waymux api list` / `api describe <method>` / `api call <method> '<json>'`: the JSON-RPC methods of section 5 without `curl`.
+- These five share exit statuses: 0 ok, 1 failed or timed out, 2 usage, 3 no such pane or method (or an ambiguous name), 4 daemon unreachable. A `<pane>` is an id (`%12`), a tmux address (`main:2.1`) or a window name.
 - `waymux dismiss <pane_id>`: clear a permission/question/stalled/error badge back to idle.
 - `waymux inject <workspace_dir> <prompt>`: paste a multi-line prompt into the agent pane working in that directory (bracketed paste, so newlines do not submit early).
 - `waymux review-notes <count|list|send> <repo_path> [session] [idx] [pane_id]`: lazygitrs review notes from `<git-dir>/info/lines.json`; `send` pastes them to the agent.

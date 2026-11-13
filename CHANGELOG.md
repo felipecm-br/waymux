@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Verbs for agents and scripts: `run`, `wait`, `events`, `report`, `api` (`src/verbs.rs`)**: reaching the daemon from a script took a hand-written `curl` to `/rpc` with the token, and nothing returned a command's exit status. `waymux run [--window | --split <side>] [--wait] [--capture] -- <command>` starts a command in a new window or a split of the caller's pane without taking the focus and, with `--wait`, exits with the command's own status. `waymux wait <pane> [--state] [--for]` blocks on `agentState/wait`. `waymux events [--json]` prints one line per state change (TSV or NDJSON), from the daemon's list read every 250 ms. `waymux report <state> [--progress] [--msg]` lets any script show in the status bar and the Cockpit like an agent. `waymux api list | describe | call` lists the JSON-RPC methods (a unit test keeps the table equal to the dispatcher) and calls one. They share an exit-status table (`3` no such pane or method, or an ambiguous name; `4` daemon unreachable; printed by `--help`) and one way to name a pane: id, tmux address, or window name. The older commands keep their statuses.
+
 ## [0.12.2] - 2026-11-05
 
 - **The Cockpit and prompt injection work on tmux 3.4 (`src/tmux_cmd.rs`, `src/cockpit/items.rs`, `src/inject.rs`)**: tmux 3.4 (Ubuntu 24.04, Debian) escapes its `-F` and `display -p` output, printing the 0x1f field separator as the four characters `\037` and a tab as `_`. Pane lines then had no field to split: the Cockpit listed nothing and injection found no pane. waymux now decodes that escaping when no raw separator is present, and reads the origin `session:window` instead of a tab-separated pair.

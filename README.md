@@ -119,6 +119,11 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux quota statusline` | Claude Code `statusLine` command: records `rate_limits` from stdin and prints model, context and quota in one line |
 | `waymux hook <tmux\|lazygit> <Event>` | Zero-Node AI agent lifecycle hook (`PreInvocation`, `PreToolUse`, `PostToolUse`, `Stop`, `StopFailure`, `SessionEnd`) |
 | `waymux inject <workspace_dir> <prompt>` | Send a multi-line prompt to the workspace's agent pane through the delivery queue |
+| `waymux run [--window\|--split <side>] [--ratio <pct>] [-t <pane>] [--wait [--for <dur>] [--capture]] [--json] [--] <command>...` | Run a command in a new window, or a split of the caller's pane, without taking the focus, and print the new pane's id. `--wait` blocks until it ends and exits with the command's own status; `--capture` also prints the last 200 lines of its screen (see [Verbs for agents and scripts](#verbs-for-agents-and-scripts)) |
+| `waymux wait <pane> [--state <state>] [--for <dur>] [--json]` | Block until the pane's agent is `idle` (or in `--state`); exit `1` when the time (default 5 minutes) runs out or the pane closes |
+| `waymux events [--json] [--pane <pane>] [--for <dur>] [--interval <dur>]` | Print one line per agent state change, starting with the state each pane is in: TSV (`ts`, `pane`, `state`, `previous`, `message`) or NDJSON |
+| `waymux report <state> [--pane <pane>] [--msg <text>] [--progress <0-100>]` | Report a state for this pane from any script, so a long build shows in the status bar, the Cockpit and `wait` like an agent |
+| `waymux api <list\|describe <method>\|call <method> [<json>\|@<file>\|-]> [--json]` | List or describe the JSON-RPC methods (answered without the daemon), or call one without writing the HTTP request |
 | `waymux checkpoint <list\|diff <n>\|restore <n> [--force]> [-w <pane>]` | List what each agent turn left in the pane's work tree, show what turn `n` changed, or put the files back as it left them (see [Turn checkpoints](#turn-checkpoints)) |
 | `waymux queue <add <pane> <text>\|ls [pane]\|rm <pane> [id]>` | Add, list or drop prompts the daemon holds until the agent is at rest (see [Delivery queue](#delivery-queue)) |
 | `waymux phone-token [--prompt] [--rotate] [--url]` | Print the phone page's token, the link that pairs a phone, or replace it to unpair every phone; `--prompt` handles the second token, which may also type prompts (see [Phone](#phone)) |
@@ -130,6 +135,41 @@ Client commands bypass the async runtime (`--version`, `health`, `list` and `sta
 | `waymux icons [--format tsv\|sh\|tmux]` | Export the icon registry: TSV, `ICON_*` assignments to `eval`, or the `icons:` section for tmux-nerd-font-window-name |
 
 Every command accepts `--help`. Unknown commands exit `2` instead of starting the daemon. `cockpit-items`, `cockpit-preview`, `cockpit-diff`, `cockpit-help`, `agent-action`, `window-create` and `window-delete` are plumbing called by the Cockpit preset and tmux bindings.
+
+### Verbs for agents and scripts
+
+`run`, `wait`, `events`, `report` and `api` are meant to be called by an agent or a shell script, so they share one contract.
+
+**Exit status.** A script can branch on it without reading stderr:
+
+| Status | Meaning |
+| :---: | :--- |
+| `0` | Success |
+| `1` | It ran and failed: a wait timed out, the pane closed, the daemon refused the call |
+| `2` | Bad command line |
+| `3` | The target names no pane (or more than one), or no such method |
+| `4` | The daemon is not running or did not answer |
+
+`run --wait` exits with the command's own status instead. The older commands keep their statuses (`1` for a missing daemon).
+
+**Targets.** A `<pane>` is a pane id (`%12`), a tmux address (`main:2.1`, or `main:2` for the window's active pane), or a window name, compared without case. A name two windows share is refused with `3` and the candidates, never guessed.
+
+```bash
+# Run the tests in a split under this pane and branch on the result; the focus stays put.
+waymux run --split below --ratio 30 --wait --capture -- cargo test || echo "tests failed"
+
+# Ask a second agent for a review, then wait for it (the queue never types into a busy agent).
+waymux queue add %7 "Review the last commit in ~/src/api"
+waymux wait %7 --for 10m && waymux api call agent/recap '{"pane_id":"%7"}'
+
+# React to agents that need you.
+waymux events --json | jq -c 'select(.state == "permission" or .state == "awaiting_input")'
+
+# Show a long job in the status bar and the Cockpit, like an agent.
+waymux report working --progress 40 --msg "migrating"; ./migrate.sh; waymux report idle
+```
+
+`run` opens a window next to the caller's (`$TMUX_PANE`, or `-t`), or splits that pane with `--split right|left|below|above`; it never moves the focus unless `--focus` is given. One word after the flags is a shell snippet (`'make && make test'`); several are a command and its arguments. `events` reads the daemon's list on an interval (250 ms by default), so two changes inside one interval show as one.
 
 ---
 
