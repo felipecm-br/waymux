@@ -55,6 +55,7 @@
   - `render.rs`: `--json`, `--badge`, `--badge-min`, `--line`, the plain report and the `--visual` gauges.
   - `popup.rs`: `--popup` (tmux popup, raw-mode key loop, `[quota] launch` / `pick`).
 - `src/triage.rs`: `waymux triage --popup` and `waymux triage --jump` alert navigation over a stateless queue (`service_class`: permission → question → error/stalled, oldest first), shared with the Cockpit sort.
+- `src/verbs.rs`: the verbs agents and scripts call (`run`, `wait`, `events`, `report`, `api`), their shared exit statuses (`verbs::exit`: 3 target not found or ambiguous, 4 daemon unreachable) and pane-target resolution (`resolve_in`: id, tmux address, window name). `METHODS` lists every `/rpc` method for `api list`/`describe`; a unit test compares it with the arms of `api::rpc::call`, so a new RPC method needs a row there.
 - `src/hook.rs`: `waymux hook {tmux|lazygit}` native sub-10ms AI agent lifecycle hooks.
 - `src/inject.rs`: `waymux inject` bracketed-paste prompt injector with staleness guard.
 - `src/wt/mod.rs`: `waymux wt` (and `argv[0] == "awt"`) Git worktree orchestrator. Delegates to `awt-*.sh` helpers found in `~/.config/waymaker/scripts`, `~/.config/matchmaker/scripts`, then `$WAYMUX_SHARE_DIR/scripts` (default `~/.local/share/waymux/scripts`); a missing helper exits 127 with the searched paths.

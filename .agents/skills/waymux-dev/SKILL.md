@@ -48,7 +48,7 @@ Never run tests that call tmux, play sounds or write `$XDG_RUNTIME_DIR/waymux` a
 4. If it only prints, the SIGPIPE reset already applies. If it writes to a socket on a hot path, add it to the exclusion list in `restore_default_sigpipe`.
 5. Add a `tests/cli.rs` case for its exit codes, and document it in the README command table.
 
-**New RPC method:** add the arm in `call()` (`src/api/rpc.rs`) with a `Deserialize` params struct parsed by `strict()` (params required) or `lenient()` (omitted params mean defaults; the struct needs `Default`). Return `Ok(value)` or `Err(RpcError::new(code, msg))`; the envelope, id and notification handling are done for you. Build tmux with `crate::tmux_cmd::async_command()` and finish with `run(cmd, "...")` or `stdout(cmd)` + `rows(...)`. Add a unit test through `respond()` and a row in the README and in the `waymux` skill.
+**New RPC method:** add the arm in `call()` (`src/api/rpc.rs`) with a `Deserialize` params struct parsed by `strict()` (params required) or `lenient()` (omitted params mean defaults; the struct needs `Default`). Return `Ok(value)` or `Err(RpcError::new(code, msg))`; the envelope, id and notification handling are done for you. Build tmux with `crate::tmux_cmd::async_command()` and finish with `run(cmd, "...")` or `stdout(cmd)` + `rows(...)`. Add a unit test through `respond()` and a row in the README and in the `waymux` skill, and a row in `METHODS` (`src/verbs.rs`), which a unit test compares with the dispatcher.
 
 **New hook event or agent:** extend `run_tmux_hook` / `resolve_window_icon` in `src/hook.rs`, add the event to `CLAUDE_HOOKS` in `src/init.rs` if Claude Code emits it, and cover the stdin JSON shape with a unit test.
 

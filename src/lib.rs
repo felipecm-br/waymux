@@ -30,6 +30,7 @@ pub(crate) mod test_strategies;
 pub mod theme;
 pub mod tmux_cmd;
 pub mod triage;
+pub mod verbs;
 pub mod wt;
 
 #[cfg(feature = "fuzzing")]
@@ -105,6 +106,36 @@ const COMMANDS: &[CommandSpec] = &[
         name: "quota",
         usage: "quota [--visual | --popup [dir] | --json | --badge | --recommend | --refresh | statusline]",
         about: "Agent quota (Claude Code + providers) and the agent a new session should launch",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "run",
+        usage: "run [--window | --split <right|left|below|above>] [--ratio <percent>] [-t <pane>] [--cwd <dir>] [--name <label>] [--focus] [--keep-open] [--wait [--for <duration>] [--capture]] [--json] [--] <command>...",
+        about: "Run a command in a new window or split; --wait returns its exit status",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "wait",
+        usage: "wait <pane> [--state <state>] [--for <duration>] [--json]",
+        about: "Block until a pane's agent is idle (or in --state); exit 1 when the time runs out",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "events",
+        usage: "events [--json] [--pane <pane>] [--for <duration>] [--interval <duration>]",
+        about: "Print a line per agent state change (TSV, or NDJSON with --json)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "report",
+        usage: "report <state> [--pane <pane>] [--msg <text>] [--progress <0-100>]",
+        about: "Report a state for this pane from any script, as an agent hook would",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "api",
+        usage: "api <list [--json] | describe <method> [--json] | call <method> [<json> | @<file> | -]>",
+        about: "List, describe or call the daemon's JSON-RPC methods",
         plumbing: false,
     },
     CommandSpec {
@@ -255,6 +286,11 @@ OPTIONS:\n    \
     for c in COMMANDS.iter().filter(|c| c.plumbing) {
         println!("    {:<16} {}", c.name, c.about);
     }
+    println!(
+        "\nEXIT STATUS (run, wait, events, report, api):\n    \
+0 success · 1 failure or timeout · 2 usage · 3 no such pane or method, or ambiguous · \
+4 daemon unreachable\n    `run --wait` exits with the command's own status."
+    );
 }
 
 fn print_command_help(bin_name: &str, c: &CommandSpec) {
@@ -356,6 +392,11 @@ pub fn entry() -> anyhow::Result<()> {
         "agent-action" => Some(cockpit::actions::run_agent_action(&args[2..])),
         "review-notes" => Some(cockpit::notes::run_cli(&args[2..])),
         "queue" => Some(delivery::run_cli(&args[2..])),
+        "run" => Some(verbs::run_cli(&args[2..])),
+        "wait" => Some(verbs::wait_cli(&args[2..])),
+        "events" => Some(verbs::events_cli(&args[2..])),
+        "report" => Some(verbs::report_cli(&args[2..])),
+        "api" => Some(verbs::api_cli(&args[2..])),
         "checkpoint" | "checkpoints" => Some(checkpoint::run_cli(&args[2..])),
         "window-create" => Some(cockpit::actions::run_window_create()),
         "window-delete" => Some(cockpit::actions::run_window_delete()),

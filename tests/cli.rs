@@ -584,3 +584,106 @@ fn quota_popup_outside_tmux_refreshes_and_closes_on_keys() {
         "r ran --refresh"
     );
 }
+
+#[test]
+fn verbs_exit_4_without_a_daemon_and_3_for_an_unknown_target() {
+    let sb = Sandbox::new();
+    for args in [
+        &["wait", "%1", "--for", "1s"][..],
+        &["events", "--for", "1s"],
+        &["report", "working", "--pane", "%1"],
+        &["api", "call", "agentState/list"],
+    ] {
+        let out = sb.run(args);
+        assert_eq!(out.status.code(), Some(4), "{args:?}: {}", stderr(&out));
+        assert!(stderr(&out).contains("not running or unreachable"));
+    }
+
+    // What the daemon serves is answered without it.
+    let out = sb.run(&["api", "list"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("agentState/wait\t"));
+    let out = sb.run(&["api", "describe", "queue/push", "--json"]);
+    let spec: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(spec["params"][0]["name"], "pane_id");
+    assert_eq!(spec["params"][2]["required"], false);
+    assert_eq!(
+        sb.run(&["api", "describe", "no/such"]).status.code(),
+        Some(3)
+    );
+
+    // No tmux server here, so a name cannot be a pane; a pane id is taken as given.
+    let out = sb.run(&["wait", "tests"]);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    assert!(stderr(&out).contains("no pane matches 'tests'"));
+    assert_eq!(sb.run(&["report", "working"]).status.code(), Some(2));
+}
+
+#[test]
+fn report_wait_events_and_api_follow_a_pane_through_the_daemon() {
+    let sb = Sandbox::new();
+    let _daemon = sb.spawn_daemon();
+    let pane = "%9002";
+
+    let out = sb.run(&[
+        "report",
+        "working",
+        "--pane",
+        pane,
+        "--progress",
+        "40",
+        "--msg",
+        "tests",
+    ]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        sb.run(&["wait", pane, "--state", "working", "--for", "2s"])
+            .status
+            .success()
+    );
+
+    // Still working: the wait gives up with 1 and says where the pane is.
+    let out = sb.run(&["wait", pane, "--for", "1s"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("still working"), "{}", stderr(&out));
+
+    let out = sb.run(&["api", "call", "agentState/list"]);
+    let states: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(states[pane]["state"], "working");
+    assert_eq!(states[pane]["message"], "40% tests");
+    let out = sb.run(&["api", "call", "no/such"]);
+    assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+    let out = sb.run(&["api", "call", "queue/push", "{}"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+
+    // The stream opens with the state each pane is in, then prints the change.
+    let stream = sb
+        .command()
+        .args([
+            "events",
+            "--json",
+            "--pane",
+            pane,
+            "--for",
+            "2s",
+            "--interval",
+            "50ms",
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(400));
+    assert!(sb.run(&["report", "idle", "--pane", pane]).status.success());
+    assert!(sb.run(&["wait", pane, "--for", "2s"]).status.success());
+    let out = stream.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let lines: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert_eq!(lines[0]["state"], "working");
+    assert!(lines[0]["previous"].is_null());
+    assert_eq!(lines[1]["state"], "idle");
+    assert_eq!(lines[1]["previous"], "working");
+}

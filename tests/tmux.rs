@@ -563,3 +563,90 @@ fn walk(dir: &std::path::Path) -> impl Iterator<Item = std::path::PathBuf> {
         Some(path)
     })
 }
+
+/// `waymux run`, with the system tools on `PATH`: tmux starts a new pane with the client's
+/// `PATH`, and the command needs `sleep`, `mv` and `tmux` there.
+fn run_verb(env: &Env, args: &[&str]) -> std::process::Output {
+    let path = format!("{}:/usr/bin:/bin", env.dir.join("bin").display());
+    let mut all = vec!["run"];
+    all.extend_from_slice(args);
+    env.command(&all).env("PATH", path).output().unwrap()
+}
+
+fn run_pane(env: &Env, args: &[&str]) -> String {
+    let out = run_verb(env, args);
+    assert!(out.status.success(), "{out:?}");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn run_waits_for_the_command_and_returns_its_status_and_screen() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    let pane = first_pane(&tmux);
+
+    let out = run_verb(
+        &env,
+        &[
+            "-t",
+            &pane,
+            "--wait",
+            "--capture",
+            "--",
+            "sh",
+            "-c",
+            "echo from-the-pane; exit 7",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(7), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("from-the-pane"));
+    // The command's window is gone and the first one never lost the focus.
+    assert!(eventually(|| tmux.window_count("main") == 1));
+
+    // One word is a shell snippet; --json carries the status.
+    let out = run_verb(&env, &["-t", &pane, "--wait", "--json", "true && false"]);
+    assert_eq!(out.status.code(), Some(1));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["exit_status"], 1);
+
+    // A command that outlives the time given leaves 1, and the pane keeps running.
+    let out = run_verb(
+        &env,
+        &["-t", &pane, "--wait", "--for", "300ms", "sleep", "30"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("still running"));
+    assert_eq!(tmux.window_count("main"), 2);
+}
+
+#[test]
+fn run_places_a_split_or_a_named_window_and_resolves_names() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    let pane = first_pane(&tmux);
+    let active = || tmux.run(&["display-message", "-p", "-t", "main:", "#{pane_id}"]);
+
+    let split = run_pane(
+        &env,
+        &[
+            "--split", "below", "--ratio", "30", "-t", &pane, "sleep", "30",
+        ],
+    );
+    let split = split.trim();
+    assert!(split.starts_with('%') && split != pane, "{split:?}");
+    assert_eq!(tmux.run(&["list-panes", "-t", "main:"]).lines().count(), 2);
+    assert_eq!(active(), pane, "the split took the focus");
+
+    run_pane(&env, &["-t", &pane, "--name", "Tests", "sleep", "30"]);
+    assert_eq!(tmux.window_count("main"), 2);
+    assert_eq!(active(), pane, "the window took the focus");
+
+    // The window's name is a target, whatever its case; one that matches nothing exits 3.
+    let named = run_pane(&env, &["--split", "right", "-t", "tests", "sleep", "30"]);
+    let in_window = tmux.run(&["list-panes", "-t", "main:Tests", "-F", "#{pane_id}"]);
+    assert!(
+        in_window.lines().any(|p| p == named.trim()),
+        "{in_window:?}"
+    );
+    let out = run_verb(&env, &["-t", "nope", "true"]);
+    assert_eq!(out.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no pane matches 'nope'"));
+}
