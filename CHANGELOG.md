@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-13
+
 - **The delivery queue never types into a half-written prompt (`src/api/queue.rs`, `src/switch.rs`)**: a queued prompt (`inject`, review notes, the Cockpit's `I`, the phone) was typed as soon as the agent rested, so a draft you were writing in its composer got the prompt pasted into it. The head is now marked `held` while the composer shows text after its marker (the same check `switch` makes, placeholders excluded), with one tmux message, and checked again every 1.5 s while the pane rests; sending or stashing the draft lets it go. `waymux queue send <pane> [id]` (`queue/send`) types a prompt at once over the hold, moving it to the front; `waymux queue edit <pane> <id> <text|->` (`queue/edit`) replaces one not typed yet.
 - **`waymux goal <pane> --check <command>` (`src/verbs.rs`)**: `/goal` for every agent. Each time the agent rests, the check runs in the pane's directory; while it fails, a nudge quoting the end of its output goes through the delivery queue and the agent is given the next round. Exit `0` once it passes, `1` after `--max` failed checks, a round longer than `--for`, or a nudge the agent did not take.
 - **Last turn in the Cockpit preview (`src/activity.rs`, `src/cockpit/preview.rs`)**: every finished turn leaves a summary of that turn (files edited, commands, the last one, how long it worked), shown as one line above the pane, with the pane's queued prompts and their status under it.
