@@ -824,10 +824,10 @@ pub fn parse_run_args(args: &[String]) -> Option<RunOpts> {
             o.cwd = Some(v?.to_string());
         } else if let Some(v) = flag_value(arg, "--name", &mut it) {
             o.name = Some(v?.to_string());
-        } else if let Some(v) = flag_value(arg, "--for", &mut it) {
-            o.limit = Some(parse_duration(v?)?);
         } else {
-            return None;
+            // The last flag known: anything else is not a `run` flag.
+            let v = flag_value(arg, "--for", &mut it)?;
+            o.limit = Some(parse_duration(v?)?);
         }
     }
     // Capturing and a time limit only mean something while waiting.
@@ -1147,7 +1147,7 @@ mod tests {
                 ("%4", "working", None),
             ]
         );
-        assert!(diff_states(&after, &after).is_empty());
+        assert_eq!(diff_states(&after, &after), vec![]);
         // The first snapshot is every pane, with no previous state.
         assert_eq!(diff_states(&BTreeMap::new(), &before).len(), 3);
     }
