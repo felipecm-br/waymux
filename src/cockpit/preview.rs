@@ -183,6 +183,6 @@ mod tests {
         assert_eq!(lines[1], "  4 first line · held: draft in the prompt");
         assert_eq!(lines[3], "  6 c · stalled");
         assert_eq!(lines.last().unwrap(), "  +1 more");
-        assert!(queue_lines(&res, "%2").is_empty());
+        assert_eq!(queue_lines(&res, "%2"), Vec::<String>::new());
     }
 }
