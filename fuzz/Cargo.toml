@@ -42,3 +42,24 @@ path = "fuzz_targets/rpc_body.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "quota_provider"
+path = "fuzz_targets/quota_provider.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "statusline"
+path = "fuzz_targets/statusline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "switch_rows"
+path = "fuzz_targets/switch_rows.rs"
+test = false
+doc = false
+bench = false

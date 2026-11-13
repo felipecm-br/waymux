@@ -798,5 +798,59 @@ mod tests {
         let (target, flags) = split_merge_args(&args, false);
         assert_eq!(target, "feat/y");
         assert_eq!(flags, vec!["--into", "main", "--squash"]);
+
+        let args: Vec<String> = [
+            "merge",
+            "--into=dev",
+            "--no-squash",
+            "--no-commit",
+            "--no-remove",
+            "--no-tmux",
+            "--no-connect",
+            "--no-rebase",
+            "--rebase",
+            "--no-hooks",
+            "--skip-pre-merge",
+            "-H",
+            "feat/z",
+            "--extra",
+        ]
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+        let (target, flags) = split_merge_args(&args, false);
+        assert_eq!(target, "feat/z");
+        assert!(flags.contains(&"--into=dev".to_string()));
+        assert!(flags.contains(&"--extra".to_string()));
+    }
+
+    #[test]
+    fn test_slugify_prompt_all_categories_and_session_names() {
+        assert_eq!(slugify_prompt("   "), "");
+        assert_eq!(slugify_prompt("bug memory leak"), "fix/memory-leak");
+        assert_eq!(slugify_prompt("cleanup dead code"), "refactor/dead-code");
+        assert_eq!(
+            slugify_prompt("document api endpoints"),
+            "docs/api-endpoints"
+        );
+        assert_eq!(slugify_prompt("testing unit suite"), "test/unit-suite");
+        assert_eq!(slugify_prompt("bump rust edition"), "chore/rust-edition");
+        assert_eq!(slugify_prompt("speedup git status"), "perf/git-status");
+        assert_eq!(
+            slugify_prompt("random words here"),
+            "feat/random-words-here"
+        );
+        assert_eq!(slugify_prompt("feat: !!!"), "feat/worktree");
+        assert_eq!(slugify_prompt("fix"), "fix/fix");
+
+        assert_eq!(
+            compute_session_name("/home/u/.dotfiles/main", "feat-x"),
+            "_dotfiles/feat-x"
+        );
+        assert_eq!(
+            compute_session_name("/home/u/waymux/main", "feat-x"),
+            "waymux/feat-x"
+        );
+        assert_eq!(run_cli(&["--help".into()]), 0);
     }
 }

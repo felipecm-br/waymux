@@ -185,4 +185,13 @@ mod tests {
         assert_eq!(lines.last().unwrap(), "  +1 more");
         assert_eq!(queue_lines(&res, "%2"), Vec::<String>::new());
     }
+
+    #[test]
+    fn test_box_line_and_empty_preview() {
+        let line = box_line("\x1b[34m", 20, "\x1b[1mhi\x1b[0m");
+        assert!(line.contains("hi"));
+        assert!(line.ends_with('\n'));
+        assert_eq!(run_cli(&[]), 0);
+        assert_eq!(run_cli(&["main".into(), "-".into()]), 0);
+    }
 }

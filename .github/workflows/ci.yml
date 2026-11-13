@@ -97,7 +97,7 @@ jobs:
       - name: Install tmux
         run: sudo apt-get update && sudo apt-get install -y tmux
       - name: Measure Coverage
-        run: cargo llvm-cov --summary-only --fail-under-lines 80
+        run: cargo llvm-cov --summary-only --fail-under-lines 84
 
   dependencies:
     # Advisories, licenses, duplicate crates and sources (deny.toml).
@@ -138,7 +138,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [hook_input, review_notes, config, rpc_body]
+        target: [hook_input, review_notes, config, rpc_body, quota_provider, statusline, switch_rows]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

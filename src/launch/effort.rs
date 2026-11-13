@@ -426,4 +426,106 @@ mod tests {
             assert!(levels_for(a).is_empty(), "{a}");
         }
     }
+
+    #[test]
+    fn test_open_step_chosen_with_effort_and_close_roundtrip() {
+        let menu = format!("test-effort-{}", std::process::id());
+        let sidecar = Sidecar {
+            footer: FOOTER.to_string(),
+            rows: vec![
+                SidecarRow::for_row(
+                    "claude-opus".into(),
+                    "claude",
+                    "--model opus --dangerously-skip-permissions",
+                    &[],
+                ),
+                SidecarRow::for_row(
+                    "agy-argon".into(),
+                    "agy",
+                    "--model gemini-4-argon-medium",
+                    &[
+                        LevelArgs {
+                            level: "low".into(),
+                            args: "--model gemini-4-argon-low".into(),
+                        },
+                        LevelArgs {
+                            level: "medium".into(),
+                            args: "--model gemini-4-argon-medium".into(),
+                        },
+                        LevelArgs {
+                            level: "high".into(),
+                            args: "--model gemini-4-argon-high".into(),
+                        },
+                    ],
+                ),
+            ],
+        };
+        open(&menu, &sidecar);
+        assert_eq!(chosen(&menu), None);
+        // Untouched menu returns original args.
+        assert_eq!(
+            with_effort(&menu, "claude", "--model opus", &[]),
+            "--model opus"
+        );
+
+        // Step 0 shows current without writing state_path.
+        assert_eq!(
+            run_step(&menu, &["0".into(), "\x1b[32mclaude-opus\x1b[0m".into()]),
+            0
+        );
+        assert_eq!(chosen(&menu), None);
+
+        // Step +1 advances from default and records choice.
+        assert_eq!(run_step(&menu, &["1".into(), "claude-opus".into()]), 0);
+        let picked = chosen(&menu).expect("stepped choice saved");
+        assert!(LEVELS.contains(&picked.as_str()));
+        assert_eq!(
+            with_effort(&menu, "claude", "--model opus", &[]),
+            format!("--model opus --effort {picked}")
+        );
+        assert_eq!(with_effort(&menu, "shell", "", &[]), "");
+
+        // Step -1 steps down on custom LevelArgs row.
+        std::fs::write(state_path(&menu), "medium").unwrap();
+        assert_eq!(run_step(&menu, &["-1".into(), "agy-argon".into()]), 0);
+        assert_eq!(chosen(&menu).as_deref(), Some("low"));
+        assert_eq!(
+            with_effort(
+                &menu,
+                "agy",
+                "--model gemini-4-argon-medium",
+                &[LevelArgs {
+                    level: "low".into(),
+                    args: "--model gemini-4-argon-low".into(),
+                }]
+            ),
+            "--model gemini-4-argon-low"
+        );
+
+        // Unknown row and missing sidecar both return 0 safely.
+        assert_eq!(run_step(&menu, &["1".into(), "unknown-row".into()]), 0);
+        close(&menu);
+        assert_eq!(chosen(&menu), None);
+        assert_eq!(run_step(&menu, &["1".into(), "claude-opus".into()]), 0);
+    }
+
+    #[test]
+    fn test_preset_footer_reads_last_matching_toml_and_default_for_fallback() {
+        let tmp = std::env::temp_dir().join(format!("waymux-preset-footer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let p1 = tmp.join("one.toml");
+        let p2 = tmp.join("two.toml");
+        std::fs::write(&p1, "[footer]\ncontent = \"first\"\n").unwrap();
+        std::fs::write(&p2, "[other]\nx = 1\n").unwrap();
+        let paths = vec![
+            p1.to_string_lossy().into_owned(),
+            p2.to_string_lossy().into_owned(),
+            tmp.join("missing.toml").to_string_lossy().into_owned(),
+        ];
+        assert_eq!(preset_footer(&paths), "first");
+        assert_eq!(preset_footer(&[]), "");
+        assert_eq!(default_for("codex", ""), "medium");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

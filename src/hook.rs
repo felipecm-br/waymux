@@ -386,10 +386,10 @@ pub fn tool_command(ctx: &serde_json::Value) -> Option<String> {
     if cmd.trim().is_empty() {
         return None;
     }
-    let mut end = cmd.len().min(MAX_COMMAND_BYTES);
-    while !cmd.is_char_boundary(end) {
-        end -= 1;
-    }
+    let end = (0..=cmd.len().min(MAX_COMMAND_BYTES))
+        .rev()
+        .find(|&i| cmd.is_char_boundary(i))
+        .unwrap_or(0);
     Some(cmd[..end].to_string())
 }
 
@@ -405,7 +405,11 @@ fn pane_command_memo_in(xdg: Option<&Path>, pane_id: &str) -> Option<std::path::
 
 fn remember_pane_command(pane_id: &str, command: Option<&str>) {
     let xdg = std::env::var_os("XDG_RUNTIME_DIR");
-    let Some(path) = pane_command_memo_in(xdg.as_deref().map(Path::new), pane_id) else {
+    remember_pane_command_in(xdg.as_deref().map(Path::new), pane_id, command);
+}
+
+fn remember_pane_command_in(xdg: Option<&Path>, pane_id: &str, command: Option<&str>) {
+    let Some(path) = pane_command_memo_in(xdg, pane_id) else {
         return;
     };
     match command {
@@ -431,7 +435,11 @@ fn remember_pane_command(pane_id: &str, command: Option<&str>) {
 /// permission for, if it was a shell command.
 pub fn recall_pane_command(pane_id: &str) -> Option<String> {
     let xdg = std::env::var_os("XDG_RUNTIME_DIR");
-    pane_command_memo_in(xdg.as_deref().map(Path::new), pane_id)
+    recall_pane_command_in(xdg.as_deref().map(Path::new), pane_id)
+}
+
+fn recall_pane_command_in(xdg: Option<&Path>, pane_id: &str) -> Option<String> {
+    pane_command_memo_in(xdg, pane_id)
         .and_then(|p| fs::read_to_string(p).ok())
         .filter(|s| !s.trim().is_empty())
 }
@@ -1093,6 +1101,62 @@ mod tests {
             held_line(&ctx("Edit", serde_json::json!({ "file_path": "a" }))),
             None
         );
+        assert_eq!(
+            held_line(&ctx("Glob", serde_json::json!({ "pattern": "*.rs" }))),
+            Some(("Glob".into(), "*.rs".into()))
+        );
+        assert_eq!(
+            held_line(&ctx(
+                "WebFetch",
+                serde_json::json!({ "url": "https://x.invalid" })
+            )),
+            Some(("WebFetch".into(), "https://x.invalid".into()))
+        );
+        assert_eq!(
+            held_line(&ctx("WebSearch", serde_json::json!({ "query": "tmux" }))),
+            Some(("WebSearch".into(), "tmux".into()))
+        );
+    }
+
+    #[test]
+    fn test_tool_command_keeps_newlines_and_caps_on_a_char_boundary() {
+        assert_eq!(MAX_COMMAND_BYTES, 16_384);
+        let cmd = |c: &str| serde_json::json!({ "tool_input": { "command": c } });
+        assert_eq!(
+            tool_command(&cmd("ls\nrm -rf x")).as_deref(),
+            Some("ls\nrm -rf x")
+        );
+        assert_eq!(tool_command(&cmd("  \n ")), None);
+        assert_eq!(tool_command(&serde_json::json!({ "tool_input": {} })), None);
+        assert_eq!(
+            tool_command(&serde_json::json!({ "toolCall": { "args": { "command": "a" } } }))
+                .as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            tool_command(&serde_json::json!({ "toolCall": { "input": { "command": "b" } } }))
+                .as_deref(),
+            Some("b")
+        );
+        let exact = "x".repeat(MAX_COMMAND_BYTES);
+        assert_eq!(tool_command(&cmd(&exact)).as_deref(), Some(exact.as_str()));
+        let long = "y".repeat(MAX_COMMAND_BYTES + 10);
+        assert_eq!(
+            tool_command(&cmd(&long)).map(|c| c.len()),
+            Some(MAX_COMMAND_BYTES)
+        );
+        // A 3-byte char straddling the cap is dropped whole.
+        let straddle = format!("{}\u{2192}z", "x".repeat(MAX_COMMAND_BYTES - 1));
+        assert_eq!(
+            tool_command(&cmd(&straddle)).as_deref(),
+            Some("x".repeat(MAX_COMMAND_BYTES - 1).as_str())
+        );
+        // A 4-byte char straddling at MAX_COMMAND_BYTES - 2 steps back 2 bytes.
+        let straddle4 = format!("{}\u{1f980}z", "x".repeat(MAX_COMMAND_BYTES - 2));
+        assert_eq!(
+            tool_command(&cmd(&straddle4)).as_deref(),
+            Some("x".repeat(MAX_COMMAND_BYTES - 2).as_str())
+        );
     }
 
     #[test]
@@ -1299,6 +1363,44 @@ mod tests {
         remember_pane_tool_in(Some(&dir), "%1", Some("Edit: main.rs"));
         remember_pane_tool_in(Some(&dir), "%1", None);
         assert_eq!(recall_pane_tool_in(Some(&dir), "%1"), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_remember_and_recall_pane_command_in() {
+        assert_eq!(pane_command_memo_in(None, "%1"), None);
+        let dir = std::env::temp_dir().join(format!("waymux-cmd-memo-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("waymux")).unwrap();
+        assert_eq!(
+            pane_command_memo_in(Some(&dir), "%1"),
+            Some(dir.join("waymux").join("pane-cmd-_1"))
+        );
+
+        remember_pane_command_in(Some(&dir), "%1", Some("ls\nrm -rf x"));
+        assert_eq!(
+            recall_pane_command_in(Some(&dir), "%1").as_deref(),
+            Some("ls\nrm -rf x")
+        );
+        assert_eq!(recall_pane_command_in(Some(&dir), "%2"), None, "per pane");
+        assert_eq!(
+            recall_pane_tool_in(Some(&dir), "%1"),
+            None,
+            "separate from the tool memo"
+        );
+        let mode = fs::metadata(dir.join("waymux").join("pane-cmd-_1"))
+            .unwrap()
+            .permissions();
+        assert_eq!(
+            std::os::unix::fs::PermissionsExt::mode(&mode) & 0o777,
+            0o600
+        );
+
+        remember_pane_command_in(Some(&dir), "%1", Some(" \n "));
+        assert_eq!(recall_pane_command_in(Some(&dir), "%1"), None);
+        remember_pane_command_in(Some(&dir), "%1", Some("git push -f"));
+        remember_pane_command_in(Some(&dir), "%1", None);
+        assert_eq!(recall_pane_command_in(Some(&dir), "%1"), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

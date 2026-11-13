@@ -110,7 +110,11 @@ fn risky_approve_needs_a_second_press() {
     .unwrap();
 
     env.run(&["agent-action", "approve", "permission", &pane]);
-    std::thread::sleep(std::time::Duration::from_millis(300));
+    let digits: String = pane.chars().filter(char::is_ascii_digit).collect();
+    assert!(
+        memo_dir.join(format!("risk-ack-{digits}")).is_file(),
+        "first press records the armed risk-ack timestamp"
+    );
     assert!(!answer.exists(), "first press only arms a risky approval");
 
     env.run(&["agent-action", "approve", "permission", &pane]);

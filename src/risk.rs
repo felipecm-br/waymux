@@ -69,11 +69,10 @@ fn parse(src: &str, depth: usize, found: &mut Vec<&'static str>) -> Vec<Command>
         match c {
             '\'' => {
                 in_word = true;
-                i += 1;
-                while i < chars.len() && chars[i] != '\'' {
-                    word.push(chars[i]);
-                    i += 1;
-                }
+                let rest = &chars[i + 1..];
+                let len = rest.iter().position(|&x| x == '\'').unwrap_or(rest.len());
+                word.extend(&rest[..len]);
+                i += 1 + len;
             }
             '"' => {
                 in_word = true;
@@ -102,14 +101,17 @@ fn parse(src: &str, depth: usize, found: &mut Vec<&'static str>) -> Vec<Command>
                 }
                 i += 1;
             }
-            '$' | '`' | '<' | '>' if substitution(&chars, i).is_some() => {
-                let (inner, next) = substitution(&chars, i).unwrap_or_default();
-                cur.fetch_subst |= fetches(&inner);
-                scan(&inner, depth + 1, found);
+            '$' | '`' | '<' | '>' => {
+                if let Some((inner, next)) = substitution(&chars, i) {
+                    cur.fetch_subst |= fetches(&inner);
+                    scan(&inner, depth + 1, found);
+                    in_word = true;
+                    word.push_str(&inner);
+                    i = next;
+                    continue;
+                }
                 in_word = true;
-                word.push_str(&inner);
-                i = next;
-                continue;
+                word.push(c);
             }
             ';' | '&' | '|' | '\n' | '(' | ')' => {
                 end_word(&mut cur, &mut word, &mut in_word);
@@ -458,6 +460,57 @@ mod tests {
         }
     }
 
+    /// `rm -rf x` wrapped in `n` nested substitutions, so it is scanned at depth `n`.
+    fn nested(n: usize, quoted: bool) -> String {
+        let mut cmd = "rm -rf x".to_string();
+        for _ in 0..n {
+            cmd = if quoted {
+                format!("echo \"$({cmd})\"")
+            } else {
+                format!("echo $({cmd})")
+            };
+        }
+        cmd
+    }
+
+    #[test]
+    fn test_substitutions_followed_up_to_max_depth() {
+        for quoted in [false, true] {
+            assert_eq!(
+                rules(&nested(MAX_DEPTH, quoted)),
+                ["recursive delete"],
+                "quoted={quoted}"
+            );
+            assert!(
+                rules(&nested(MAX_DEPTH + 1, quoted)).is_empty(),
+                "quoted={quoted}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_quotes_and_escapes() {
+        for cmd in [
+            r"\rm -rf x",
+            "r\\\nm -rf x",
+            r#""rm" -rf x"#,
+            r#"sh -c "\"rm\" -rf x""#,
+        ] {
+            assert_eq!(rules(cmd), ["recursive delete"], "{cmd}");
+        }
+        for cmd in [
+            r#""a; rm -rf x""#,
+            r#"echo "a; rm -rf x""#,
+            r#"echo "a\" ; rm -rf x""#,
+            "echo 'a; rm -rf x'",
+            "echo 'a' 'b'",
+            "echo $FOO < bar > baz",
+            r"echo a\; rm -rf x",
+        ] {
+            assert!(rules(cmd).is_empty(), "{cmd}");
+        }
+    }
+
     #[test]
     fn test_several_rules_in_fixed_order() {
         assert_eq!(
@@ -477,6 +530,8 @@ mod tests {
             "sh -c",
             "((((",
             "\\",
+            "\"\\",
+            "rm -rf x\\",
             "|||",
             "",
         ] {

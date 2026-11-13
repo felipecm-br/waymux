@@ -754,4 +754,62 @@ mod tests {
             KillDecision::Arm
         );
     }
+
+    #[test]
+    fn test_held_refusal_read_risk_ack_pending_command_and_run_agent_action() {
+        assert_eq!(
+            held_refusal("too_soon"),
+            "prompt just appeared: read it, then press again"
+        );
+        assert_eq!(
+            held_refusal("risk_ack_required"),
+            "is a risky call: press y twice"
+        );
+        assert_eq!(held_refusal("other"), "prompt changed or ended: look again");
+
+        let f = std::env::temp_dir().join(format!("waymux-rack-{}", std::process::id()));
+        std::fs::write(&f, "100 200\n").unwrap();
+        assert_eq!(read_risk_ack(&f), Some((100, 200)));
+        std::fs::write(&f, "bad\n").unwrap();
+        assert_eq!(read_risk_ack(&f), None);
+        let _ = std::fs::remove_file(&f);
+
+        assert_eq!(
+            pending_command("%999999", Some("Bash: git status")).as_deref(),
+            Some("git status")
+        );
+        assert_eq!(pending_command("%999999", Some("no colon")), None);
+        assert_eq!(risk_gate("%1", None, 0, 1000), Some(Vec::new()));
+        assert_eq!(
+            risk_gate("%1", Some("cargo test"), 0, 1000),
+            Some(Vec::new())
+        );
+
+        // Invalid pane ID is a safe no-op; unknown action on valid pane ID exits 1.
+        assert_eq!(
+            run_agent_action(&["approve".into(), "permission".into(), "bad".into()]),
+            0
+        );
+        assert_eq!(
+            run_agent_action(&["bogus".into(), "permission".into(), "%1".into()]),
+            1
+        );
+
+        // Test is_active_agent_state and pane_agent_state
+        assert!(is_active_agent_state("working"));
+        assert!(is_active_agent_state("permission"));
+        assert!(!is_active_agent_state("idle"));
+        assert!(!is_active_agent_state("done"));
+        assert!(!is_active_agent_state(""));
+
+        assert_eq!(pane_agent_state(Some("working"), "idle", "bash"), "working");
+        assert_eq!(pane_agent_state(None, "idle", "bash"), "idle");
+        assert_eq!(pane_agent_state(None, "", "claude"), "running");
+        assert_eq!(pane_agent_state(None, "", "bash"), "");
+
+        // Test create_window_from_raw with empty or invalid headers
+        assert_eq!(create_window_from_raw(""), None);
+        assert_eq!(create_window_from_raw("   \n"), None);
+        assert_eq!(create_window_from_raw("# nonexistent_session_xyz"), None);
+    }
 }

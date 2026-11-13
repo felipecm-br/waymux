@@ -258,5 +258,14 @@ mod tests {
     #[test]
     fn test_sh_quote_escapes_single_quotes() {
         assert_eq!(sh_quote("a'b"), r"'a'\''b'");
+        assert_eq!(run_icon_cli(&["claude".into()]), 0);
+        assert_eq!(run_icon_cli(&["--state".into(), "idle".into()]), 0);
+        assert_eq!(run_icon_cli(&["unknown-prog".into()]), 1);
+        assert_eq!(run_icon_cli(&[]), 2);
+        assert_eq!(run_icons_cli(&[]), 0);
+        assert_eq!(run_icons_cli(&["--format=sh".into()]), 0);
+        assert_eq!(run_icons_cli(&["--format".into(), "tmux".into()]), 0);
+        assert_eq!(run_icons_cli(&["--format=xml".into()]), 2);
+        assert_eq!(run_icons_cli(&["a".into(), "b".into(), "c".into()]), 2);
     }
 }

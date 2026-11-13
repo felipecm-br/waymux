@@ -456,5 +456,16 @@ mod tests {
 
         let down = check_daemon_health(4040, None, "0.2.4");
         assert_eq!(down.level, Level::Fail);
+
+        let err_http = check_daemon_health(4040, Some((503, serde_json::json!({}))), "0.2.4");
+        assert_eq!(err_http.level, Level::Fail);
+
+        let _ = check_token();
+        let _ = check_tmux();
+        let _ = check_sound_player();
+        let _ = check_wt_scripts();
+        let _ = check_theme();
+        let _ = check_claude_hooks();
+        let _ = check_systemd_unit();
     }
 }

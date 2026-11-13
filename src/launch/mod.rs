@@ -918,4 +918,81 @@ mod tests {
         assert_eq!(normalize("--menu"), "menu");
         assert_eq!(pad("Codex", 3), "Codex ");
     }
+
+    #[test]
+    fn test_clock_tier_preset_args_and_claude_rows_until() {
+        assert_ne!(clock(NOW, NOW + 3600), "");
+        assert!(clock(NOW, NOW + 100_000).contains(' '));
+        assert_eq!(tier("gemini-4-argon"), "$$$$");
+        assert_eq!(tier("claude-opus"), "$$$");
+        assert_eq!(tier("claude-sonnet"), "$$");
+        assert_eq!(tier("claude-haiku"), "$");
+        assert_eq!(capitalize(""), "");
+
+        let mut c = claude("yellow");
+        c["five"] = json!(null);
+        c["until"] = json!(NOW + 1800);
+        let rows = claude_rows(&c, &models(), NOW);
+        assert!(rows[0].quota.starts_with("quota ? ⏳"), "{}", rows[0].quota);
+
+        let builtin_shell = preset_args(false, &LaunchConfig::default());
+        assert_eq!(builtin_shell[0], "-o");
+        assert!(builtin_shell[1].ends_with("launch-picker-shell.toml"));
+        let builtin_close = preset_args(true, &LaunchConfig::default());
+        assert!(builtin_close[1].ends_with("launch-picker-close.toml"));
+
+        let custom = LaunchConfig {
+            preset: Some("/etc/custom.toml".into()),
+            pick_preset: Some("/etc/overlay.toml".into()),
+            ..LaunchConfig::default()
+        };
+        assert_eq!(preset_args(false, &custom), vec!["-o", "/etc/custom.toml"]);
+        assert_eq!(
+            preset_args(true, &custom),
+            vec!["-o", "/etc/custom.toml", "-o", "/etc/overlay.toml"]
+        );
+
+        let shell_row = Row {
+            agent: "shell".into(),
+            cli: "Shell".into(),
+            model: "Terminal".into(),
+            tier: "-".into(),
+            quota: "no agent".into(),
+            ..Row::default()
+        };
+        assert_eq!(
+            crate::theme::strip_ansi(&shell_row.colored()),
+            shell_row.plain()
+        );
+
+        assert_eq!(run_cli(&["--help".into()]), 0);
+        assert_eq!(run_cli(&["--next".into()]), 2);
+        assert_eq!(
+            run_cli(&[
+                "--next".into(),
+                "claude".into(),
+                "--model".into(),
+                "opus".into()
+            ]),
+            0
+        );
+        assert_eq!(
+            read_armed(&next_file()),
+            Some(vec!["claude".into(), "--model".into(), "opus".into()])
+        );
+        assert_eq!(run_cli(&["--peek".into()]), 0);
+        let _ = std::fs::remove_file(next_file());
+        assert_eq!(run_cli(&["--peek".into(), "shell".into()]), 0);
+        assert_eq!(run_cli(&["--peek".into(), "--menu".into()]), 0);
+        assert_eq!(
+            run_cli(&[
+                "--peek".into(),
+                "claude".into(),
+                "--model".into(),
+                "haiku".into()
+            ]),
+            0
+        );
+        assert_eq!(run_cli(&["--bogus".into()]), 2);
+    }
 }

@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Expanded mutation testing, fuzzing and coverage floor (`.cargo/mutants.toml`, `fuzz/`, `.clusterfuzzlite/`, `.github/workflows/ci.yml`, `src/`)**: extended `cargo-mutants` from 5 to 11 core logic modules (`delivery`, `api/queue`, `api/approvals`, `risk`, `checkpoint`, `quota/claude` added, 0 surviving mutants), added 3 libFuzzer targets (`quota_provider`, `statusline`, `switch_rows`, 7 total) with seed corpus replay in `cargo test`, extracted pure CLI/RPC dispatch helpers (`delivery::run_cli_with`, `checkpoint::run_cli_in`, `quota::claude::statusline_head`), and raised total crate line coverage to 85.2% (CI floor raised from 80% to 84%).
+
 ## [0.14.0] - 2026-11-13
 
 - **The delivery queue never types into a half-written prompt (`src/api/queue.rs`, `src/switch.rs`)**: a queued prompt (`inject`, review notes, the Cockpit's `I`, the phone) was typed as soon as the agent rested, so a draft you were writing in its composer got the prompt pasted into it. The head is now marked `held` while the composer shows text after its marker (the same check `switch` makes, placeholders excluded), with one tmux message, and checked again every 1.5 s while the pane rests; sending or stashing the draft lets it go. `waymux queue send <pane> [id]` (`queue/send`) types a prompt at once over the hold, moving it to the front; `waymux queue edit <pane> <id> <text|->` (`queue/edit`) replaces one not typed yet.

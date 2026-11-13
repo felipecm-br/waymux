@@ -174,5 +174,10 @@ mod tests {
     fn test_systemd_unit_is_the_shipped_file() {
         assert!(SYSTEMD_UNIT.contains("Type=notify"));
         assert!(SYSTEMD_UNIT.contains("ExecStart=%h/.local/bin/waymux daemon"));
+        assert_eq!(run_cli(&["--tmux".into()]), 0);
+        assert_eq!(run_cli(&["--systemd".into()]), 0);
+        assert_eq!(run_cli(&["--hooks".into()]), 0);
+        assert_eq!(run_cli(&["--help".into()]), 0);
+        assert_eq!(run_cli(&["--bogus".into()]), 2);
     }
 }

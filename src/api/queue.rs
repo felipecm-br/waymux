@@ -533,6 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_push_validates_and_caps() {
+        assert_eq!(MAX_BYTES, 16384);
         let state = ApiState::new(vec![], 0);
         // Working: held, never scheduled.
         state
@@ -541,12 +542,14 @@ mod tests {
             .await
             .insert("%1".into(), pane(AgentState::Working, 1));
         assert_eq!(push(&state, "%1", "  ", "t").await, Err(PushError::Empty));
+        let exact = "x".repeat(MAX_BYTES);
+        assert_eq!(push(&state, "%1", &exact, "t").await.unwrap().1, 1);
         let big = "x".repeat(MAX_BYTES + 1);
         assert_eq!(
             push(&state, "%1", &big, "t").await,
             Err(PushError::TooLarge)
         );
-        for n in 1..=MAX_ITEMS {
+        for n in 2..=MAX_ITEMS {
             assert_eq!(push(&state, "%1", "hi", "t").await.unwrap().1, n);
         }
         assert_eq!(push(&state, "%1", "hi", "t").await, Err(PushError::Full));
@@ -592,6 +595,23 @@ mod tests {
         // A second kick for the same rest does not schedule again.
         on_state(&state, "%3", &AgentState::Idle).await;
         assert_eq!(state.queues.lock().await["%3"].scheduled, Some(7));
+
+        // When pushed while Working, scheduled is None until on_state(Idle) kicks it
+        let s_work = ApiState::new(vec![], 0);
+        s_work
+            .pane_states
+            .lock()
+            .await
+            .insert("%w1".into(), pane(AgentState::Working, 1));
+        push(&s_work, "%w1", "after work", "t").await.unwrap();
+        assert_eq!(s_work.queues.lock().await["%w1"].scheduled, None);
+        s_work
+            .pane_states
+            .lock()
+            .await
+            .insert("%w1".into(), pane(AgentState::Idle, 2));
+        on_state(&s_work, "%w1", &AgentState::Idle).await;
+        assert_eq!(s_work.queues.lock().await["%w1"].scheduled, Some(2));
     }
 
     #[tokio::test]
@@ -631,6 +651,64 @@ mod tests {
         state.queues.lock().await.get_mut("%5").unwrap().items[0].status = ItemStatus::Stalled;
         assert_eq!(cancel(&state, "%5", Some(a)).await, 1);
         assert_eq!(queued_count(&state, "%5").await, 0);
+
+        // Cancel a stalled head kicks delivery of next queued item on an idle pane
+        let s2 = ApiState::new(vec![], 0);
+        s2.pane_states
+            .lock()
+            .await
+            .insert("%8".into(), pane(AgentState::Idle, 1));
+        let (id1, _) = push(&s2, "%8", "first", "t").await.unwrap();
+        let (_id2, _) = push(&s2, "%8", "second", "t").await.unwrap();
+        s2.queues.lock().await.get_mut("%8").unwrap().items[0].status = ItemStatus::Stalled;
+        s2.queues.lock().await.get_mut("%8").unwrap().scheduled = None;
+
+        // Cancel with non-existent id drops 0 and does NOT kick/schedule
+        assert_eq!(cancel(&s2, "%8", Some(9999)).await, 0);
+        assert_eq!(s2.queues.lock().await["%8"].scheduled, None);
+
+        // on_state Idle does NOT schedule when head is Stalled
+        on_state(&s2, "%8", &AgentState::Idle).await;
+        assert_eq!(s2.queues.lock().await["%8"].scheduled, None);
+
+        assert_eq!(cancel(&s2, "%8", Some(id1)).await, 1);
+        assert_eq!(s2.queues.lock().await["%8"].scheduled, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_list_filters_panes_and_skips_empty() {
+        let state = ApiState::new(vec![], 0);
+        push(&state, "%p1", "msg1", "t").await.unwrap();
+        let (id2, _) = push(&state, "%p2", "msg2", "t").await.unwrap();
+
+        let l_all = list(&state, None).await;
+        assert!(l_all.get("%p1").is_some());
+        assert!(l_all.get("%p2").is_some());
+
+        let l1 = list(&state, Some("%p1")).await;
+        assert!(l1.get("%p1").is_some());
+        assert!(l1.get("%p2").is_none());
+
+        let l_none = list(&state, Some("%nonexistent")).await;
+        assert!(l_none.as_object().unwrap().is_empty());
+
+        // mark_stalled checks both id and Typed status
+        mark_stalled(&state, "%p2", id2, "stalled").await;
+        assert_eq!(
+            state.queues.lock().await["%p2"].items[0].status,
+            ItemStatus::Queued
+        );
+        state.queues.lock().await.get_mut("%p2").unwrap().items[0].status = ItemStatus::Typed;
+        mark_stalled(&state, "%p2", 999_999, "stalled").await;
+        assert_eq!(
+            state.queues.lock().await["%p2"].items[0].status,
+            ItemStatus::Typed
+        );
+        mark_stalled(&state, "%p2", id2, "stalled").await;
+        assert_eq!(
+            state.queues.lock().await["%p2"].items[0].status,
+            ItemStatus::Stalled
+        );
     }
 
     fn with_draft(draft: bool) -> ApiState {
@@ -735,5 +813,29 @@ mod tests {
         push(&state, "%6", "x", "t").await.unwrap();
         on_state(&state, "%6", &AgentState::Closed).await;
         assert_eq!(queued_count(&state, "%6").await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_deliver_on_rest_marks_stalled_when_tmux_cannot_type() {
+        let state = ApiState::new(vec![], 0);
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%d1".into(), pane(AgentState::Idle, 1));
+        push(&state, "%d1", "prompt text", "t").await.unwrap();
+        assert_eq!(state.queues.lock().await["%d1"].scheduled, Some(1));
+        deliver(&state, "%d1", Some(1)).await;
+        // deliver clears scheduled and marks head as Stalled since type_prompt failed
+        assert_eq!(state.queues.lock().await["%d1"].scheduled, None);
+        assert_eq!(
+            state.queues.lock().await["%d1"].items[0].status,
+            ItemStatus::Stalled
+        );
+
+        // deliver for a pane with no agent state (current is None)
+        let s_no_agent = ApiState::new(vec![], 0);
+        push(&s_no_agent, "%no_agent", "text", "t").await.unwrap();
+        deliver(&s_no_agent, "%no_agent", None).await;
     }
 }
