@@ -61,7 +61,15 @@ echo "line 2" >>"$sandbox/repos/repo-0/file.txt"
 for i in $(seq 1 9); do
   cp -r "$sandbox/repos/repo-0" "$sandbox/repos/repo-$i"
 done
+# A fake agent named `claude`: a copy of `sleep`. Where coreutils is one multi-call binary
+# (Ubuntu 26.04), the copy does not know its new name and exits at once, taking the session
+# and the tmux server with it; a script stands in there (`switch --peek` then finds the agent
+# through the session's processes, a slower path that is still inside its budget).
 cp "$(command -v sleep)" "$sandbox/bin/claude"
+if ! "$sandbox/bin/claude" 0 2>/dev/null; then
+  printf '#!/bin/sh\nsleep "$1"\n' >"$sandbox/bin/claude"
+  chmod +x "$sandbox/bin/claude"
+fi
 tmux -f /dev/null new-session -d -s bench -c "$sandbox/repos/repo-0" "$sandbox/bin/claude 3600"
 for i in $(seq 1 9); do
   tmux new-window -d -t bench -c "$sandbox/repos/repo-$i" "sleep 3600"
