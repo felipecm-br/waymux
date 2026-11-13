@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-11-13
+
 - **Expanded mutation testing, fuzzing and coverage floor (`.cargo/mutants.toml`, `fuzz/`, `.clusterfuzzlite/`, `.github/workflows/ci.yml`, `src/`)**: extended `cargo-mutants` from 5 to 11 core logic modules (`delivery`, `api/queue`, `api/approvals`, `risk`, `checkpoint`, `quota/claude` added, 0 surviving mutants), added 3 libFuzzer targets (`quota_provider`, `statusline`, `switch_rows`, 7 total) with seed corpus replay in `cargo test`, extracted pure CLI/RPC dispatch helpers (`delivery::run_cli_with`, `checkpoint::run_cli_in`, `quota::claude::statusline_head`), and raised total crate line coverage to 85.2% (CI floor raised from 80% to 84%).
 
 ## [0.14.0] - 2026-11-13
