@@ -811,14 +811,86 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
         .map_or(0, |d| d.as_secs());
 
     let git_cache = prefetch_git_metadata(list_out, now_s);
+    let mut acpd_map = acpd_map;
+    let pinned = demote_answered(
+        &mut acpd_map,
+        &crate::cockpit::actions::read_answered(),
+        now_s * 1000,
+    );
     let sources = PaneSources {
         agent_states: &acpd_map,
         sess_agent: &sess_agent,
         sess_etimes: &sess_etimes,
         git: &git_cache,
     };
-    let rows = build_rows(list_out, &sources, reg, now_s, (&cur_session, &cur_window));
+    let mut rows = build_rows(list_out, &sources, reg, now_s, (&cur_session, &cur_window));
+    pin_refused(&mut rows, &pinned);
     render_items(rows, &theme, filter_agents, &cur_session)
+}
+
+/// How long a `y`/`n` from the Cockpit moves its row: down while the agent's hook catches up
+/// (answered), or to the top for the second press a risky call needs (refused).
+const ANSWERED_GRACE_MS: u64 = 5_000;
+
+/// A prompt answered with `y`/`n` a moment ago still shows as waiting until the agent's hook
+/// reports the next state, so the row would stay on top and the cursor (`Pos(0)` after the
+/// answer) could not move on to the next agent that needs you (TUIOS 0.13.2's "an answer
+/// moves to the next agent"). Rows answered within [`ANSWERED_GRACE_MS`], and not waiting
+/// again since, show as working. Returns the refused panes, which [`pin_refused`] lifts.
+fn demote_answered(
+    states: &mut HashMap<String, rpc_client::AgentPaneEntry>,
+    answered: &HashMap<String, (u64, crate::cockpit::actions::Answer)>,
+    now_ms: u64,
+) -> HashSet<String> {
+    use crate::cockpit::actions::Answer;
+    let mut pinned = HashSet::new();
+    for (pid, &(at, what)) in answered {
+        if now_ms.saturating_sub(at) > ANSWERED_GRACE_MS {
+            continue;
+        }
+        let Some(entry) = states.get_mut(pid) else {
+            continue;
+        };
+        if crate::triage::service_class(&entry.state).is_none() {
+            continue;
+        }
+        match what {
+            Answer::Refused => {
+                pinned.insert(pid.clone());
+            }
+            Answer::Answered => {
+                let since = if entry.changed_at > 0 {
+                    entry.changed_at
+                } else {
+                    crate::triage::normalize_ts(entry.last_timestamp)
+                };
+                if since <= at {
+                    entry.state = "working".to_string();
+                    entry.message = None;
+                }
+            }
+        }
+    }
+    pinned
+}
+
+/// Puts the rows of refused panes first, so `Pos(0)` keeps the cursor on the prompt the user
+/// was answering.
+fn pin_refused(rows: &mut [RawPaneRow], pinned: &HashSet<String>) {
+    if pinned.is_empty() {
+        return;
+    }
+    for row in rows.iter_mut() {
+        if pinned.contains(&row.pid) {
+            row.prio = 0;
+        }
+    }
+    rows.sort_by(|a, b| {
+        a.prio
+            .cmp(&b.prio)
+            .then_with(|| wait_order_key(a.prio, a.ts).cmp(&wait_order_key(b.prio, b.ts)))
+            .then_with(|| a.idx_num.cmp(&b.idx_num))
+    });
 }
 
 /// Daemon, `/proc` and git data the rows are built from.
@@ -2088,5 +2160,63 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn an_answered_prompt_shows_as_working_until_the_hook_catches_up() {
+        use crate::cockpit::actions::Answer;
+        let mut states = HashMap::new();
+        let mut waiting = entry("permission", 1_000, Some("Bash: ls"));
+        waiting.changed_at = 1_000;
+        states.insert("%1".to_string(), waiting.clone());
+        // Waiting again after the answer: a new prompt, keep it on top.
+        let mut again = waiting.clone();
+        again.changed_at = 3_000;
+        states.insert("%2".to_string(), again);
+        let answered: HashMap<String, (u64, Answer)> = [
+            ("%1".to_string(), (2_000, Answer::Answered)),
+            ("%2".to_string(), (2_000, Answer::Answered)),
+        ]
+        .into();
+        let pinned = demote_answered(&mut states, &answered, 2_500);
+        assert!(pinned.is_empty());
+        assert_eq!(states["%1"].state, "working");
+        assert_eq!(states["%1"].message, None);
+        assert_eq!(states["%2"].state, "permission");
+
+        // Answered too long ago: waiting again in the list.
+        let mut late = HashMap::from([("%3".to_string(), waiting)]);
+        let answered = HashMap::from([("%3".to_string(), (2_000, Answer::Answered))]);
+        let pinned = demote_answered(&mut late, &answered, 2_000 + ANSWERED_GRACE_MS + 1);
+        assert!(pinned.is_empty());
+        assert_eq!(late["%3"].state, "permission");
+    }
+
+    #[test]
+    fn a_refused_answer_pins_its_row_first_so_the_second_press_hits_the_same_prompt() {
+        use crate::cockpit::actions::Answer;
+        let mut states = HashMap::new();
+        states.insert("%7".to_string(), entry("permission", 1_000, None));
+        states.insert("%8".to_string(), entry("idle", 1_000, None));
+        let answered: HashMap<String, (u64, Answer)> = [
+            ("%7".to_string(), (2_000, Answer::Refused)),
+            ("%8".to_string(), (2_000, Answer::Refused)),
+        ]
+        .into();
+        let pinned = demote_answered(&mut states, &answered, 2_100);
+        // Only a row that still waits is pinned; an idle one has nothing to answer.
+        assert_eq!(pinned, HashSet::from(["%7".to_string()]));
+        assert_eq!(states["%7"].state, "permission");
+
+        let row = |pid: &str, prio: u8, idx: u32| RawPaneRow {
+            prio,
+            pid: pid.into(),
+            idx_num: idx,
+            ..Default::default()
+        };
+        let mut rows = vec![row("%1", 1, 1), row("%7", 2, 7), row("%9", 5, 9)];
+        pin_refused(&mut rows, &pinned);
+        let order: Vec<&str> = rows.iter().map(|r| r.pid.as_str()).collect();
+        assert_eq!(order, ["%7", "%1", "%9"]);
     }
 }

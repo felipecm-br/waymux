@@ -3,6 +3,7 @@ use crate::tmux_cmd::{
     tmux_display_msg, tmux_display_msg_timed, tmux_get_global_opt, tmux_out, tmux_set_global_opt,
     tmux_status, tmux_unset_global_opt,
 };
+use std::fmt::Write as _;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -138,9 +139,9 @@ pub fn held_refusal(code: &str) -> &'static str {
 }
 
 /// Answers a prompt the hook holds off the pane: no keystroke reaches the pane.
-fn answer_held(pid: &str, held: &serde_json::Value, approve: bool, now: u64) {
+fn answer_held(pid: &str, held: &serde_json::Value, approve: bool, now: u64) -> bool {
     let (Some(id), Some(line)) = (held["id"].as_u64(), held["line"].as_str()) else {
-        return;
+        return false;
     };
     let mut risk_ack = Vec::new();
     if approve {
@@ -148,7 +149,7 @@ fn answer_held(pid: &str, held: &serde_json::Value, approve: bool, now: u64) {
         let key = held["created_at"].as_u64().unwrap_or(0);
         match risk_gate(pid, cmd, key, now) {
             Some(rules) => risk_ack = rules,
-            None => return,
+            None => return false,
         }
     }
     let params = serde_json::json!({
@@ -159,20 +160,79 @@ fn answer_held(pid: &str, held: &serde_json::Value, approve: bool, now: u64) {
         "risk_ack": risk_ack,
     });
     match crate::rpc_client::rpc_call("approval/answer", &params, 500) {
-        Ok(_) => {}
+        Ok(_) => true,
         Err(crate::rpc_client::CallError::Rejected(code)) => {
             tmux_display_msg(&format!(
                 "Action ignored: Pane {pid} {}",
                 held_refusal(&code)
             ));
+            false
         }
         Err(crate::rpc_client::CallError::Unreachable) => {
             tmux_display_msg("Action ignored: waymux daemon is not running");
+            false
         }
     }
 }
 
-fn answer(pid: &str, row_state: &str, approve: bool) {
+/// What became of the last `y`/`n` on a pane: answered (the row moves down while the hook
+/// catches up) or refused (the row is pinned on top, so the cursor stays on it for the second
+/// press a risky call needs, instead of moving to another agent's prompt).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answer {
+    Answered,
+    Refused,
+}
+
+/// File naming the panes answered from the Cockpit, one `<pane>\t<epoch ms>\t<A|R>` line each.
+fn answered_file() -> Option<std::path::PathBuf> {
+    Some(crate::presets::private_runtime_dir()?.join("cockpit-answered"))
+}
+
+pub fn parse_answered(text: &str) -> std::collections::HashMap<String, (u64, Answer)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split('\t');
+            let pid = it.next()?;
+            let ms = it.next()?.trim().parse().ok()?;
+            let what = match it.next()?.trim() {
+                "A" => Answer::Answered,
+                "R" => Answer::Refused,
+                _ => return None,
+            };
+            Some((pid.to_string(), (ms, what)))
+        })
+        .collect()
+}
+
+/// Panes answered from the Cockpit, when, and how; read by `cockpit-items`.
+pub fn read_answered() -> std::collections::HashMap<String, (u64, Answer)> {
+    answered_file()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| parse_answered(&t))
+        .unwrap_or_default()
+}
+
+/// Records what the last answer on `pid` did, dropping entries older than a minute.
+fn record_answer(pid: &str, now: u64, what: Answer) {
+    let Some(path) = answered_file() else { return };
+    let mut map = std::fs::read_to_string(&path)
+        .map(|t| parse_answered(&t))
+        .unwrap_or_default();
+    map.retain(|_, (at, _)| now.saturating_sub(*at) < 60_000);
+    map.insert(pid.to_string(), (now, what));
+    let mut body = String::new();
+    for (p, (at, w)) in &map {
+        let tag = if *w == Answer::Answered { "A" } else { "R" };
+        let _ = writeln!(body, "{p}\t{at}\t{tag}");
+    }
+    let tmp = path.with_extension("tmp");
+    if std::fs::write(&tmp, body).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+fn answer(pid: &str, row_state: &str, approve: bool) -> bool {
     let live = crate::rpc_client::fetch_agent_states();
     let entry = live.get(pid);
     let now = crate::sys::unix_ms();
@@ -182,19 +242,18 @@ fn answer(pid: &str, row_state: &str, approve: bool) {
         now,
     ) {
         tmux_display_msg(&format!("Action ignored: Pane {pid} {why}"));
-        return;
+        return false;
     }
     if let Ok(held) =
         crate::rpc_client::rpc_call("approval/get", &serde_json::json!({ "pane_id": pid }), 150)
         && !held.is_null()
     {
-        answer_held(pid, &held, approve, now);
-        return;
+        return answer_held(pid, &held, approve, now);
     }
     if approve {
         let cmd = pending_command(pid, entry.and_then(|e| e.message.as_deref()));
         if risk_gate(pid, cmd.as_deref(), entry.map_or(0, |e| e.changed_at), now).is_none() {
-            return;
+            return false;
         }
     }
     let harness = tmux_out(&[
@@ -207,7 +266,7 @@ fn answer(pid: &str, row_state: &str, approve: bool) {
     .unwrap_or_default();
     let mut args = vec!["send-keys", "-t", pid];
     args.extend_from_slice(answer_keys(harness.trim(), approve));
-    let _ = tmux_status(&args);
+    tmux_status(&args)
 }
 
 pub fn run_agent_action(args: &[String]) -> i32 {
@@ -220,12 +279,14 @@ pub fn run_agent_action(args: &[String]) -> i32 {
     }
 
     match action {
-        "approve" => {
-            answer(pid, state, true);
-            0
-        }
-        "deny" => {
-            answer(pid, state, false);
+        "approve" | "deny" => {
+            let ok = answer(pid, state, action == "approve");
+            let what = if ok {
+                Answer::Answered
+            } else {
+                Answer::Refused
+            };
+            record_answer(pid, crate::sys::unix_ms(), what);
             0
         }
         "prompt" => {
@@ -811,5 +872,13 @@ mod tests {
         assert_eq!(create_window_from_raw(""), None);
         assert_eq!(create_window_from_raw("   \n"), None);
         assert_eq!(create_window_from_raw("# nonexistent_session_xyz"), None);
+    }
+
+    #[test]
+    fn answered_lines_parse_and_reject_garbage() {
+        let map = super::parse_answered("%1\t100\tA\n%2\t200\tR\n%3\tx\tA\n%4\t5\n%5\t9\tZ\n");
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["%1"], (100, super::Answer::Answered));
+        assert_eq!(map["%2"], (200, super::Answer::Refused));
     }
 }
