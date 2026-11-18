@@ -488,3 +488,151 @@ fn ship_in_the_bare_layout_merges_into_the_main_worktree_and_removes_the_feature
     assert!(main.join("c.txt").is_file());
     assert!(eventually_gone(&feat), "the merged worktree is still there");
 }
+
+/// Runs the bundled `scripts/awt/awt-delete.sh` (not a fake), with coreutils on `PATH` but no
+/// tmux session of the developer's.
+fn real_delete(env: &Env, args: &[&str]) -> Output {
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/awt/awt-delete.sh");
+    std::process::Command::new("bash")
+        .arg(script)
+        .args(args)
+        .current_dir(&env.dir)
+        .env_clear()
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", env.dir.join("bin").display()),
+        )
+        .env("HOME", env.dir.join("home"))
+        .env("XDG_STATE_HOME", env.dir.join("home/.local/state"))
+        .env("TMUX_TMPDIR", env.dir.join("tmux"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+/// A repository with a linked worktree `feat` on branch `feat`, which has one commit of its own.
+fn repo_with_feature(env: &Env) -> std::path::PathBuf {
+    env.init_repo();
+    let feat = env.dir.join("feat");
+    env.git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "feat",
+        &feat.to_string_lossy(),
+    ]);
+    std::fs::write(feat.join("b.txt"), "two\n").unwrap();
+    git_in(env, &feat, &["add", "."]);
+    git_in(env, &feat, &["commit", "-q", "-m", "feat"]);
+    feat
+}
+
+/// `awt rm` deletes the branch with -D and trashes the directory, so uncommitted, untracked and
+/// unmerged work goes to `refs/awt-backup/<branch>` first, and the printed command brings it back.
+#[test]
+fn rm_backs_up_uncommitted_and_untracked_work_and_the_recovery_command_restores_it() {
+    let env = Env::new();
+    let feat = repo_with_feature(&env);
+    std::fs::write(feat.join("a.txt"), "edited\n").unwrap();
+    std::fs::write(feat.join("new.txt"), "untracked\n").unwrap();
+    let feat_s = feat.to_string_lossy().to_string();
+
+    let out = real_delete(&env, &["s", &feat_s, "feat", "--no-tmux", "--no-hooks"]);
+    assert!(out.status.success(), "{out:?}");
+    assert!(eventually_gone(&feat));
+    let repo = env.repo();
+    assert_eq!(
+        git_in(&env, &repo, &["branch", "--list", "feat"]),
+        "",
+        "the branch is still deleted"
+    );
+    let files = git_in(
+        &env,
+        &repo,
+        &["ls-tree", "-r", "--name-only", "refs/awt-backup/feat"],
+    );
+    assert!(
+        files.contains("new.txt") && files.contains("b.txt"),
+        "{files}"
+    );
+    assert_eq!(
+        git_in(&env, &repo, &["show", "refs/awt-backup/feat:a.txt"]),
+        "edited"
+    );
+
+    let err = String::from_utf8_lossy(&out.stderr);
+    let recover = err
+        .lines()
+        .find(|l| l.trim_start().starts_with("git "))
+        .expect("a recovery command")
+        .trim()
+        .to_string();
+    let log = std::fs::read_to_string(env.dir.join("home/.local/state/awt/backups.log")).unwrap();
+    assert!(log.contains("refs/awt-backup/feat"), "{log}");
+
+    let back = std::process::Command::new("sh")
+        .args(["-c", &recover])
+        .env("HOME", env.dir.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(back.status.success(), "{back:?}");
+    assert_eq!(git_in(&env, &feat, &["log", "-1", "--format=%s"]), "feat");
+    assert_eq!(
+        std::fs::read_to_string(feat.join("a.txt")).unwrap(),
+        "edited\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(feat.join("new.txt")).unwrap(),
+        "untracked\n"
+    );
+    assert!(
+        git_in(&env, &feat, &["status", "--porcelain"]).contains("new.txt"),
+        "the work is uncommitted again"
+    );
+}
+
+/// A clean worktree whose branch is merged loses nothing, so no backup ref is written.
+#[test]
+fn rm_of_a_clean_merged_branch_writes_no_backup() {
+    let env = Env::new();
+    let feat = repo_with_feature(&env);
+    env.git(&["merge", "-q", "--ff-only", "feat"]);
+    let out = real_delete(
+        &env,
+        &[
+            "s",
+            &feat.to_string_lossy(),
+            "feat",
+            "--no-tmux",
+            "--no-hooks",
+        ],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let refs = git_in(&env, &env.repo(), &["for-each-ref", "refs/awt-backup"]);
+    assert_eq!(refs, "");
+}
+
+/// A clean branch with commits no other ref has is backed up at its own HEAD.
+#[test]
+fn rm_of_an_unmerged_clean_branch_backs_up_its_head() {
+    let env = Env::new();
+    let feat = repo_with_feature(&env);
+    let head = git_in(&env, &feat, &["rev-parse", "HEAD"]);
+    let out = real_delete(
+        &env,
+        &[
+            "s",
+            &feat.to_string_lossy(),
+            "feat",
+            "--no-tmux",
+            "--no-hooks",
+        ],
+    );
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        git_in(&env, &env.repo(), &["rev-parse", "refs/awt-backup/feat"]),
+        head
+    );
+}

@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **`awt rm` backs up work it would destroy (`scripts/awt/awt-delete.sh`)**: the worktree was moved to the trash and its branch deleted with `-D`, so uncommitted, untracked or unmerged work was gone for good. It is now saved first to `refs/awt-backup/<branch>` (a commit on top of `HEAD` with the working tree, ignored files excluded), the command that restores it is printed and kept in `$XDG_STATE_HOME/awt/backups.log`, and a backup that fails stops the removal unless `--force`. A clean worktree whose `HEAD` another branch or remote contains is removed as before; `AWT_BACKUP=0` turns it off. Idea from worktrunk 0.82.
+
 ## [0.14.1] - 2026-11-13
 
 - **Expanded mutation testing, fuzzing and coverage floor (`.cargo/mutants.toml`, `fuzz/`, `.clusterfuzzlite/`, `.github/workflows/ci.yml`, `src/`)**: extended `cargo-mutants` from 5 to 11 core logic modules (`delivery`, `api/queue`, `api/approvals`, `risk`, `checkpoint`, `quota/claude` added, 0 surviving mutants), added 3 libFuzzer targets (`quota_provider`, `statusline`, `switch_rows`, 7 total) with seed corpus replay in `cargo test`, extracted pure CLI/RPC dispatch helpers (`delivery::run_cli_with`, `checkpoint::run_cli_in`, `quota::claude::statusline_head`), and raised total crate line coverage to 85.2% (CI floor raised from 80% to 84%).

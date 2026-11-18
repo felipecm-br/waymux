@@ -106,6 +106,45 @@ if [[ $no_hooks -eq 0 && -d "$wt_path" ]]; then
     fi
 fi
 
+# 4c. Backup before removal (idea from worktrunk 0.82): the worktree is moved to the trash and
+# the branch deleted with -D, so uncommitted, untracked or unmerged work would be lost for good.
+# Snapshot it to refs/awt-backup/<branch>: a commit on top of HEAD holding the working tree
+# (tracked and untracked files, not ignored ones). Skipped when nothing would be lost: a clean
+# tree whose HEAD another branch or remote already contains. AWT_BACKUP=0 turns it off.
+backup_ref=""
+backup_has_changes=0
+if [[ "${AWT_BACKUP:-1}" != "0" && -n "$branch_clean" && -d "$wt_path" ]] \
+    && head_sha=$(git -C "$wt_path" rev-parse --verify -q HEAD 2>/dev/null); then
+    dirty=$(git -C "$wt_path" status --porcelain --untracked-files=all --ignore-submodules=all 2>/dev/null)
+    contained=$(git -C "$wt_path" for-each-ref --contains "$head_sha" --format='%(refname)' refs/heads refs/remotes 2>/dev/null \
+        | grep -vxF "refs/heads/$branch_clean" | head -1)
+    if [[ -n "$dirty" || -z "$contained" ]]; then
+        snapshot="$head_sha"
+        if [[ -n "$dirty" ]]; then
+            tmp_index=$(mktemp "${TMPDIR:-/tmp}/awt-backup-index.XXXXXX")
+            # An identity for the snapshot commit when the user has none configured.
+            if ! git -C "$wt_path" config user.email >/dev/null 2>&1; then
+                export GIT_AUTHOR_NAME=awt GIT_AUTHOR_EMAIL=awt@localhost GIT_COMMITTER_NAME=awt GIT_COMMITTER_EMAIL=awt@localhost
+            fi
+            if GIT_INDEX_FILE="$tmp_index" git -C "$wt_path" read-tree "$head_sha" 2>/dev/null \
+                && GIT_INDEX_FILE="$tmp_index" git -C "$wt_path" add -A . 2>/dev/null \
+                && tree=$(GIT_INDEX_FILE="$tmp_index" git -C "$wt_path" write-tree 2>/dev/null) \
+                && snapshot=$(git -C "$wt_path" commit-tree "$tree" -p "$head_sha" -m "awt backup: uncommitted work of $branch_clean before awt rm" 2>/dev/null); then
+                backup_has_changes=1
+            else
+                snapshot=""
+            fi
+            rm -f "$tmp_index"
+        fi
+        if [[ -n "$snapshot" ]] && git -C "$wt_path" update-ref --create-reflog -m "awt rm $branch_clean" "refs/awt-backup/$branch_clean" "$snapshot" 2>/dev/null; then
+            backup_ref="refs/awt-backup/$branch_clean"
+        elif [[ $force -eq 0 ]]; then
+            printf "\n\033[1;31m󰅖 Could not back up '%s' (uncommitted or unmerged work). Nothing was removed; use --force to remove anyway.\033[0m\n" "$branch_clean" >&2
+            exit 1
+        fi
+    fi
+fi
+
 # 5. Atomic Quarantine Trash-Rename & Asynchronous Background Purge (0.1ms UI latency)
 if [[ -d "$wt_path" ]]; then
     trash_dir="$(dirname "$wt_path")/.awt_trash_$(basename "$wt_path")_$$_${RANDOM}"
@@ -133,6 +172,21 @@ if [[ $keep_branch -eq 0 && -n "$branch_clean" ]]; then
     else
         git branch -D "$branch_clean" >/dev/null 2>&1 || true
     fi
+fi
+
+# 6b. Say how to get the work back, and keep a line of it in the backup log for popup users.
+if [[ -n "$backup_ref" ]]; then
+    if [[ $keep_branch -eq 0 ]]; then
+        recover="git --git-dir='$common_git_dir' worktree add -b '$branch_clean' '$wt_path' '$backup_ref'"
+        [[ $backup_has_changes -eq 1 ]] && recover="$recover && git -C '$wt_path' reset -q HEAD~1"
+    else
+        recover="git --git-dir='$common_git_dir' worktree add '$wt_path' '$branch_clean'"
+        [[ $backup_has_changes -eq 1 ]] && recover="$recover && git -C '$wt_path' checkout '$backup_ref' -- . && git -C '$wt_path' reset -q"
+    fi
+    printf "󰁯 Backed up '%s' to %s. Recover with:\n  %s\n" "$branch_clean" "$backup_ref" "$recover" >&2
+    log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/awt"
+    mkdir -p "$log_dir" 2>/dev/null \
+        && printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$backup_ref" "$recover" >>"$log_dir/backups.log" 2>/dev/null
 fi
 
 # 7. Handle Tmux session cleanup & redirection unless --no-tmux was specified
