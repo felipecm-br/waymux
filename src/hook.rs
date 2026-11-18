@@ -625,9 +625,18 @@ pub fn held_line(ctx: &serde_json::Value) -> Option<(String, String)> {
 
 /// Claude Code's `PermissionRequest` decision output for an answer.
 pub fn decision_output(decision: &str) -> Option<String> {
-    let behavior = match decision {
-        "allow" => serde_json::json!({ "behavior": "allow" }),
-        "deny" => serde_json::json!({
+    decision_output_for(decision, "answered")
+}
+
+/// The same, with the daemon's reason: `away_deny` tells the agent nobody is there to ask.
+pub fn decision_output_for(decision: &str, reason: &str) -> Option<String> {
+    let behavior = match (decision, reason) {
+        ("allow", _) => serde_json::json!({ "behavior": "allow" }),
+        ("deny", "away_deny") => serde_json::json!({
+            "behavior": "deny",
+            "message": "Denied automatically: the user is away from the keyboard (waymux [approvals] away_deny). Do not retry this call now; continue with work that does not need it, and list it in your summary so the user can allow it later.",
+        }),
+        ("deny", _) => serde_json::json!({
             "behavior": "deny",
             "message": "The user denied this from the waymux Cockpit.",
         }),
@@ -651,7 +660,8 @@ fn held_decision(pane: &str, ctx: &serde_json::Value) -> Option<String> {
     let params = serde_json::json!({ "pane_id": pane, "tool": tool, "line": line });
     // The daemon bounds the hold (at most 300 s); wait a little longer than that.
     let res = crate::rpc_client::rpc_call("approval/hold", &params, 305_000).ok()?;
-    decision_output(res.get("decision")?.as_str()?)
+    let reason = res.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+    decision_output_for(res.get("decision")?.as_str()?, reason)
 }
 
 /// What ended the turn, for the pane's error state: `usage limit` for a rate limit (the cue to
@@ -1172,6 +1182,26 @@ mod tests {
             serde_json::from_str(&decision_output("deny").unwrap()).unwrap();
         assert_eq!(deny["hookSpecificOutput"]["decision"]["behavior"], "deny");
         assert!(decision_output("maybe").is_none());
+        let cockpit = deny["hookSpecificOutput"]["decision"]["message"]
+            .as_str()
+            .unwrap();
+        assert!(cockpit.contains("Cockpit"));
+        let away: serde_json::Value =
+            serde_json::from_str(&decision_output_for("deny", "away_deny").unwrap()).unwrap();
+        let msg = away["hookSpecificOutput"]["decision"]["message"]
+            .as_str()
+            .unwrap();
+        assert!(
+            msg.contains("away") && msg.contains("Do not retry"),
+            "{msg}"
+        );
+        assert_eq!(away["hookSpecificOutput"]["decision"]["behavior"], "deny");
+        let allow_away: serde_json::Value =
+            serde_json::from_str(&decision_output_for("allow", "away_deny").unwrap()).unwrap();
+        assert_eq!(
+            allow_away["hookSpecificOutput"]["decision"]["behavior"],
+            "allow"
+        );
     }
 
     #[test]

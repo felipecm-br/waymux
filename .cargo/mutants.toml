@@ -25,7 +25,7 @@ exclude_re = [
     "(in|replace) (is_stdin_tty|read_stdin_json|get_active_tmux_pane|set_ai_agent_title|set_lazygitrs_icon|write_pane_state_file|send_acp_state|send_acp_state_with_session|held_decision|print_hook_response|run_tmux_hook|run_lazygit_hook|remember_pane_tool|recall_pane_tool|remember_pane_command|recall_pane_command)\\b",
     "(in|replace) (offload|prune_old_pastes|read_saved_hook_state|hook_state|type_now|current_pane|dispatch_prompt)\\b",
     "(in|replace) (type_into_pane|watch_for_stall|type_prompt|schedule)\\b",
-    "(in|replace) (print_decision)\\b",
+    "(in|replace) (print_decision|user_away)\\b",
     "(in|replace) (state_root|output|pane_dir|(Repo::)?(ensure_store|main_git|store_git|temp_index))\\b",
     "(in|replace) (claude_dir|inputs|record|prune_samples|live_sessions|tail_history|agent|run_statusline)\\b",
 ]

@@ -77,6 +77,11 @@ pub struct ApprovalsConfig {
     pub enabled: bool,
     /// How long a prompt is held before the harness shows its own (10 to 300 s, default 120).
     pub hold_seconds: Option<u64>,
+    /// Standing order for a hold that times out while you are away: `off` (default, the
+    /// harness asks in the pane), `risky` (deny calls `risk` flags) or `all` (deny every one).
+    pub away_deny: Option<String>,
+    /// Minutes without tmux input that count as away (default 15, at least 1).
+    pub away_after_minutes: Option<u64>,
 }
 
 /// `[checkpoints]`: save each agent pane's work tree at the end of every turn (on by
@@ -129,6 +134,19 @@ impl PhoneConfig {
 impl ApprovalsConfig {
     pub fn hold_secs(&self) -> u64 {
         self.hold_seconds.unwrap_or(120).clamp(10, 300)
+    }
+
+    /// Whether a timed-out hold of a call (risky or not) is denied while you are away.
+    pub fn away_denies(&self, risky: bool) -> bool {
+        match self.away_deny.as_deref() {
+            Some("all") => true,
+            Some("risky") => risky,
+            _ => false,
+        }
+    }
+
+    pub fn away_after_secs(&self) -> u64 {
+        self.away_after_minutes.unwrap_or(15).max(1) * 60
     }
 }
 

@@ -168,8 +168,58 @@ pub async fn hold(
     match outcome {
         Ok(Ok(Some(d))) => (Some(d), "answered"),
         Ok(_) => (None, "released"),
-        Err(_) => (None, "timeout"),
+        Err(_) => {
+            let away = if cfg.away_denies(risky) {
+                user_away(cfg.away_after_secs()).await
+            } else {
+                false
+            };
+            if away {
+                tracing::info!("approvals: denied {pane_id}'s held prompt while the user is away");
+            }
+            timeout_outcome(away)
+        }
     }
+}
+
+/// A hold that ran out: no decision (the harness asks in the pane), or the away standing order.
+fn timeout_outcome(away_deny: bool) -> (Option<Decision>, &'static str) {
+    if away_deny {
+        (Some(Decision::Deny), "away_deny")
+    } else {
+        (None, "timeout")
+    }
+}
+
+/// Whether nobody typed into tmux for `after_secs`: no client attached, or every client's
+/// last input older than that. `activity` is `#{client_activity}` (epoch seconds), one per line.
+pub fn away_from(activity: &str, now_secs: u64, after_secs: u64) -> bool {
+    activity
+        .lines()
+        .filter_map(|l| l.trim().parse::<u64>().ok())
+        .max()
+        .is_none_or(|last| now_secs.saturating_sub(last) >= after_secs)
+}
+
+/// The standing order of agent-deck 1.16.39 ("unattended permission deny"): a held prompt that
+/// nobody answered, while nobody is at the keyboard, is denied instead of left in the pane all
+/// night. A failed tmux call counts as present, so a broken query never denies.
+async fn user_away(after_secs: u64) -> bool {
+    let Ok(out) = crate::tmux_cmd::async_command()
+        .args(["list-clients", "-F", "#{client_activity}"])
+        .output()
+        .await
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    away_from(
+        &String::from_utf8_lossy(&out.stdout),
+        crate::sys::unix_ms() / 1000,
+        after_secs,
+    )
 }
 
 pub async fn get(state: &ApiState, pane_id: &str) -> serde_json::Value {
@@ -224,6 +274,7 @@ mod tests {
                 approvals: Some(ApprovalsConfig {
                     enabled: true,
                     hold_seconds: Some(2),
+                    ..ApprovalsConfig::default()
                 }),
                 ..state.settings()
             },
@@ -382,5 +433,46 @@ mod tests {
         .expect("second prompt registered");
         release(&state, "%3").await;
         assert_eq!(second.await.unwrap(), (None, "released"));
+    }
+
+    #[test]
+    fn test_away_needs_every_client_idle_for_the_whole_time() {
+        assert!(away_from("", 10_000, 900), "no client attached is away");
+        assert!(away_from("8000\n9000\n", 10_000, 900));
+        assert!(
+            !away_from("8000\n9500\n", 10_000, 900),
+            "one client typed recently"
+        );
+        assert!(
+            away_from("9100", 10_000, 900),
+            "exactly the threshold is away"
+        );
+        assert!(!away_from("9200", 10_000, 900));
+    }
+
+    #[test]
+    fn test_a_timed_out_hold_denies_only_under_the_standing_order() {
+        assert_eq!(timeout_outcome(false), (None, "timeout"));
+        assert_eq!(timeout_outcome(true), (Some(Decision::Deny), "away_deny"));
+    }
+
+    #[test]
+    fn test_away_deny_modes() {
+        let cfg = |mode: Option<&str>| ApprovalsConfig {
+            enabled: true,
+            away_deny: mode.map(str::to_string),
+            ..ApprovalsConfig::default()
+        };
+        assert!(!cfg(None).away_denies(true));
+        assert!(!cfg(Some("off")).away_denies(true));
+        assert!(cfg(Some("risky")).away_denies(true));
+        assert!(!cfg(Some("risky")).away_denies(false));
+        assert!(cfg(Some("all")).away_denies(false));
+        assert_eq!(cfg(None).away_after_secs(), 900);
+        let quick = ApprovalsConfig {
+            away_after_minutes: Some(0),
+            ..ApprovalsConfig::default()
+        };
+        assert_eq!(quick.away_after_secs(), 60);
     }
 }
