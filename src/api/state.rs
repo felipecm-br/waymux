@@ -168,6 +168,10 @@ impl ApiState {
         };
 
         let active_panes: std::collections::HashSet<&str> = output.lines().collect();
+        let revoked = self.hook_tokens.retain_live(&active_panes);
+        if revoked > 0 {
+            tracing::info!("Revoked {revoked} hook token(s) of closed panes");
+        }
 
         for pane_id in registered_panes {
             if pane_id.starts_with('%') && !active_panes.contains(pane_id.as_str()) {

@@ -36,8 +36,13 @@ pub struct StatusResponse {
 
 async fn handle_status(
     State(adapters): State<ApiState>,
-    Json(payload): Json<StatusRequest>,
+    Json(mut payload): Json<StatusRequest>,
 ) -> Result<Json<StatusResponse>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    // A hook (a jailed agent's included) chooses this text: bound what reaches the journal,
+    // the status bar and the Cockpit (TUIOS 0.13.3 bounded what one pane could make it keep).
+    if let Some(m) = payload.message.as_mut() {
+        clip_message(m);
+    }
     tracing::info!("Received REST status: {:?}", payload);
     match payload.state.parse::<AgentState>() {
         Ok(state) => {
@@ -60,6 +65,17 @@ async fn handle_status(
                 "error": err_msg
             })),
         )),
+    }
+}
+
+/// Longest status message kept, in characters; a tool call's first line fits easily.
+pub const MAX_MESSAGE_CHARS: usize = 1024;
+
+/// Cuts `m` to [`MAX_MESSAGE_CHARS`] on a character boundary, marking the cut with `…`.
+fn clip_message(m: &mut String) {
+    if let Some((at, _)) = m.char_indices().nth(MAX_MESSAGE_CHARS) {
+        m.truncate(at);
+        m.push('…');
     }
 }
 
@@ -716,5 +732,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn long_status_messages_are_clipped_on_a_character_boundary() {
+        let mut short = "Bash: ls".to_string();
+        clip_message(&mut short);
+        assert_eq!(short, "Bash: ls");
+        let mut long = "é".repeat(MAX_MESSAGE_CHARS + 500);
+        clip_message(&mut long);
+        assert_eq!(long.chars().count(), MAX_MESSAGE_CHARS + 1);
+        assert!(long.ends_with('…'));
     }
 }

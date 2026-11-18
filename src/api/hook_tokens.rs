@@ -84,6 +84,26 @@ impl HookTokens {
         Some(token)
     }
 
+    /// Drops the tokens of panes that no longer exist, so a closed pane's token stops working
+    /// (TUIOS 0.13.3 fixed the same class: a removed device kept its access). `live` must come
+    /// from a `list-panes` that succeeded: an empty list would revoke every token.
+    pub fn retain_live(&self, live: &std::collections::HashSet<&str>) -> usize {
+        if live.is_empty() {
+            return 0;
+        }
+        let mut by_token = self
+            .by_token
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = by_token.len();
+        by_token.retain(|_, pane| live.contains(pane.as_str()));
+        let dropped = before - by_token.len();
+        if dropped > 0 {
+            self.save(&by_token);
+        }
+        dropped
+    }
+
     /// The pane `token` was minted for. Every stored token is compared in constant time.
     pub fn pane_of(&self, token: &str) -> Option<String> {
         let by_token = self
@@ -164,6 +184,18 @@ mod tests {
         std::fs::write(&path, "not json").unwrap();
         assert!(saved_for(&path, "4242").is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_tokens_of_closed_panes_are_revoked_and_an_empty_list_revokes_nothing() {
+        let tokens = HookTokens::default();
+        let a = tokens.mint("%1").unwrap();
+        let b = tokens.mint("%2").unwrap();
+        assert_eq!(tokens.retain_live(&std::collections::HashSet::new()), 0);
+        assert_eq!(tokens.pane_of(&a).as_deref(), Some("%1"));
+        assert_eq!(tokens.retain_live(&["%2", "%9"].into_iter().collect()), 1);
+        assert_eq!(tokens.pane_of(&a), None);
+        assert_eq!(tokens.pane_of(&b).as_deref(), Some("%2"));
     }
 
     #[test]
