@@ -8,6 +8,7 @@ pub mod config;
 pub mod daemon;
 pub mod delivery;
 pub mod doctor;
+pub mod forward;
 pub mod git;
 pub mod health;
 pub mod hook;
@@ -114,6 +115,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "run",
         usage: "run [--window | --split <right|left|below|above>] [--ratio <percent>] [-t <pane>] [--cwd <dir>] [--name <label>] [--focus] [--keep-open] [--wait [--for <duration>] [--capture]] [--json] [--] <command>...",
         about: "Run a command in a new window or split; --wait returns its exit status",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "forward",
+        usage: "forward <pane> <port> [--local <port>] | ports <pane> | list [--json] | close <pane> [<port>]",
+        about: "Open a port of the host a pane's ssh reaches on this machine (dev servers of remote agents)",
         plumbing: false,
     },
     CommandSpec {
@@ -417,6 +424,7 @@ pub fn entry() -> anyhow::Result<()> {
         "goal" => Some(verbs::goal_cli(&args[2..])),
         "mute" => Some(mute::run_cli(&args[2..])),
         "skill" => Some(skill::run_cli(&args[2..])),
+        "forward" => Some(forward::run_cli(&args[2..])),
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),

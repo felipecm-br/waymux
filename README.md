@@ -209,6 +209,8 @@ waymux init --hooks
 
 It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification` (permission prompts and questions), `Stop`, `StopFailure` (a turn ended by an API error; a usage limit shows as `error` / `usage limit`) and `SessionEnd` to `waymux hook tmux <Event>`, plus `waymux hook lazygit <Event>` to link review notes to the session. Other agents call the same commands from their own hook config (Antigravity: `~/.gemini/antigravity-cli/hooks.json`, Devin: `~/.config/devin/config.json`). `waymux doctor` confirms the Claude Code wiring.
 
+**Remote dev servers.** When a pane runs `ssh` to another host and an agent there starts a server, `waymux forward <pane> 5173` opens `ssh -N -L 5173:127.0.0.1:5173` with that pane's destination and options and prints `http://localhost:5173`; `waymux forward ports <pane>` lists what listens on the host, `waymux forward list` shows open forwards (closing those whose pane is gone) and `waymux forward close <pane>` ends them. It needs key or agent authentication (`BatchMode`); a `ControlMaster` in `~/.ssh/config` makes it instant.
+
 Give the agents the skill that teaches them the CLI they can call from their pane (`run`, `wait`, `events`, `report`, `wt`, …):
 
 ```bash
