@@ -18,6 +18,7 @@ do_fetch=0
 scan_all=0
 clean_targets=0
 base_branch_arg=""
+idle_arg=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,6 +27,8 @@ while [[ $# -gt 0 ]]; do
     --fetch) do_fetch=1 ;;
     -a|--all) scan_all=1 ;;
     --clean-targets) clean_targets=1 ;;
+    --idle) idle_arg="${2:-}"; shift ;;
+    --idle=*) idle_arg="${1#--idle=}" ;;
     -h|--help)
       cat << 'HELP'
 awt sweep — Clean up merged worktrees and stale sibling build artifacts
@@ -39,6 +42,15 @@ FLAGS:
     --clean-targets       Clean Rust target/ directories in secondary sibling worktrees
     -y, --yes             Confirm and remove all merged worktrees without interactive prompt
     -n, --dry-run         List worktrees and targets that would be swept without deleting
+    --idle DAYS           Also list clean worktrees with no commit or index change for DAYS
+                          days and no tmux pane inside them (0 turns it off)
+
+PER-REPOSITORY RULES (git config, idea from Orca 1.4.259's workspace cleanup rules):
+    awt.sweepKeep         Space-separated branch globs never swept, e.g. "spike/* demo"
+    awt.sweepIdleDays     Default for --idle in this repository (unset or 0: merged only)
+
+Every removal goes through awt rm, which backs up unmerged or uncommitted work to
+refs/awt-backup/<branch> first; a worktree it cannot remove is kept, never purged.
     --fetch               Fetch origin before checking branch merge status
     -h, --help            Show this help message
 HELP
@@ -95,6 +107,35 @@ else
   repo_roots+=("$repo_root")
 fi
 
+# Whether branch $1 matches one of the space-separated globs in $2.
+is_kept_branch() {
+  local branch="$1" glob
+  for glob in $2; do
+    # shellcheck disable=SC2053 # $glob is a pattern on purpose
+    [[ "$branch" == $glob ]] && return 0
+  done
+  return 1
+}
+
+# Whether worktree $1 is clean (no tracked change, no untracked file), its HEAD commit and its
+# index are older than $2 days, and no tmux pane (paths in $3, one per line) is inside it.
+is_idle_worktree() {
+  local wt="$1" days="$2" live="$3" now head_ts index git_dir idx_ts p
+  while IFS= read -r p; do
+    [[ -n "$p" && ( "$p" == "$wt" || "$p" == "$wt/"* ) ]] && return 1
+  done <<< "$live"
+  now=$(date +%s)
+  head_ts=$(git -C "$wt" log -1 --format=%ct 2>/dev/null || echo "$now")
+  git_dir=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null || echo "")
+  idx_ts=0
+  index="$git_dir/index"
+  [[ -f "$index" ]] && idx_ts=$(stat -c %Y "$index" 2>/dev/null || stat -f %m "$index" 2>/dev/null || echo "$now")
+  (( head_ts > idx_ts )) || head_ts=$idx_ts
+  (( now - head_ts >= days * 86400 )) || return 1
+  # Last: a plain status refreshes the index (its mtime is the age read above); this one does not.
+  [[ -z "$(git -C "$wt" --no-optional-locks status --porcelain --untracked-files=normal 2>/dev/null)" ]]
+}
+
 declare -a candidate_repos=()
 declare -a candidate_paths=()
 declare -a candidate_branches=()
@@ -117,6 +158,15 @@ for repo_root in "${repo_roots[@]}"; do
         base_branch="main"
       fi
     fi
+  fi
+
+  # Per-repository rules.
+  keep_globs=$(git -C "$repo_root" config --get awt.sweepKeep 2>/dev/null || true)
+  idle_days="${idle_arg:-$(git -C "$repo_root" config --get awt.sweepIdleDays 2>/dev/null || echo 0)}"
+  [[ "$idle_days" =~ ^[0-9]+$ ]] || idle_days=0
+  live_paths=""
+  if [[ $idle_days -gt 0 ]]; then
+    live_paths=$(tmux list-panes -a -F '#{pane_current_path}' 2>/dev/null || true)
   fi
 
   if [[ $do_fetch -eq 1 ]]; then
@@ -170,6 +220,17 @@ for repo_root in "${repo_roots[@]}"; do
           fi
         fi
 
+        # 4. Idle: clean, no commit or index change for idle_days, no tmux pane inside it.
+        if [[ $merged -eq 0 && $idle_days -gt 0 ]] && is_idle_worktree "$cur_path" "$idle_days" "$live_paths"; then
+          merged=1
+          reason="Idle ${idle_days}+ days, clean"
+        fi
+
+        if [[ $merged -eq 1 ]] && is_kept_branch "$cur_branch" "$keep_globs"; then
+          merged=0
+          printf "  ${C_GRAY}󰐃 %-28s kept by awt.sweepKeep${R}\n" "$cur_branch"
+        fi
+
         if [[ $merged -eq 1 ]]; then
           candidate_repos+=("$repo_root")
           candidate_paths+=("$cur_path")
@@ -199,7 +260,7 @@ if [[ $total_candidates -eq 0 && $total_targets -eq 0 ]]; then
 fi
 
 if [[ $total_candidates -gt 0 ]]; then
-  printf "${C_YELLOW}${BOLD}Found %d merged worktree(s) eligible for sweep:${R}\n\n" "$total_candidates"
+  printf "${C_YELLOW}${BOLD}Found %d worktree(s) eligible for sweep:${R}\n\n" "$total_candidates"
   for i in "${!candidate_paths[@]}"; do
     c_br="${candidate_branches[$i]}"
     c_pt="${candidate_paths[$i]}"
@@ -250,10 +311,8 @@ for i in "${!candidate_paths[@]}"; do
     printf "${C_CYAN}✔ removed${R}\n"
     swept_count=$((swept_count + 1))
   else
-    git -C "$c_rp" worktree remove --force "$c_pt" >/dev/null 2>&1 || rm -rf "$c_pt" 2>/dev/null || true
-    git -C "$c_rp" branch -D "$c_br" >/dev/null 2>&1 || true
-    printf "${C_YELLOW}⚠ purged fallback${R}\n"
-    swept_count=$((swept_count + 1))
+    # No purge without awt rm: it is the step that backs the work up first.
+    printf "${C_YELLOW}⚠ kept (awt rm failed; run: awt rm %s)${R}\n" "$c_br"
   fi
 done
 

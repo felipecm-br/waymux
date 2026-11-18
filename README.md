@@ -414,6 +414,9 @@ draft = "~/bin/draft-tool"             # optional: keeps a typed prompt aside du
 | `WAYMUX_SHARE_DIR` | `~/.local/share/waymux` | Where `install.sh` puts the tmux plugin and `scripts/`, and where `wt` looks for bundled helpers |
 | `AWT_SWEEP_ROOTS` | `~/.dotfiles:~/dev/github` | Directories `awt sweep --all` scans (each a repository or a folder of repositories) |
 | `AWT_SWEEP_KEEP_BRANCHES` | your user name | Branches whose `target/` `awt sweep --clean-targets` never removes |
+| `awt.sweepKeep` (git config, per repository) | unset | Branch globs `awt sweep` never removes, e.g. `spike/* demo` |
+| `awt.sweepIdleDays` (git config, per repository) | `0` (off) | `awt sweep` also lists clean worktrees untouched for this many days with no tmux pane inside; `--idle DAYS` overrides it |
+| `AWT_BACKUP` | `1` | `0` stops `awt rm` from saving unmerged or uncommitted work to `refs/awt-backup/<branch>` |
 | `@border_gradient` (tmux option) | unset | Waymaker gradient palette (preset such as `aurora` or `#rrggbb,#rrggbb,...`) for the Cockpit popup: it opens borderless and Waymaker draws a gradient frame |
 | `WAYMUX_SKIP_CHECKSUM` | `0` | `1` lets `install.sh` proceed without a published checksum |
 | `WAYMUX_VERIFY_ATTESTATION` | `0` | `1` makes `install.sh` also verify each archive's build provenance (needs a logged-in `gh`; releases from v0.2.4 on) |

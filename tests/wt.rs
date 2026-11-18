@@ -636,3 +636,93 @@ fn rm_of_an_unmerged_clean_branch_backs_up_its_head() {
         head
     );
 }
+
+/// Runs the bundled `scripts/awt/awt-sweep.sh` from `cwd` (no tmux, no `gh` on `PATH`).
+fn real_sweep(env: &Env, cwd: &Path, args: &[&str]) -> Output {
+    let script = concat!(env!("CARGO_MANIFEST_DIR"), "/scripts/awt/awt-sweep.sh");
+    std::process::Command::new("bash")
+        .arg(script)
+        .args(args)
+        .current_dir(cwd)
+        .env_clear()
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", env.dir.join("bin").display()),
+        )
+        .env("HOME", env.dir.join("home"))
+        .env("TMUX_TMPDIR", env.dir.join("tmux"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap()
+}
+
+/// A worktree `name` on its own branch whose only commit and index are `days` old.
+fn old_worktree(env: &Env, name: &str, days: u64) -> std::path::PathBuf {
+    let wt = env.dir.join(name);
+    env.git(&["worktree", "add", "-q", "-b", name, &wt.to_string_lossy()]);
+    std::fs::write(wt.join(format!("{name}.txt")), "x\n").unwrap();
+    git_in(env, &wt, &["add", "."]);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let then = now - days * 86_400;
+    let date = format!("@{then} +0000");
+    let out = std::process::Command::new("git")
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(["commit", "-q", "-m", name])
+        .current_dir(&wt)
+        .env("HOME", env.dir.join("home"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_DATE", &date)
+        .env("GIT_COMMITTER_DATE", &date)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let index = git_in(env, &wt, &["rev-parse", "--absolute-git-dir"]) + "/index";
+    let touch = std::process::Command::new("touch")
+        .args(["-d", &format!("@{then}"), &index])
+        .status()
+        .unwrap();
+    assert!(touch.success());
+    wt
+}
+
+/// `--idle` (or `awt.sweepIdleDays`) also lists clean worktrees nobody touched for that long;
+/// `awt.sweepKeep` globs keep a branch out of every sweep.
+#[test]
+fn sweep_lists_idle_clean_worktrees_and_honours_the_keep_rule() {
+    let env = Env::new();
+    env.init_repo();
+    old_worktree(&env, "idle-one", 40);
+    old_worktree(&env, "spike-a", 40);
+    let dirty = old_worktree(&env, "dirty", 40);
+    std::fs::write(dirty.join("wip.txt"), "wip\n").unwrap();
+    env.git(&["config", "awt.sweepKeep", "spike-*"]);
+    let repo = env.repo();
+
+    let merged_only = real_sweep(&env, &repo, &["--dry-run"]);
+    let text = String::from_utf8_lossy(&merged_only.stdout).to_string();
+    assert!(merged_only.status.success(), "{merged_only:?}");
+    assert!(!text.contains("idle-one"), "idle is off by default: {text}");
+
+    let idle = real_sweep(&env, &repo, &["--dry-run", "--idle", "30"]);
+    let text = common::strip_ansi(&String::from_utf8_lossy(&idle.stdout));
+    assert!(idle.status.success(), "{idle:?}");
+    assert!(
+        text.contains("idle-one") && text.contains("Idle 30+ days, clean"),
+        "{text}"
+    );
+    assert!(
+        text.contains("spike-a") && text.contains("kept by awt.sweepKeep"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("dirty "),
+        "a dirty worktree is never idle: {text}"
+    );
+
+    env.git(&["config", "awt.sweepIdleDays", "60"]);
+    let text = String::from_utf8_lossy(&real_sweep(&env, &repo, &["--dry-run"]).stdout).to_string();
+    assert!(!text.contains("idle-one"), "40 days is not 60: {text}");
+}
