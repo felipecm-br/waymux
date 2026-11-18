@@ -738,3 +738,33 @@ fn queue_holds_a_prompt_while_the_user_has_a_draft_and_send_forces_it() {
         .unwrap_or_default()
         .contains("queued note")));
 }
+
+/// `waymux mute` toggles the window option the adapters read, and `--status` reports it.
+#[test]
+fn mute_toggles_the_window_option_and_reports_it() {
+    tmux_or_skip!(env, tmux, "sleep 30");
+    let pane = first_pane(&tmux);
+    let mute = |args: &[&str]| {
+        let mut full = vec!["mute", pane.as_str()];
+        full.extend_from_slice(args);
+        env.command(&full).output().unwrap()
+    };
+    let option = || tmux.run(&["show-options", "-w", "-t", &pane, "-v", "@waymux_muted"]);
+
+    assert_eq!(mute(&["--status"]).status.code(), Some(1));
+    assert!(mute(&[]).status.success());
+    assert_eq!(option(), "1");
+    let status = mute(&["--status"]);
+    assert_eq!(status.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&status.stdout).trim(), "muted");
+    assert!(mute(&[]).status.success());
+    assert_eq!(option(), "");
+    assert!(mute(&["--on"]).status.success());
+    assert!(mute(&["--on"]).status.success());
+    assert_eq!(option(), "1");
+    assert!(mute(&["--off"]).status.success());
+    assert_eq!(option(), "");
+
+    let missing = env.command(&["mute", "%999"]).output().unwrap();
+    assert_eq!(missing.status.code(), Some(3));
+}

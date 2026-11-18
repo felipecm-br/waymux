@@ -16,6 +16,7 @@ pub mod init;
 pub mod inject;
 pub mod keylog;
 pub mod launch;
+pub mod mute;
 pub mod pid;
 pub mod presets;
 pub mod quota;
@@ -112,6 +113,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "run",
         usage: "run [--window | --split <right|left|below|above>] [--ratio <percent>] [-t <pane>] [--cwd <dir>] [--name <label>] [--focus] [--keep-open] [--wait [--for <duration>] [--capture]] [--json] [--] <command>...",
         about: "Run a command in a new window or split; --wait returns its exit status",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "mute",
+        usage: "mute [<pane>] [--on | --off | --status]",
+        about: "Silence a window's sounds and alerts; its state still shows",
         plumbing: false,
     },
     CommandSpec {
@@ -401,6 +408,7 @@ pub fn entry() -> anyhow::Result<()> {
         "run" => Some(verbs::run_cli(&args[2..])),
         "wait" => Some(verbs::wait_cli(&args[2..])),
         "goal" => Some(verbs::goal_cli(&args[2..])),
+        "mute" => Some(mute::run_cli(&args[2..])),
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),

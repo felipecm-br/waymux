@@ -432,14 +432,20 @@ impl TmuxAdapter {
                 "-t",
                 pane_id,
                 "-p",
-                "#S|#{window_id}|#I|#W",
+                "#{@waymux_muted}|#S|#{window_id}|#I|#W",
             ])
             .output()
             .await;
 
         if let Ok(out) = output {
             let props = String::from_utf8_lossy(&out.stdout);
-            let parts: Vec<&str> = props.trim().split('|').collect();
+            let (muted, props) = props.trim().split_once('|').unwrap_or(("", props.trim()));
+            // A muted window (`waymux mute`) keeps its state marks but rings nothing.
+            if crate::mute::is_muted_value(muted) {
+                tracing::info!("TmuxAdapter: pane {pane_id} is in a muted window; no bell");
+                return;
+            }
+            let parts: Vec<&str> = props.split('|').collect();
             if parts.len() == 4 {
                 let session = parts[0];
                 let window_id = parts[1];

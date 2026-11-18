@@ -127,6 +127,7 @@ hints = false
 "d"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'd' '{=state}' '{=session}:{=idx}')", "Execute(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "ctrl-d"        = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'ctrl-d' '{=state}' '{=session}:{=idx}')", "Execute(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "x"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'x' '{=state}' '{=session}:{=idx}')", "Execute(printf '%s\n' '{=}' | __WAYMUX_BIN__ window-delete)", "Reload(__WAYMUX_BIN__ cockpit-items)"]
+"m"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'm' '{=state}' '{=session}:{=idx}')", "ExecuteSilent(__WAYMUX_BIN__ mute '{=pid}')", "Reload(__WAYMUX_BIN__ cockpit-items)"]
 "J"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'J' '{=state}' '{=session}:{=idx}')", "PreviewDown(5)"]
 "K"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit 'K' '{=state}' '{=session}:{=idx}')", "PreviewUp(5)"]
 "+"             = ["ExecuteAsync(__WAYMUX_BIN__ keylog cockpit '+' '{=state}' '{=session}:{=idx}')", "ExpandPreview(5)"]

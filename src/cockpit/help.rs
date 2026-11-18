@@ -33,6 +33,9 @@ pub fn run_cli() -> i32 {
         "    {c_yellow}{BOLD}[y / n]{RESET}  Approve / Deny    Guarded reply, then the next waiting agent; risky calls need y twice"
     );
     println!(
+        "    {c_cyan}{BOLD}[m]{RESET}      Mute Window       No sounds or bells from it; its state still shows"
+    );
+    println!(
         "    {c_cyan}{BOLD}[r]{RESET}      Review Notes      Dispatch Lazygitrs review notes to agent"
     );
     println!(

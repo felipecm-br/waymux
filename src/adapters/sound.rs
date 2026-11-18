@@ -325,6 +325,16 @@ impl OutputAdapter for SoundAdapter {
     }
 
     async fn update(&self, update: &AgentUpdate) -> anyhow::Result<()> {
+        let alerting = matches!(
+            update.state,
+            AgentState::Idle
+                | AgentState::AwaitingInput
+                | AgentState::Permission
+                | AgentState::Stalled
+                | AgentState::Error
+        );
+        // One tmux call, only on a transition that may sound; the state is tracked either way.
+        let muted = alerting && crate::mute::pane_muted(&update.pane_id).await;
         let prev_state = {
             let mut states = self.pane_states.lock().await;
             let prev = states.get(&update.pane_id).cloned();
@@ -335,6 +345,10 @@ impl OutputAdapter for SoundAdapter {
             }
             prev
         };
+        if muted {
+            tracing::info!("SoundAdapter: pane {} is in a muted window", update.pane_id);
+            return Ok(());
+        }
 
         match (&prev_state, &update.state) {
             // When agent transitions from Working (or active state) to Idle -> AI response finished!
