@@ -87,6 +87,24 @@ fn floor(v: &Value) -> String {
     f(v).map_or_else(|| "0".into(), |x| super::num(x.floor()).to_string())
 }
 
+/// How fast a provider group spends against an even pace to its reset: `pct` used, divided by
+/// the share of its `window` (seconds) already gone. 1.0 is even, above 1 runs out before the
+/// reset. None without a window and a future reset, or in the first 5 % of the window, when
+/// one prompt reads as a huge pace (idea from T3 Code 0.1.10's even-spend line).
+fn group_pace(g: &Value, now: i64) -> Option<f64> {
+    let pct = f(&g["pct"])?;
+    let reset = i(&g["reset"]).filter(|&r| r > now)?;
+    let window = f(&g["window"]).filter(|&w| w > 0.0)?;
+    #[allow(clippy::cast_precision_loss)] // seconds to a reset fit an f64 exactly
+    let left = (reset - now) as f64;
+    let elapsed = (1.0 - left / window).clamp(0.0, 1.0);
+    (elapsed >= 0.05).then(|| (pct / (elapsed * 100.0) * 10.0).round() / 10.0)
+}
+
+fn pace_text(p: f64) -> String {
+    format!("{}× pace", super::num(p))
+}
+
 fn clock(ts: Option<i64>, fmt: &str) -> String {
     use chrono::TimeZone;
     ts.and_then(|t| chrono::Local.timestamp_opt(t, 0).single())
@@ -303,8 +321,10 @@ pub fn report(snap: &Snapshot) -> String {
                             format!("{} (in {})", clock(Some(r), fmt), hm(Some(r - now)))
                         },
                     );
+                    let pace = group_pace(g, now)
+                        .map_or(String::new(), |p| format!("  pace: {}×", super::num(p)));
                     format!(
-                        "    {}{detail}: {}% used  reset {reset}",
+                        "    {}{detail}: {}% used  reset {reset}{pace}",
                         g["label"].as_str().unwrap_or_default(),
                         n(&g["pct"], "?")
                     )
@@ -585,8 +605,12 @@ pub fn visual(snap: &Snapshot, c: &Colors) -> String {
                         None => "unknown",
                     };
                     let reset = reset_col(now, i(&g["reset"]), pct.is_some_and(|p| p >= 90.0));
+                    let pace = group_pace(g, now).map_or(String::new(), |p| {
+                        let col = if p >= 1.25 { &c.yellow } else { &c.cyan };
+                        format!(" {}·{RESET} {col}{}{RESET}", c.muted, pace_text(p))
+                    });
                     format!(
-                        "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}{reset}{RESET}",
+                        "    {}{}{RESET}{}  {}{BOLD}{}{RESET}  {}{reset}{RESET}{pace}",
                         c.muted,
                         rpad(g["label"].as_str().unwrap_or_default(), 15),
                         bar_used(c, pct, None, glvl),
@@ -856,5 +880,28 @@ mod tests {
         assert_eq!(hm(None), "-");
         let b = activity_bins(&[NOW - 10, NOW - 20, NOW - 18000, NOW - 18001], NOW);
         assert_eq!(b, vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn a_group_with_a_window_gets_an_even_spend_pace() {
+        // Half of a 10 h window gone, 60 % used: 1.2× an even pace.
+        let g = json!({"label": "Pro", "pct": 60, "reset": NOW + 18_000, "window": 36_000});
+        assert_eq!(group_pace(&g, NOW), Some(1.2));
+        // No window, a past reset, or the first 5 % of the window: no pace.
+        assert_eq!(
+            group_pace(&json!({"pct": 60, "reset": NOW + 10}), NOW),
+            None
+        );
+        let past = json!({"pct": 60, "reset": NOW - 1, "window": 3600});
+        assert_eq!(group_pace(&past, NOW), None);
+        let early = json!({"pct": 1, "reset": NOW + 3500, "window": 3600});
+        assert_eq!(group_pace(&early, NOW), None);
+
+        let mut a = agy();
+        a["groups"] = json!([g]);
+        let s = snap(vec![a], "agy");
+        assert!(report(&s).contains("reset ") && report(&s).contains("pace: 1.2×"));
+        let v = crate::theme::strip_ansi(&visual(&s, &Colors::basic()).replace('\n', " "));
+        assert!(v.contains("1.2× pace"), "{v}");
     }
 }

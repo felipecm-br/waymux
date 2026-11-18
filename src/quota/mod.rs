@@ -7,8 +7,8 @@
 //! least `agent`, `available` and `level` (`green`, `yellow`, `red`, `unknown`). Optional
 //! fields shape the report: `title`, `icon`, `tag`, `sessions`, `prompts_1h`, `prompts_5h`,
 //! `activity` (10 prompt counts, one per 30 min, oldest first), `until` (epoch the agent is
-//! out of quota until), `groups` (`[{key, label, pct, reset, abbr?, detail?, hidden?}]`, `pct`
-//! is percent used), `est_five` / `capacity_5h` / `window` (an estimate without live data),
+//! out of quota until), `groups` (`[{key, label, pct, reset, window?, abbr?, detail?, hidden?}]`,
+//! `pct` is percent used, `window` the group's length in seconds, which adds an even-spend pace), `est_five` / `capacity_5h` / `window` (an estimate without live data),
 //! `default_model`, and `notes` (`[{text, level?}]`, `level` `warn` for yellow). Every field
 //! is passed through to `--json` unchanged.
 
