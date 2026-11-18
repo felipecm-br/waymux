@@ -23,6 +23,7 @@ pub mod quota;
 pub mod risk;
 pub mod rpc_client;
 pub mod signals;
+pub mod skill;
 pub mod status_palette;
 pub mod switch;
 pub mod sys;
@@ -113,6 +114,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "run",
         usage: "run [--window | --split <right|left|below|above>] [--ratio <percent>] [-t <pane>] [--cwd <dir>] [--name <label>] [--focus] [--keep-open] [--wait [--for <duration>] [--capture]] [--json] [--] <command>...",
         about: "Run a command in a new window or split; --wait returns its exit status",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "skill",
+        usage: "skill <setup | status | remove | show> [--agent <name|all>] [--dry-run] [--force] [--json]",
+        about: "Install or check the Waymux skill for Claude Code, Codex, opencode and Pi",
         plumbing: false,
     },
     CommandSpec {
@@ -409,6 +416,7 @@ pub fn entry() -> anyhow::Result<()> {
         "wait" => Some(verbs::wait_cli(&args[2..])),
         "goal" => Some(verbs::goal_cli(&args[2..])),
         "mute" => Some(mute::run_cli(&args[2..])),
+        "skill" => Some(skill::run_cli(&args[2..])),
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),

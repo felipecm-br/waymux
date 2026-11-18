@@ -209,6 +209,16 @@ waymux init --hooks
 
 It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification` (permission prompts and questions), `Stop`, `StopFailure` (a turn ended by an API error; a usage limit shows as `error` / `usage limit`) and `SessionEnd` to `waymux hook tmux <Event>`, plus `waymux hook lazygit <Event>` to link review notes to the session. Other agents call the same commands from their own hook config (Antigravity: `~/.gemini/antigravity-cli/hooks.json`, Devin: `~/.config/devin/config.json`). `waymux doctor` confirms the Claude Code wiring.
 
+Give the agents the skill that teaches them the CLI they can call from their pane (`run`, `wait`, `events`, `report`, `wt`, …):
+
+```bash
+waymux skill setup --dry-run   # what it would write, per agent whose CLI is installed
+waymux skill setup             # ~/.claude/skills/waymux (Claude Code), ~/.agents/skills/waymux (Codex, opencode, Pi)
+waymux skill status            # current | outdated | missing | foreign | unreadable; exit 1 unless all current
+```
+
+A copy someone else wrote (a hand-written skill, or a symlink a dotfiles repository manages) is `foreign` and kept unless `--force`; `remove` deletes only copies `setup` wrote. After an upgrade `status` reports `outdated` and `setup` refreshes them.
+
 `SessionStart` leaves the pane `idle` (a fresh session waits at the prompt; `compact` is left untouched) and `UserPromptSubmit` starts the spinner. The window icon follows the agent binary running in the pane, so the agent named in the hook command only applies to unrecognized commands. Devin imports `~/.claude/settings.json` and runs Claude's hooks next to its own; state updates are idempotent and sounds fire only on transitions, so the duplicates are harmless.
 
 `Stop` reports `idle` only when the agent has nothing left running. When a Claude Code turn ends with a `run_in_background` Bash call or a Monitor still running, the pane goes `background`, with the command (`cargo test`, or `cargo test (+1 more)`) as the reason. The agent is busy and nothing waits on you: no done chime, no review-queue entry, no stall alert, and triage skips the pane. The status bar animates it with its own, slower spinner (`hexfill`, `[theme] background_spinner`), and the Cockpit lists it with the working rows, animated with the same fill (the `@SLOW@` marker, which wm ≥ 0.8.0 animates through `results.slow_spinner_prefix`). The hook finds these as Claude Code tool shells (`~/.claude/shell-snapshots/…`) still alive under the `claude` process that ran it; the turn's own calls have already finished by then. Claude Code starts a new turn when the task exits, and that turn's `Stop` settles the state. Linux only (`/proc`); a hook run from inside a tool shell, such as a test suite under an agent, never counts its caller's tasks.
