@@ -103,12 +103,51 @@ fn parse_pane_rows(out: &str) -> Vec<PaneRow> {
         .collect()
 }
 
-fn pane_rows() -> Option<Vec<PaneRow>> {
-    let format = format!(
-        "#{{pane_id}}{FIELD}#{{session_name}}:#{{window_index}}.#{{pane_index}}{FIELD}#{{window_name}}{FIELD}#{{pane_active}}"
-    );
-    crate::tmux_cmd::tmux_fields_out(&["list-panes", "-a", "-F", &format])
-        .map(|out| parse_pane_rows(&out))
+/// The multiplexer the verbs drive: every tmux call they make goes through it, so a second
+/// backend (Rex, zellij; see the SOTA doc's I-R3) is one more `impl`, and the verbs can be tested
+/// against a fake one. The daemon's own RPC methods (`tmux.*`) stay tmux-only for now.
+pub trait Mux {
+    /// Every pane, or `None` when no server is running.
+    fn panes(&self) -> Option<Vec<PaneRow>>;
+    fn pane_alive(&self, pane: &str) -> bool;
+    /// The window holding `pane` (`new-window` takes a window, not a pane).
+    fn window_of(&self, pane: &str) -> Option<String>;
+    /// Opens a pane for `o` next to `target` running `/bin/sh -c <script>`; its pane id.
+    fn open(&self, o: &RunOpts, target: Option<&str>, script: &str) -> Option<String>;
+    fn set_title(&self, pane: &str, title: &str);
+}
+
+/// The tmux server this process talks to (`tmux_cmd`).
+pub struct Tmux;
+
+impl Mux for Tmux {
+    fn panes(&self) -> Option<Vec<PaneRow>> {
+        let format = format!(
+            "#{{pane_id}}{FIELD}#{{session_name}}:#{{window_index}}.#{{pane_index}}{FIELD}#{{window_name}}{FIELD}#{{pane_active}}"
+        );
+        crate::tmux_cmd::tmux_fields_out(&["list-panes", "-a", "-F", &format])
+            .map(|out| parse_pane_rows(&out))
+    }
+
+    fn pane_alive(&self, pane: &str) -> bool {
+        crate::tmux_cmd::tmux_out(&["display-message", "-p", "-t", pane, "#{pane_id}"])
+            .is_some_and(|id| id == pane)
+    }
+
+    fn window_of(&self, pane: &str) -> Option<String> {
+        crate::tmux_cmd::tmux_out(&["display-message", "-p", "-t", pane, "#{window_id}"])
+            .filter(|w| w.starts_with('@'))
+    }
+
+    fn open(&self, o: &RunOpts, target: Option<&str>, script: &str) -> Option<String> {
+        let words = tmux_args(o, target, script);
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        crate::tmux_cmd::tmux_out(&words).filter(|p| is_pane_id(p))
+    }
+
+    fn set_title(&self, pane: &str, title: &str) {
+        let _ = crate::tmux_cmd::tmux_status(&["select-pane", "-t", pane, "-T", title]);
+    }
 }
 
 fn is_pane_id(text: &str) -> bool {
@@ -118,8 +157,8 @@ fn is_pane_id(text: &str) -> bool {
 
 /// Resolves `target` against the tmux server. Without a server only a pane id can be taken, as
 /// given: the daemon also tracks panes of agents that report from outside tmux.
-fn resolve(target: &str) -> Resolved {
-    match pane_rows() {
+fn resolve(mux: &dyn Mux, target: &str) -> Resolved {
+    match mux.panes() {
         Some(rows) => resolve_in(&rows, target),
         None if is_pane_id(target.trim()) => Resolved::Pane(target.trim().to_string()),
         None => Resolved::NotFound,
@@ -128,7 +167,11 @@ fn resolve(target: &str) -> Resolved {
 
 /// The pane for `target`, or the exit status after saying why not.
 fn pane_or_exit(command: &str, target: &str) -> Result<String, i32> {
-    match resolve(target) {
+    pane_or_exit_in(&Tmux, command, target)
+}
+
+fn pane_or_exit_in(mux: &dyn Mux, command: &str, target: &str) -> Result<String, i32> {
+    match resolve(mux, target) {
         Resolved::Pane(id) => Ok(id),
         Resolved::NotFound => {
             eprintln!("waymux {command}: no pane matches '{target}'");
@@ -1110,18 +1153,18 @@ fn run_files(capture: bool) -> RunFiles {
     }
 }
 
-fn pane_alive(pane: &str) -> bool {
-    crate::tmux_cmd::tmux_out(&["display-message", "-p", "-t", pane, "#{pane_id}"])
-        .is_some_and(|id| id == pane)
-}
-
 /// Why a waited run ended without an exit status.
 enum Lost {
     TimedOut,
     PaneClosed,
 }
 
-fn await_status(status: &Path, pane: &str, limit: Option<Duration>) -> Result<i32, Lost> {
+fn await_status(
+    mux: &dyn Mux,
+    status: &Path,
+    pane: &str,
+    limit: Option<Duration>,
+) -> Result<i32, Lost> {
     let started = Instant::now();
     let mut checked = Instant::now();
     loop {
@@ -1134,7 +1177,7 @@ fn await_status(status: &Path, pane: &str, limit: Option<Duration>) -> Result<i3
         if checked.elapsed() >= Duration::from_millis(500) {
             checked = Instant::now();
             // The status is written before the pane goes, so look once more before giving up.
-            if !pane_alive(pane) && !status.exists() {
+            if !mux.pane_alive(pane) && !status.exists() {
                 return Err(Lost::PaneClosed);
             }
         }
@@ -1146,13 +1189,17 @@ fn await_status(status: &Path, pane: &str, limit: Option<Duration>) -> Result<i3
 /// taking the focus, and prints the new pane's id. With `--wait` it blocks until the command
 /// ends and exits with the command's own status.
 pub fn run_cli(args: &[String]) -> i32 {
+    run_cli_in(&Tmux, args)
+}
+
+pub fn run_cli_in(mux: &dyn Mux, args: &[String]) -> i32 {
     let Some(opts) = parse_run_args(args) else {
         return usage(RUN_USAGE);
     };
     // Without a target tmux would pick the pane the human is looking at, not the caller's.
     let own = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty());
     let target = match &opts.target {
-        Some(target) => match pane_or_exit("run", target) {
+        Some(target) => match pane_or_exit_in(mux, "run", target) {
             Ok(pane) => Some(pane),
             Err(code) => return code,
         },
@@ -1161,25 +1208,20 @@ pub fn run_cli(args: &[String]) -> i32 {
 
     // `new-window -t` takes a window, so the pane's own is looked up.
     let target = match (opts.placement, target) {
-        (Placement::Window, Some(pane)) => {
-            crate::tmux_cmd::tmux_out(&["display-message", "-p", "-t", &pane, "#{window_id}"])
-                .filter(|w| w.starts_with('@'))
-        }
+        (Placement::Window, Some(pane)) => mux.window_of(&pane),
         (_, target) => target,
     };
 
     let files = opts.wait.then(|| run_files(opts.capture));
     let script = build_script(&opts.command, files.as_ref(), opts.keep_open);
-    let words = tmux_args(&opts, target.as_deref(), &script);
-    let words: Vec<&str> = words.iter().map(String::as_str).collect();
-    let Some(pane) = crate::tmux_cmd::tmux_out(&words).filter(|p| is_pane_id(p)) else {
+    let Some(pane) = mux.open(&opts, target.as_deref(), &script) else {
         eprintln!("waymux run: tmux could not open the pane (is a tmux server running?)");
         return exit::FAILURE;
     };
     if opts.placement != Placement::Window
         && let Some(name) = &opts.name
     {
-        let _ = crate::tmux_cmd::tmux_status(&["select-pane", "-t", &pane, "-T", name]);
+        mux.set_title(&pane, name);
     }
 
     let Some(files) = files else {
@@ -1191,7 +1233,7 @@ pub fn run_cli(args: &[String]) -> i32 {
         return exit::OK;
     };
 
-    let outcome = await_status(&files.status, &pane, opts.limit);
+    let outcome = await_status(mux, &files.status, &pane, opts.limit);
     let screen = files
         .screen
         .as_ref()
@@ -1605,6 +1647,67 @@ mod tests {
         assert_eq!(
             tmux_args(&o, None, "x")[..3],
             strings(&["split-window", "-v", "-b"])
+        );
+    }
+
+    /// A multiplexer with fixed panes that runs each opened script at once, in-process.
+    struct FakeMux {
+        rows: Vec<PaneRow>,
+        opened: std::sync::Mutex<Vec<(Option<String>, String)>>,
+    }
+
+    impl Mux for FakeMux {
+        fn panes(&self) -> Option<Vec<PaneRow>> {
+            Some(self.rows.clone())
+        }
+        fn pane_alive(&self, _pane: &str) -> bool {
+            true
+        }
+        fn window_of(&self, pane: &str) -> Option<String> {
+            Some(format!("@win-of-{pane}"))
+        }
+        fn open(&self, _o: &RunOpts, target: Option<&str>, script: &str) -> Option<String> {
+            self.opened
+                .lock()
+                .unwrap()
+                .push((target.map(str::to_string), script.to_string()));
+            // The pane opens whatever the command's status; the script records that status.
+            std::process::Command::new("/bin/sh")
+                .args(["-c", script])
+                .env_remove("TMUX_PANE")
+                .status()
+                .ok()?;
+            Some("%77".to_string())
+        }
+        fn set_title(&self, _pane: &str, _title: &str) {}
+    }
+
+    #[test]
+    fn run_waits_for_the_command_through_any_backend_and_returns_its_status() {
+        let mux = FakeMux {
+            rows: vec![
+                row("%1", "main:1.0", "editor", true),
+                row("%2", "main:2.0", "server", true),
+            ],
+            opened: std::sync::Mutex::new(Vec::new()),
+        };
+        // A window name resolves through the backend's panes; the new window goes next to it.
+        let code = run_cli_in(
+            &mux,
+            &strings(&["-t", "server", "--wait", "--", "sh", "-c", "exit 7"]),
+        );
+        assert_eq!(code, 7);
+        let opened = mux.opened.lock().unwrap();
+        assert_eq!(opened[0].0.as_deref(), Some("@win-of-%2"));
+        drop(opened);
+
+        assert_eq!(
+            run_cli_in(&mux, &strings(&["--wait", "--", "true"])),
+            exit::OK
+        );
+        assert_eq!(
+            run_cli_in(&mux, &strings(&["-t", "nowhere", "--", "true"])),
+            exit::NOT_FOUND
         );
     }
 }
