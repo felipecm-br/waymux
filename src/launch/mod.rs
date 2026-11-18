@@ -486,6 +486,9 @@ fn finish(print_only: bool, cfg: &LaunchConfig, agent: &str, args: &[String]) ->
         return 0;
     }
     mark_launch(agent, &line);
+    if agent != "shell" {
+        warn_shared_folder();
+    }
     let _ = std::io::stdout().flush();
     let hook = env_or("WAYMUX_LAUNCH_EXEC", cfg.exec.as_ref());
     let mut cmd = if agent == "shell" {
@@ -515,6 +518,64 @@ fn finish(print_only: bool, cfg: &LaunchConfig, agent: &str, args: &[String]) ->
     let err = cmd.exec();
     eprintln!("waymux launch: {agent}: {err}");
     127
+}
+
+/// Other agent panes whose working directory is inside `top` (this pane's worktree): they
+/// share its edits, diff and review, so lazygitrs cannot tell whose change is whose. `rows` are
+/// `tmux list-panes -a` lines: pane id, path, `@ai_launch`, `@ai_agent_state`, window name.
+fn shared_folder_agents(own_pane: &str, top: &str, rows: &str) -> Vec<String> {
+    let top = top.trim_end_matches('/');
+    rows.lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('\x1f').collect();
+            let [pane, path, launch, state, window] = f.as_slice() else {
+                return None;
+            };
+            let inside = *path == top || path.starts_with(&format!("{top}/"));
+            let agent = !launch.is_empty() || !state.is_empty();
+            (*pane != own_pane && inside && agent).then(|| format!("{window} ({pane})"))
+        })
+        .collect()
+}
+
+/// TUIOS 0.13.2 marks agents that share a folder and suggests a worktree: here the launch says
+/// so in the status line, once, without asking anything. `WAYMUX_LAUNCH_SHARED_WARNING=0` is quiet.
+fn warn_shared_folder() {
+    if std::env::var("WAYMUX_LAUNCH_SHARED_WARNING").is_ok_and(|v| v == "0") {
+        return;
+    }
+    let Some(pane) = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let Some(top) = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|t| !t.is_empty())
+    else {
+        return;
+    };
+    let Some(rows) = crate::tmux_cmd::tmux_out_raw(&[
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pane_id}\x1f#{pane_current_path}\x1f#{@ai_launch}\x1f#{@ai_agent_state}\x1f#{window_name}",
+    ]) else {
+        return;
+    };
+    let others = shared_folder_agents(&pane, &top, &rows);
+    if others.is_empty() {
+        return;
+    }
+    let msg = format!(
+        "󰈔 Shares this folder with {}: edits and review are mixed. `awt new <branch>` gives this agent its own worktree",
+        others.join(", ")
+    );
+    eprintln!("\x1b[33m{msg}{RESET}");
+    crate::tmux_cmd::tmux_display_msg_timed(6000, &msg);
 }
 
 /// Records how this pane's agent started (`@ai_launch`); a plain shell clears it.
@@ -994,5 +1055,26 @@ mod tests {
             0
         );
         assert_eq!(run_cli(&["--bogus".into()]), 2);
+    }
+
+    #[test]
+    fn agents_in_the_same_worktree_are_found_and_other_folders_are_not() {
+        let rows = [
+            "%1\x1f/repo\x1fclaude\x1fworking\x1fme",
+            "%2\x1f/repo/src\x1fcodex\x1f\x1fapi",
+            "%3\x1f/repo-other\x1fclaude\x1fidle\x1fother",
+            "%4\x1f/repo\x1f\x1f\x1fshell",
+            "%5\x1f/repo\x1f\x1fidle\x1fweb",
+            "garbage",
+        ]
+        .join("\n");
+        assert_eq!(
+            shared_folder_agents("%1", "/repo/", &rows),
+            ["api (%2)", "web (%5)"]
+        );
+        assert_eq!(
+            shared_folder_agents("%1", "/elsewhere", &rows),
+            Vec::<String>::new()
+        );
     }
 }

@@ -401,6 +401,7 @@ draft = "~/bin/draft-tool"             # optional: keeps a typed prompt aside du
 | `WAYMUX_KEYLOG` | unset | `1` enables `waymux keylog` (`$XDG_STATE_HOME/flow/keys.tsv`) without `keylog = true` in `config.toml`; `0` disables it even when the config turns it on |
 | `WAYMUX_REVIEW_MIN_SECS` | `20` | Seconds in lazygitrs (Cockpit `g`) that clear the done-not-reviewed state when nothing was staged, committed or discarded |
 | `WAYMUX_LAUNCH_DEFAULT`, `WAYMUX_LAUNCH_EXEC`, `WAYMUX_LAUNCH_FILTER` | unset | Replace `[launch] default`, `exec` and `rows_filter` |
+| `WAYMUX_LAUNCH_SHARED_WARNING` | unset | `0` silences the status-line warning `launch` shows when another agent pane already works in this worktree (it suggests `awt new <branch>`) |
 | `WAYMUX_LAUNCH_NEXT` | `$XDG_RUNTIME_DIR/waymux/launch.next` | File `launch --next` arms |
 | `WAYMUX_LAUNCH_PRESET`, `WAYMUX_LAUNCH_PICK_PRESET` | built-in | Waymaker preset for the menu, and one layered over it for `--pick` |
 | `WAYMUX_SWITCH_ROWS`, `WAYMUX_SWITCH_AGENTS`, `WAYMUX_SWITCH_DRAFT`, `WAYMUX_SWITCH_PRESET` | unset | Replace `[switch] rows_command`, `agents` (space-separated), `draft` and `preset` |
