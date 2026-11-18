@@ -197,17 +197,25 @@ fn argv_of(pid: i32) -> Option<Vec<String>> {
     (!words.is_empty()).then_some(words)
 }
 
-/// The ssh connection of the pane: options and destination.
-fn pane_ssh(pane: &str) -> Result<(Vec<String>, String), String> {
+/// The ssh connection of the pane (options and destination), `Ok(None)` when it runs no ssh.
+pub(crate) fn pane_ssh_opt(pane: &str) -> Result<Option<(Vec<String>, String)>, String> {
     let pid: i32 = crate::tmux_cmd::tmux_out(&["display-message", "-p", "-t", pane, "#{pane_pid}"])
         .and_then(|p| p.parse().ok())
         .ok_or_else(|| format!("no such pane: {pane}"))?;
-    let ssh = find_ssh(&process_table(), pid).ok_or_else(|| format!("{pane} runs no ssh"))?;
+    let Some(ssh) = find_ssh(&process_table(), pid) else {
+        return Ok(None);
+    };
     let argv = argv_of(ssh).ok_or("cannot read the ssh command line")?;
-    ssh_base(&argv).ok_or_else(|| "no destination in the ssh command line".to_string())
+    ssh_base(&argv)
+        .map(Some)
+        .ok_or_else(|| "no destination in the ssh command line".to_string())
 }
 
-fn ssh_command(opts: &[String]) -> Command {
+fn pane_ssh(pane: &str) -> Result<(Vec<String>, String), String> {
+    pane_ssh_opt(pane)?.ok_or_else(|| format!("{pane} runs no ssh"))
+}
+
+pub(crate) fn ssh_command(opts: &[String]) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"])
         .args(opts);

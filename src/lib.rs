@@ -23,6 +23,7 @@ pub mod presets;
 pub mod quota;
 pub mod risk;
 pub mod rpc_client;
+pub mod send_file;
 pub mod signals;
 pub mod skill;
 pub mod status_palette;
@@ -121,6 +122,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "forward",
         usage: "forward <pane> <port> [--local <port>] | ports <pane> | list [--json] | close <pane> [<port>]",
         about: "Open a port of the host a pane's ssh reaches on this machine (dev servers of remote agents)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "send-file",
+        usage: "send-file <pane> <file | --clipboard> [--print]",
+        about: "Copy a file or the clipboard image to the pane's host (over its ssh) and type its path",
         plumbing: false,
     },
     CommandSpec {
@@ -425,6 +432,7 @@ pub fn entry() -> anyhow::Result<()> {
         "mute" => Some(mute::run_cli(&args[2..])),
         "skill" => Some(skill::run_cli(&args[2..])),
         "forward" => Some(forward::run_cli(&args[2..])),
+        "send-file" => Some(send_file::run_cli(&args[2..])),
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),

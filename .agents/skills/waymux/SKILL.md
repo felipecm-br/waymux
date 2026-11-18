@@ -61,6 +61,7 @@ The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission
 - `waymux switch -t <pane> --agent` / `--peek [choice]`: the agent in a pane and its model, or the slash command a switch would type. Without `--peek` it types into the pane: only on request.
 - `waymux wt`: one worktree per tmux session. `wt -c <branch> [base] [-- cmd]` creates one and runs a command in it; `wt <branch>` switches; `wt rm`, `rebase`, `ship`, `pr [n]`, `clone`, `sweep`, `reap`; bare `wt` opens the picker. `wt --help` lists flags. `ship` merges, pushes and deletes the branch, and `rm` deletes one: confirm with the user first. `rm` saves unmerged or uncommitted work to `refs/awt-backup/<branch>` first and prints the command that restores it. `sweep --idle <days>` also lists clean, untouched worktrees; `git config awt.sweepKeep '<globs>'` protects branches.
 - `waymux forward <pane> <port>`: when you run over SSH in a pane and start a dev server, this opens it on the user's machine and prints the local URL; `waymux forward ports <pane>` lists the remote listening ports, `list` and `close <pane>` manage them.
+- `waymux send-file <pane> <file | --clipboard>`: the user's way to hand a remote agent a local file or screenshot; it lands in `~/.cache/waymux/drop/` on your host and its path appears in your prompt.
 - `waymux mute [<pane>] [--on | --off | --status]`: silence a window's sounds and bells (state still shows). Only on request: it is the user's attention.
 
 ## 5. JSON-RPC (`POST http://127.0.0.1:4040/rpc`)

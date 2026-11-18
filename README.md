@@ -211,6 +211,8 @@ It wires `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notif
 
 **Remote dev servers.** When a pane runs `ssh` to another host and an agent there starts a server, `waymux forward <pane> 5173` opens `ssh -N -L 5173:127.0.0.1:5173` with that pane's destination and options and prints `http://localhost:5173`; `waymux forward ports <pane>` lists what listens on the host, `waymux forward list` shows open forwards (closing those whose pane is gone) and `waymux forward close <pane>` ends them. It needs key or agent authentication (`BatchMode`); a `ControlMaster` in `~/.ssh/config` makes it instant.
 
+**Files for remote agents.** `waymux send-file <pane> ~/shot.png` (or `--clipboard` for the clipboard image) copies the file over that pane's ssh into `~/.cache/waymux/drop/` on the remote host and types the remote path into the agent's prompt, without Enter. On a local pane it types the local path.
+
 Give the agents the skill that teaches them the CLI they can call from their pane (`run`, `wait`, `events`, `report`, `wt`, …):
 
 ```bash

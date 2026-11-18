@@ -768,3 +768,30 @@ fn mute_toggles_the_window_option_and_reports_it() {
     let missing = env.command(&["mute", "%999"]).output().unwrap();
     assert_eq!(missing.status.code(), Some(3));
 }
+
+/// For a pane with no ssh, `send-file` types the file's local path into the prompt, quoted,
+/// with no Enter.
+#[test]
+fn send_file_types_a_local_path_into_a_local_pane() {
+    tmux_or_skip!(env, tmux, "cat");
+    let pane = first_pane(&tmux);
+    let file = env.dir.join("shot one.png");
+    std::fs::write(&file, b"\x89PNG").unwrap();
+    let out = env
+        .command(&["send-file", &pane, &file.to_string_lossy()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let shown = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(shown, file.to_string_lossy());
+    assert!(common::eventually(|| {
+        tmux.run(&["capture-pane", "-p", "-t", &pane])
+            .contains("shot one.png")
+    }));
+
+    let missing = env
+        .command(&["send-file", &pane, "/nope/missing.png"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(1));
+}
