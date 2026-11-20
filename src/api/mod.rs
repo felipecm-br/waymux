@@ -2,13 +2,26 @@
 
 pub(crate) mod approvals;
 pub mod hook_tokens;
+mod mail;
 pub mod phone;
 mod queue;
+mod queue_store;
 mod rpc;
 mod state;
 
+pub use mail::{MAX_MESSAGE_BYTES as MAIL_MAX_BYTES, RATE_MAX as MAIL_RATE_MAX};
 pub use rpc::{RpcError, RpcRequest, RpcResponse};
 pub use state::{ApiState, PaneStateInfo, Settings, StallRecord};
+
+#[cfg(test)]
+pub(crate) async fn queue_list_for_tests(state: &ApiState, pane: &str) -> serde_json::Value {
+    queue::list(state, Some(pane)).await[pane].clone()
+}
+
+/// Puts back the prompts the last daemon left queued (see `queue_store`).
+pub async fn restore_queue(state: &ApiState) -> usize {
+    queue::restore(state).await
+}
 
 use crate::adapters::AgentState;
 use axum::{Json, Router, extract::State, routing::post};

@@ -15,6 +15,7 @@ pub mod hook;
 pub mod icons;
 pub mod init;
 pub mod inject;
+pub mod keep_awake;
 pub mod keylog;
 pub mod launch;
 pub mod mute;
@@ -158,6 +159,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "events",
         usage: "events [--json] [--pane <pane>] [--for <duration>] [--interval <duration>]",
         about: "Print a line per agent state change (TSV, or NDJSON with --json)",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "tell",
+        usage: "tell <pane> <text | ->",
+        about: "Send the agent in a pane a message from this one, through its queue",
         plumbing: false,
     },
     CommandSpec {
@@ -435,6 +442,7 @@ pub fn entry() -> anyhow::Result<()> {
         "send-file" => Some(send_file::run_cli(&args[2..])),
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
+        "tell" => Some(verbs::tell_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),
         "checkpoint" | "checkpoints" => Some(checkpoint::run_cli(&args[2..])),
         "window-create" => Some(cockpit::actions::run_window_create()),

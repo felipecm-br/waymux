@@ -139,7 +139,7 @@ Every command accepts `--help`. Unknown commands exit `2` instead of starting th
 
 ### Verbs for agents and scripts
 
-`run`, `wait`, `events`, `report` and `api` are meant to be called by an agent or a shell script, so they share one contract.
+`run`, `wait`, `events`, `report`, `tell` and `api` are meant to be called by an agent or a shell script, so they share one contract.
 
 **Exit status.** A script can branch on it without reading stderr:
 
@@ -159,9 +159,9 @@ Every command accepts `--help`. Unknown commands exit `2` instead of starting th
 # Run the tests in a split under this pane and branch on the result; the focus stays put.
 waymux run --split below --ratio 30 --wait --capture -- cargo test || echo "tests failed"
 
-# Ask a second agent for a review, then wait for it (the queue never types into a busy agent).
-waymux queue add %7 "Review the last commit in ~/src/api"
-waymux wait %7 --for 10m && waymux api call agent/recap '{"pane_id":"%7"}'
+# Ask a second agent for a review; it answers with `waymux tell <your pane> "..."`, and the answer
+# waits in your queue until you rest (neither message is typed into a busy agent).
+waymux tell %7 "Review the last commit in ~/src/api and tell me what you would change"
 
 # React to agents that need you.
 waymux events --json | jq -c 'select(.state == "permission" or .state == "awaiting_input")'
@@ -299,6 +299,10 @@ After an answer the cursor moves to the next agent that needs you, so a queue of
 
 Answer keys: on Claude Code `y` sends `1` (approve once) and `n` sends `Esc`. `y` and `n` are not hotkeys there and its highlighted option is "1. Yes", so the former `n` + `Enter` approved the call (verified on Claude Code 2.1.310). Other harnesses get `y` + `Enter` and `Esc`.
 
+### Keeping the machine awake
+
+While any agent is `working` or `background`, the daemon holds a `systemd-inhibit --what=idle:sleep` lock (`systemd-inhibit --list` shows it as `waymux`), so the machine does not suspend mid-turn; the lock goes when the last agent rests or closes, or when the daemon stops. `keep_awake = false` at the top of `config.toml` turns it off; without `systemd-inhibit` (macOS) it does nothing.
+
 ### Turn checkpoints
 
 At the end of every agent turn (`working` → `idle`, `permission` or `question`) the daemon saves the pane's work tree: tracked files as they are on disk and untracked files git does not ignore (an untracked file over 50 MB is left out), with `HEAD` as parent. A turn that changed nothing gets no checkpoint; each pane keeps the newest 50 (`[checkpoints] keep`, 1 to 1000; `enabled = false` turns them off).
@@ -333,6 +337,10 @@ Every finished turn also leaves a summary of that turn alone, which the preview 
 
 Blocking alerts (permission, question, stalled, error) within 1.5 s of each other play one sound, and status-bar alerts within 2 s share one line (`3 agents need you › 3:api, 4:web and 5:docs`). A line is cleared by the timer of its latest alert only.
 
+### Messages between agents
+
+`waymux tell <pane> <text | ->` (`agent/send`) sends the agent in `<pane>` a message from the agent in `$TMUX_PANE`, through the recipient's delivery queue, so it is typed only while that agent rests. The typed text names the sending pane and window, says it is another agent's text and not the user's, puts every line behind a `│ ` gutter, and ends with the command that answers (`waymux tell <sender> "<your reply>"`). Escape sequences and invisible characters are removed; a message is at most 4 KiB, and a pane may send 6 a minute, which stops two agents from answering each other forever. The recipient must be a pane the daemon tracks as an agent. A sandboxed agent's hook token may send only as its own pane and still reaches nothing else (no `tmux.*`, no `inject`, no starting agents: one started from a jail would run outside it).
+
 ### Delivery queue
 
 `inject`, `review-notes send` and the Cockpit's `I` never type into an agent directly. Typed mid-turn, a prompt lands inside the turn; typed while the agent waits on a permission prompt, the paste and its `Enter` answer the prompt. The daemon holds each prompt and types it when:
@@ -344,7 +352,7 @@ Blocking alerts (permission, question, stalled, error) within 1.5 s of each othe
 
 `waymux queue edit <pane> <id> <text|->` (`queue/edit`) replaces the text of a prompt not typed yet.
 
-A typed prompt stays at the head until the pane shows `working`. One the agent does not take within 5 s is marked `stalled`, never typed again, and announced with a tmux message; it holds the prompts behind it until the pane next works or `waymux queue rm <pane> <id>` drops it. A queue holds 8 prompts of at most 16 KiB each (`queue_full`, `too_large`), lives in daemon memory only, and is dropped when the pane closes.
+A typed prompt stays at the head until the pane shows `working`. Halfway there, when the agent has not started and the prompt's end still shows on the bottom of the resting pane, it gets one more `Enter` (a TUI taking in a long paste can drop the first; opencode does). One the agent does not take within 5 s is marked `stalled`, never typed again, and announced with a tmux message; it holds the prompts behind it until the pane next works or `waymux queue rm <pane> <id>` drops it. A queue holds 8 prompts of at most 16 KiB each (`queue_full`, `too_large`), is dropped when the pane closes, and survives a daemon restart: the prompts not typed yet are saved in `$XDG_STATE_HOME/waymux/queue` (0600) for the running tmux server and put back when the daemon starts; a typed or stalled prompt is never saved, so a restart never types one twice.
 
 Before queuing, invisible characters (Unicode tags, bidi controls, zero-width spaces) are removed, and a prompt over 12 KB is written to `$XDG_RUNTIME_DIR/waymux/paste/` (`0600`, removed after 24 h) and replaced by `[Pasted text: <path>, N lines]` for the agent to read. Without a daemon, the prompt is typed directly unless the hook last saw the agent working or on a prompt.
 

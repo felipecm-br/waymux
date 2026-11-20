@@ -8,7 +8,9 @@
 //! A typed prompt stays at the head until the pane shows `working` (the agent took it). One
 //! the agent does not take within the stall window is marked `stalled` and never typed again,
 //! so text is never typed twice; it holds the ones behind it until the pane next works or the
-//! user drops it with `waymux queue rm`.
+//! user drops it with `waymux queue rm`. Halfway there, a prompt whose end still shows on the
+//! bottom of a resting pane gets one more `Enter` (a TUI busy taking in a long paste can drop
+//! the first); the text itself is never sent again.
 //!
 //! A prompt is never typed into a half-written one: when the pane's composer holds a draft at
 //! delivery time, the head is `held` and checked again while the pane rests. Sending or stashing
@@ -24,6 +26,8 @@ use std::collections::{HashMap, VecDeque};
 pub const REST_MS: u64 = 1000;
 /// How long the agent has to show `working` after a prompt is typed.
 pub const STALL_MS: u64 = 5000;
+/// When a typed prompt still unsent on screen gets one more `Enter` (see `needs_enter_again`).
+pub const ENTER_RETRY_MS: u64 = 1500;
 pub const MAX_ITEMS: usize = 8;
 pub const MAX_BYTES: usize = 16 * 1024;
 /// How often a held head looks at the composer again while the pane stays at rest.
@@ -133,6 +137,7 @@ pub async fn push(
         });
         queue.items.len()
     };
+    persist(state).await;
     kick(state, pane_id).await;
     Ok((id, position))
 }
@@ -159,6 +164,7 @@ pub async fn cancel(state: &ApiState, pane_id: &str, id: Option<u64>) -> usize {
         usize::from(dropped)
     };
     if dropped > 0 {
+        persist(state).await;
         kick(state, pane_id).await;
     }
     dropped
@@ -172,16 +178,19 @@ pub async fn edit(state: &ApiState, pane_id: &str, id: u64, text: &str) -> Resul
     if text.len() > MAX_BYTES {
         return Err(PushError::TooLarge);
     }
-    let mut queues = state.queues.lock().await;
-    let item = queues
-        .get_mut(pane_id)
-        .and_then(|q| {
-            q.items
-                .iter_mut()
-                .find(|i| i.id == id && i.status.waiting())
-        })
-        .ok_or(PushError::NotFound)?;
-    item.text = text.to_string();
+    {
+        let mut queues = state.queues.lock().await;
+        let item = queues
+            .get_mut(pane_id)
+            .and_then(|q| {
+                q.items
+                    .iter_mut()
+                    .find(|i| i.id == id && i.status.waiting())
+            })
+            .ok_or(PushError::NotFound)?;
+        item.text = text.to_string();
+    }
+    persist(state).await;
     Ok(())
 }
 
@@ -218,6 +227,7 @@ pub async fn send_now(state: &ApiState, pane_id: &str, id: Option<u64>) -> Resul
             queue.scheduled = Some(seq.unwrap_or(0));
         }
     }
+    persist(state).await;
     if ready {
         deliver(state, pane_id, seq).await;
     }
@@ -250,7 +260,10 @@ pub async fn queued_count(state: &ApiState, pane_id: &str) -> usize {
 pub async fn on_state(state: &ApiState, pane_id: &str, new_state: &AgentState) {
     match new_state {
         AgentState::Closed => {
-            state.queues.lock().await.remove(pane_id);
+            let had = state.queues.lock().await.remove(pane_id).is_some();
+            if had {
+                persist(state).await;
+            }
         }
         AgentState::Working => {
             let mut queues = state.queues.lock().await;
@@ -362,6 +375,8 @@ async fn deliver(state: &ApiState, pane_id: &str, scheduled: Option<u64>) {
     if let Some(queue) = state.queues.lock().await.get_mut(pane_id) {
         queue.held_polls = 0;
     }
+    // Out of the saved file before it is typed: a restart in between never types it twice.
+    persist(state).await;
 
     let pane = pane_id.to_string();
     let typed = tokio::task::spawn_blocking(move || type_prompt(&pane, &text))
@@ -393,9 +408,186 @@ async fn deliver(state: &ApiState, pane_id: &str, scheduled: Option<u64>) {
     let watch = state.clone();
     let pane = pane_id.to_string();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(STALL_MS)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(ENTER_RETRY_MS)).await;
+        if needs_enter_again(&watch, &pane, id).await {
+            let target = pane.clone();
+            let pressed = tokio::task::spawn_blocking(move || {
+                crate::tmux_cmd::tmux_status(&["send-keys", "-t", &target, "Enter"])
+            })
+            .await
+            .unwrap_or(false);
+            if pressed {
+                tracing::info!("Queued prompt {id} for pane {pane}: Enter pressed again");
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(STALL_MS - ENTER_RETRY_MS)).await;
         mark_stalled(&watch, &pane, id, "was typed but the agent did not take it").await;
     });
+}
+
+/// Saves the prompts not typed yet (see `super::queue_store`) when the daemon keeps a file and
+/// they changed. The lock on the last snapshot is held through the write, so two saves never land
+/// out of order.
+pub async fn persist(state: &ApiState) {
+    let Some(path) = state.queue_file.clone() else {
+        return;
+    };
+    let snap = super::queue_store::snapshot(&*state.queues.lock().await);
+    let mut last = state.queue_saved.lock().await;
+    if last.as_ref() == Some(&snap) {
+        return;
+    }
+    let to_write = snap.clone();
+    let written = tokio::task::spawn_blocking(move || {
+        let pid = super::queue_store::tmux_pid()?;
+        let json = super::queue_store::encode(&pid, &to_write);
+        match crate::auth::write_token_file(&path, &json) {
+            Ok(()) => Some(()),
+            Err(e) => {
+                tracing::warn!("cannot save the queue to {}: {e}", path.display());
+                None
+            }
+        }
+    })
+    .await
+    .ok()
+    .flatten();
+    if written.is_some() {
+        *last = Some(snap);
+    }
+}
+
+/// Puts back the prompts an earlier daemon saved for panes of this tmux server, then delivers
+/// them as usual (a pane at rest gets its head after the rest window). Returns how many.
+pub async fn restore(state: &ApiState) -> usize {
+    let Some(path) = state.queue_file.clone() else {
+        return 0;
+    };
+    let saved = tokio::task::spawn_blocking(move || {
+        let json = std::fs::read_to_string(&*path).ok()?;
+        let pid = super::queue_store::tmux_pid()?;
+        Some(super::queue_store::decode_for(
+            &json,
+            &pid,
+            &super::queue_store::live_panes(),
+        ))
+    })
+    .await
+    .ok()
+    .flatten()
+    .unwrap_or_default();
+    restore_saved(state, saved).await
+}
+
+async fn restore_saved(state: &ApiState, saved: super::queue_store::SavedPanes) -> usize {
+    let mut count = 0;
+    let mut max_id = 0;
+    {
+        let mut queues = state.queues.lock().await;
+        for (pane, items) in &saved {
+            let queue = queues.entry(pane.clone()).or_default();
+            for i in items {
+                if queue.items.len() >= MAX_ITEMS || queue.items.iter().any(|q| q.id == i.id) {
+                    continue;
+                }
+                max_id = max_id.max(i.id);
+                queue.items.push_back(QueueItem {
+                    id: i.id,
+                    text: i.text.clone(),
+                    by: i.by.clone(),
+                    status: ItemStatus::Queued,
+                    queued_at: i.queued_at,
+                    force: false,
+                });
+                count += 1;
+            }
+        }
+    }
+    state
+        .next_queue_id
+        .fetch_max(max_id + 1, std::sync::atomic::Ordering::SeqCst);
+    for pane in saved.keys() {
+        kick(state, pane).await;
+    }
+    if count > 0 {
+        tracing::info!("Restored {count} queued prompt(s) from the last daemon");
+    }
+    count
+}
+
+/// Whether the typed head `id` should get one more `Enter`: the agent has not shown `working`
+/// (the head would be gone), the pane still rests, and the prompt's end is still on the bottom
+/// of the screen. A TUI can drop the `Enter` that follows a long bracketed paste while it is
+/// still taking the paste in (opencode does; Orca resends it, stablyai/orca#45850). Only `Enter`
+/// is sent, never the text, so a prompt is still typed at most once.
+async fn needs_enter_again(state: &ApiState, pane_id: &str, id: u64) -> bool {
+    let text = {
+        let queues = state.queues.lock().await;
+        let Some(head) = queues.get(pane_id).and_then(|q| q.items.front()) else {
+            return false;
+        };
+        if head.id != id || head.status != ItemStatus::Typed {
+            return false;
+        }
+        head.text.clone()
+    };
+    let resting = {
+        let states = state.pane_states.lock().await;
+        states
+            .get(pane_id)
+            .is_some_and(super::state::PaneStateInfo::at_rest)
+    };
+    if !resting {
+        return false;
+    }
+    let probe = state.unsent_probe.clone();
+    let pane = pane_id.to_string();
+    tokio::task::spawn_blocking(move || probe(&pane, &text))
+        .await
+        .unwrap_or(false)
+}
+
+/// How many characters of the prompt's end must still show on the bottom of the pane.
+const TAIL_CHARS: usize = 24;
+/// How many non-empty screen lines from the bottom hold the composer.
+const COMPOSER_LINES: usize = 12;
+
+/// The prompt's last characters, with whitespace and frame drawing removed (a composer wraps
+/// and boxes its text). `None` for a prompt too short to tell apart from the screen around it.
+fn prompt_tail(text: &str) -> Option<String> {
+    let flat = squash(text);
+    let n = flat.chars().count();
+    if n < 8 {
+        return None;
+    }
+    Some(flat.chars().skip(n.saturating_sub(TAIL_CHARS)).collect())
+}
+
+fn squash(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace() && !('\u{2500}'..='\u{259f}').contains(c))
+        .collect()
+}
+
+/// Whether `screen`'s bottom lines still show the end of `text`.
+fn tail_on_screen(screen: &str, text: &str) -> bool {
+    let Some(tail) = prompt_tail(text) else {
+        return false;
+    };
+    let lines: Vec<&str> = screen.lines().filter(|l| !l.trim().is_empty()).collect();
+    let bottom = squash(&lines[lines.len().saturating_sub(COMPOSER_LINES)..].join(""));
+    bottom.contains(&tail)
+}
+
+/// The live check: the pane's visible screen, without colors.
+pub fn prompt_still_unsent(pane: &str, text: &str) -> bool {
+    let Ok(out) = crate::tmux_cmd::command()
+        .args(["capture-pane", "-p", "-t", pane])
+        .output()
+    else {
+        return false;
+    };
+    out.status.success() && tail_on_screen(&String::from_utf8_lossy(&out.stdout), text)
 }
 
 /// The user is mid-draft: mark the head held, say so once, and look again while the pane rests.
@@ -837,5 +1029,104 @@ mod tests {
         let s_no_agent = ApiState::new(vec![], 0);
         push(&s_no_agent, "%no_agent", "text", "t").await.unwrap();
         deliver(&s_no_agent, "%no_agent", None).await;
+    }
+
+    #[test]
+    fn test_tail_on_screen_reads_through_wraps_and_frames() {
+        let prompt = "Review src/auth.rs and list every bug you find";
+        // opencode-like box, the prompt wrapped over two rows.
+        let screen = "history line\n\n┃ Review src/auth.rs and list ev ┃\n┃ ery bug you find               ┃\n┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛\n  Build  gpt-6\n";
+        assert!(tail_on_screen(screen, prompt));
+        // Sent: the composer is empty and the prompt scrolled out of the bottom lines.
+        let mut sent = format!("› {prompt}\n");
+        for i in 0..20 {
+            sent += &["tool output ", &i.to_string(), "\n"].concat();
+        }
+        sent.push_str("┃                                ┃\n");
+        assert!(!tail_on_screen(&sent, prompt));
+        // Too short to tell apart from the screen: never pressed.
+        assert!(!tail_on_screen("› go\n", "go"));
+        assert_eq!(prompt_tail("short"), None);
+        assert_eq!(prompt_tail(&"x".repeat(40)).unwrap().len(), TAIL_CHARS);
+    }
+
+    fn with_unsent(unsent: bool) -> ApiState {
+        let mut state = ApiState::new(vec![], 0);
+        state.unsent_probe = std::sync::Arc::new(move |_, _| unsent);
+        state
+    }
+
+    #[tokio::test]
+    async fn test_needs_enter_again_only_for_a_resting_typed_head_still_on_screen() {
+        let state = with_unsent(true);
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%e1".into(), pane(AgentState::Idle, 1));
+        let (id, _) = push(&state, "%e1", "a prompt long enough", "t")
+            .await
+            .unwrap();
+        // Not typed yet: nothing to press.
+        assert!(!needs_enter_again(&state, "%e1", id).await);
+        state.queues.lock().await.get_mut("%e1").unwrap().items[0].status = ItemStatus::Typed;
+        assert!(needs_enter_again(&state, "%e1", id).await);
+        // Another id, or a stalled head: no.
+        assert!(!needs_enter_again(&state, "%e1", id + 99).await);
+        // The pane left rest (a permission prompt): no Enter into it.
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%e1".into(), pane(AgentState::Permission, 2));
+        assert!(!needs_enter_again(&state, "%e1", id).await);
+        // Working took the head: nothing left to press.
+        on_state(&state, "%e1", &AgentState::Working).await;
+        assert!(!needs_enter_again(&state, "%e1", id).await);
+
+        // The prompt is gone from the screen: no.
+        let gone = with_unsent(false);
+        gone.pane_states
+            .lock()
+            .await
+            .insert("%e2".into(), pane(AgentState::Idle, 1));
+        let (id2, _) = push(&gone, "%e2", "a prompt long enough", "t")
+            .await
+            .unwrap();
+        gone.queues.lock().await.get_mut("%e2").unwrap().items[0].status = ItemStatus::Typed;
+        assert!(!needs_enter_again(&gone, "%e2", id2).await);
+    }
+
+    #[tokio::test]
+    async fn test_restore_saved_puts_prompts_back_in_order_and_moves_ids_on() {
+        use super::super::queue_store::{SavedItem, SavedPanes};
+        let state = ApiState::new(vec![], 0);
+        // A busy pane: restored prompts wait, nothing is typed into a turn.
+        state
+            .pane_states
+            .lock()
+            .await
+            .insert("%r1".into(), pane(AgentState::Working, 1));
+        let one = |id, t: &str| SavedItem {
+            id,
+            text: t.into(),
+            by: "inject".into(),
+            queued_at: 5,
+        };
+        let saved = SavedPanes::from([("%r1".into(), vec![one(41, "first"), one(42, "second")])]);
+        assert_eq!(restore_saved(&state, saved.clone()).await, 2);
+        let l = list(&state, Some("%r1")).await;
+        assert_eq!(l["%r1"][0]["text"], "first");
+        assert_eq!(l["%r1"][1]["text"], "second");
+        assert_eq!(l["%r1"][0]["status"], "queued");
+        assert_eq!(l["%r1"][0]["by"], "inject");
+        // Restoring twice does not double them; new pushes get ids past the saved ones.
+        assert_eq!(restore_saved(&state, saved).await, 0);
+        let (id, pos) = push(&state, "%r1", "third", "t").await.unwrap();
+        assert!(id > 42);
+        assert_eq!(pos, 3);
+        // Memory-only state (no file): persist and restore are no-ops.
+        persist(&state).await;
+        assert_eq!(restore(&state).await, 0);
     }
 }

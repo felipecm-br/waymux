@@ -237,6 +237,8 @@ pub struct Config {
     pub launch: Option<LaunchConfig>,
     /// In-place model and effort switch (`[switch]`).
     pub switch: Option<SwitchConfig>,
+    /// Hold a `systemd-inhibit` sleep and idle lock while an agent works (default true).
+    pub keep_awake: Option<bool>,
 }
 
 fn default_listen_addr() -> String {
@@ -274,6 +276,7 @@ impl Default for Config {
             quota: None,
             launch: None,
             switch: None,
+            keep_awake: None,
         }
     }
 }

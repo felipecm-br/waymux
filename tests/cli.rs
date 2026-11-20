@@ -50,7 +50,7 @@ impl Sandbox {
         let port = self.port.get();
         let config = format!(
             "listen_addr = \"127.0.0.1\"\nport = {port}\npid_file = \"{}\"\n\
-             shutdown_timeout_secs = 1\nidle_debounce_ms = 0\n\n[sound]\nenabled = false\n",
+             shutdown_timeout_secs = 1\nidle_debounce_ms = 0\nkeep_awake = false\n\n[sound]\nenabled = false\n",
             self.dir.join("waymux.pid").display()
         );
         std::fs::write(self.dir.join("config.toml"), config).unwrap();

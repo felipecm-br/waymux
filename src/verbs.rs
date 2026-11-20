@@ -613,6 +613,62 @@ pub fn events_cli(args: &[String]) -> i32 {
 
 // ───────────────────────────── report ─────────────────────────────
 
+const TELL_USAGE: &str = "tell <pane> <text | ->";
+
+/// `waymux tell <pane> <text | ->`: sends the agent in `<pane>` a message from the agent in this
+/// pane, through its delivery queue (`agent/send`, see `api::mail`). `-` reads the text from stdin.
+pub fn tell_cli(args: &[String]) -> i32 {
+    let (Some(target), Some(text)) = (args.first(), args.get(1)) else {
+        return usage(TELL_USAGE);
+    };
+    if args.len() > 2 {
+        return usage(TELL_USAGE);
+    }
+    let text = if text == "-" {
+        let mut buf = String::new();
+        if std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf).is_err() {
+            return usage(TELL_USAGE);
+        }
+        buf
+    } else {
+        text.clone()
+    };
+    let Some(from) = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty()) else {
+        eprintln!("waymux tell: not in a tmux pane: a message names the pane it comes from");
+        return exit::USAGE;
+    };
+    let to = match pane_or_exit("tell", target) {
+        Ok(pane) => pane,
+        Err(code) => return code,
+    };
+    let params = serde_json::json!({ "from": from, "to": to, "text": text });
+    match crate::rpc_client::rpc_call("agent/send", &params, 3000) {
+        Ok(result) => {
+            let position = result["position"].as_u64().unwrap_or(0);
+            println!("queued for {to} (position {position}); it is typed once that agent rests");
+            exit::OK
+        }
+        Err(crate::rpc_client::CallError::Unreachable) => unreachable("tell"),
+        Err(crate::rpc_client::CallError::Rejected(code)) => {
+            let why = match code.as_str() {
+                "not_an_agent" => format!("no agent the daemon knows of runs in {to}"),
+                "rate_limited" => format!(
+                    "this pane sent {} messages in the last minute; wait before sending more",
+                    crate::api::MAIL_RATE_MAX
+                ),
+                "self_message" => "that is this pane".to_string(),
+                "too_large" => format!(
+                    "the message is over {} bytes; put it in a file and send its path",
+                    crate::api::MAIL_MAX_BYTES
+                ),
+                other => other.to_string(),
+            };
+            eprintln!("waymux tell: {why}");
+            exit::FAILURE
+        }
+    }
+}
+
 const REPORT_USAGE: &str = "report <state> [--pane <pane>] [--msg <text>] [--progress <0-100>]";
 
 /// The message a report carries: the progress first, so a narrow column still shows it.
@@ -746,6 +802,11 @@ pub const METHODS: &[MethodSpec] = &[
         "queue/push",
         &["pane_id", "text", "by?"],
         "Hold a prompt until the agent is at rest, then deliver it",
+    ),
+    method(
+        "agent/send",
+        &["from", "to", "text"],
+        "Send another agent a message through its queue, framed as a peer's (waymux tell)",
     ),
     method("queue/list", &["pane_id?"], "Prompts waiting for delivery"),
     method(

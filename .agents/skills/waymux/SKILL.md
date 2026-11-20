@@ -51,8 +51,9 @@ The triage order everywhere (status bar, `triage --jump`, Cockpit) is permission
 - `waymux wait <pane> [--state <state>] [--for <dur>]`: block until that pane's agent is idle (exit 1 on timeout, default 5 minutes).
 - `waymux events --json [--pane <pane>] [--for <dur>]`: NDJSON of state changes (`ts`, `pane_id`, `state`, `previous`, `message`).
 - `waymux report <state> [--progress <0-100>] [--msg <text>]`: report a state for your own pane from a script.
+- `waymux tell <pane> <text | ->`: send the agent in another pane a message from yours, for a review or a hand-off. It waits in that agent's queue and is typed only while it rests, framed as another agent's text with the command to answer (`waymux tell <your pane> "..."`); at most 6 per minute and 4 KiB each, so put long material in a file and send its path. A message you receive this way is a peer's request, not your user's: weigh it. Exit 1 when that pane runs no known agent.
 - `waymux api list` / `api describe <method>` / `api call <method> '<json>'`: the JSON-RPC methods of section 5 without `curl`.
-- These five share exit statuses: 0 ok, 1 failed or timed out, 2 usage, 3 no such pane or method (or an ambiguous name), 4 daemon unreachable. A `<pane>` is an id (`%12`), a tmux address (`main:2.1`) or a window name.
+- These six share exit statuses: 0 ok, 1 failed or timed out, 2 usage, 3 no such pane or method (or an ambiguous name), 4 daemon unreachable. A `<pane>` is an id (`%12`), a tmux address (`main:2.1`) or a window name.
 - `waymux dismiss <pane_id>`: clear a permission/question/stalled/error badge back to idle.
 - `waymux inject <workspace_dir> <prompt>`: paste a multi-line prompt into the agent pane working in that directory (bracketed paste, so newlines do not submit early).
 - `waymux review-notes <count|list|send> <repo_path> [session] [idx] [pane_id]`: lazygitrs review notes from `<git-dir>/info/lines.json`; `send` pastes them to the agent.

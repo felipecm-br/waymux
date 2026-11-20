@@ -40,7 +40,9 @@ pub async fn run(config: Config, config_path: Option<String>) -> anyhow::Result<
     adapters.hook_tokens = Arc::new(crate::api::hook_tokens::HookTokens::load());
     adapters.reload(&config);
 
+    adapters.queue_file = crate::auth::state_file("queue").map(Arc::new);
     adapters.rehydrate_from_tmux().await;
+    crate::api::restore_queue(&adapters).await;
 
     let reload_state = adapters.clone();
     let bound = (config.listen_addr.clone(), config.port);

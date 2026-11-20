@@ -670,7 +670,7 @@ fn start_daemon(env: &common::Env, port: u16) -> Option<TestDaemon> {
     std::fs::write(
         &config,
         format!(
-            "listen_addr = \"127.0.0.1\"\nport = {port}\npid_file = \"{}\"\nshutdown_timeout_secs = 1\nidle_debounce_ms = 0\n\n[sound]\nenabled = false\n",
+            "listen_addr = \"127.0.0.1\"\nport = {port}\npid_file = \"{}\"\nshutdown_timeout_secs = 1\nidle_debounce_ms = 0\nkeep_awake = false\n\n[sound]\nenabled = false\n",
             env.dir.join("waymux.pid").display()
         ),
     )
@@ -737,6 +737,200 @@ fn queue_holds_a_prompt_while_the_user_has_a_draft_and_send_forces_it() {
     assert!(eventually(|| std::fs::read_to_string(&input)
         .unwrap_or_default()
         .contains("queued note")));
+}
+
+/// A prompt queued for a busy agent survives a daemon restart and is typed once the agent rests
+/// (P6b); a prompt already typed is not saved, so it is never typed twice.
+#[test]
+fn queued_prompt_survives_a_daemon_restart() {
+    let env = Env::new();
+    let input = fake_agent(&env, "claude", "  Opus 5.5\\n❯ ");
+    let Some(tmux) = env.tmux(&env.dir.join("bin/claude").display().to_string()) else {
+        eprintln!("tmux not installed; skipping");
+        return;
+    };
+    let pane = first_pane(&tmux);
+    let port = common::unused_port();
+    let wm = |args: &[&str]| {
+        let out = env
+            .command(args)
+            .env("WAYMUX_PORT", port.to_string())
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+    let set = |state: &str| {
+        wm(&[
+            "api",
+            "call",
+            "agentState/update",
+            &format!(r#"{{"pane_id":"{pane}","state":"{state}"}}"#),
+        ])
+    };
+
+    let daemon = start_daemon(&env, port).expect("daemon did not start");
+    set("working");
+    wm(&["queue", "add", &pane, "survive the restart"]);
+    assert!(wm(&["queue", "ls", &pane]).contains("survive the restart"));
+    let saved = env.dir.join("home/.local/state/waymux/queue");
+    assert!(
+        eventually(|| std::fs::read_to_string(&saved)
+            .unwrap_or_default()
+            .contains("survive the restart")),
+        "queue file not written"
+    );
+    drop(daemon);
+
+    let _daemon = start_daemon(&env, port).expect("daemon did not restart");
+    assert!(
+        eventually(|| wm(&["queue", "ls", &pane]).contains("survive the restart")),
+        "prompt lost in the restart: {}",
+        wm(&["queue", "ls", &pane])
+    );
+    assert!(!input.exists(), "typed into a busy agent");
+    set("idle");
+    assert!(
+        eventually(|| std::fs::read_to_string(&input)
+            .unwrap_or_default()
+            .contains("survive the restart")),
+        "restored prompt never typed"
+    );
+    // Typed: gone from the file.
+    assert!(eventually(|| !std::fs::read_to_string(&saved)
+        .unwrap_or_default()
+        .contains("survive the restart")));
+}
+
+/// P9: one agent asks another for a review and gets the answer through the queue; a jailed
+/// agent's hook token may send as its own pane only, and gets 403 on `tmux.*` and `inject`.
+#[test]
+fn agents_message_each_other_through_the_queue() {
+    let env = Env::new();
+    let input = fake_agent(&env, "claude", "  Opus 5.5\\n❯ ");
+    let Some(tmux) = env.tmux(&env.dir.join("bin/claude").display().to_string()) else {
+        eprintln!("tmux not installed; skipping");
+        return;
+    };
+    let asker = first_pane(&tmux);
+    let reviewer = tmux
+        .run(&[
+            "split-window",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            &env.dir.join("bin/claude").display().to_string(),
+        ])
+        .trim()
+        .to_string();
+    let port = common::unused_port();
+    let _daemon = start_daemon(&env, port).expect("daemon did not start");
+    let wm = |pane: &str, args: &[&str]| {
+        env.command(args)
+            .env("WAYMUX_PORT", port.to_string())
+            .env("TMUX_PANE", pane)
+            .output()
+            .unwrap()
+    };
+    let set = |pane: &str, state: &str| {
+        wm(
+            pane,
+            &[
+                "api",
+                "call",
+                "agentState/update",
+                &format!(r#"{{"pane_id":"{pane}","state":"{state}"}}"#),
+            ],
+        )
+    };
+    set(&asker, "working");
+    set(&reviewer, "idle");
+
+    // The asker asks; the idle reviewer gets the framed message.
+    let out = wm(&asker, &["tell", &reviewer, "please review src/auth.rs"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        eventually(|| std::fs::read_to_string(&input)
+            .unwrap_or_default()
+            .contains("│ please review src/auth.rs")),
+        "message never typed: {:?}",
+        std::fs::read_to_string(&input)
+    );
+    let typed = std::fs::read_to_string(&input).unwrap();
+    assert!(typed.contains(&format!("pane {asker}")), "{typed}");
+    assert!(typed.contains(&format!("waymux tell {asker}")), "{typed}");
+
+    // The reviewer answers; the asker is busy, so it waits in its queue, then is typed at rest.
+    set(&reviewer, "working");
+    let out = wm(
+        &reviewer,
+        &["tell", &asker, "two bugs: line 12 and line 40"],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let queued = String::from_utf8_lossy(&wm(&asker, &["queue", "ls", &asker]).stdout).to_string();
+    assert!(queued.contains("agent:"), "{queued}");
+    set(&asker, "idle");
+    assert!(eventually(|| std::fs::read_to_string(&input)
+        .unwrap_or_default()
+        .contains("│ two bugs: line 12 and line 40")));
+
+    // A pane that runs no known agent cannot be told anything.
+    let shell = tmux
+        .run(&["split-window", "-d", "-P", "-F", "#{pane_id}", "sleep 30"])
+        .trim()
+        .to_string();
+    assert_eq!(wm(&asker, &["tell", &shell, "hi"]).status.code(), Some(1));
+
+    // A hook token: agent/send as itself only; tmux.* and inject refused with 403.
+    let token = String::from_utf8_lossy(&wm(&asker, &["hook-token", &asker]).stdout)
+        .trim()
+        .to_string();
+    assert_ne!(token, "", "no hook token minted");
+    let http_code = |body: &str| {
+        let out = std::process::Command::new("curl")
+            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", "-X", "POST"])
+            .arg(format!("http://127.0.0.1:{port}/rpc"))
+            .args([
+                "-H",
+                &format!("Authorization: Bearer {token}"),
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                body,
+            ])
+            .output();
+        out.map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+            .unwrap_or_default()
+    };
+    if std::process::Command::new("curl")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
+        let own = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"agent/send","params":{{"from":"{asker}","to":"{reviewer}","text":"ok"}}}}"#
+        );
+        assert_eq!(http_code(&own), "200");
+        let other = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"agent/send","params":{{"from":"{reviewer}","to":"{asker}","text":"spoof"}}}}"#
+        );
+        assert_eq!(http_code(&other), "403");
+        let keys = format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tmux.send_keys","params":{{"target":"{reviewer}","keys":"x"}}}}"#
+        );
+        assert_eq!(http_code(&keys), "403");
+        let inject =
+            r#"{"jsonrpc":"2.0","id":1,"method":"inject","params":{"workspace":"/","prompt":"x"}}"#;
+        assert_eq!(http_code(inject), "403");
+    }
 }
 
 /// `waymux mute` toggles the window option the adapters read, and `--status` reports it.

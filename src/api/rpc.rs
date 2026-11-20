@@ -54,6 +54,13 @@ pub struct QueuePushParams {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AgentSendParams {
+    pub from: String,
+    pub to: String,
+    pub text: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PhonePaneParams {
     pub pane_id: String,
 }
@@ -327,6 +334,16 @@ async fn call(state: &ApiState, method: &str, params: Value) -> RpcResult {
         "agentState/dismiss" | "agent_state/dismiss" => dismiss(state, lenient(params)?).await,
         "agentState/wait" | "agent_state/wait" => wait(state, lenient(params)?).await,
         "queue/push" => queue_push(state, strict(params)?).await,
+        // A hook token may send only as its own pane (`super::hook_tokens::allowed`).
+        "agent/send" => {
+            let p: AgentSendParams = strict(params)?;
+            match super::mail::send(state, &p.from, &p.to, &p.text).await {
+                Ok((id, position)) => {
+                    Ok(json!({ "id": id, "position": position, "status": "queued" }))
+                }
+                Err(e) => Err(RpcError::new(INVALID_PARAMS, e.code())),
+            }
+        }
         "approval/hold" => {
             let p: ApprovalHoldParams = strict(params)?;
             let (decision, reason) =

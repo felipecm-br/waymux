@@ -141,12 +141,17 @@ pub fn valid_pane(pane: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// Whether a request with a hook token for `pane` may go through: its own status, or holding
-/// its own prompt. A batch, another method or another pane is refused.
+/// Whether a request with a hook token for `pane` may go through: its own status, holding its
+/// own prompt, or a message to another agent sent as itself (`agent/send`, see `super::mail`).
+/// A batch, another method or another pane is refused.
 pub fn allowed(path: &str, body: &Value, pane: &str) -> bool {
     match path {
         "/api/status" => body["pane_id"] == pane,
-        "/rpc" => body["method"] == "approval/hold" && body["params"]["pane_id"] == pane,
+        "/rpc" => match body["method"].as_str() {
+            Some("approval/hold") => body["params"]["pane_id"] == pane,
+            Some("agent/send") => body["params"]["from"] == pane,
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -229,5 +234,23 @@ mod tests {
         }
         assert!(!allowed("/rpc", &json!([hold]), "%3"));
         assert!(!allowed("/health", &status, "%3"));
+
+        // A message to another agent, only as its own pane.
+        let send = |from: &str| {
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "agent/send",
+                    "params": { "from": from, "to": "%9", "text": "review this" } })
+        };
+        assert!(allowed("/rpc", &send("%3"), "%3"));
+        assert!(!allowed("/rpc", &send("%4"), "%3"), "never as another pane");
+        for method in [
+            "tmux.capture_pane",
+            "inject",
+            "queue/send",
+            "agentState/update",
+        ] {
+            let call = json!({ "jsonrpc": "2.0", "id": 1, "method": method,
+                               "params": { "pane_id": "%3", "from": "%3" } });
+            assert!(!allowed("/rpc", &call, "%3"), "{method}");
+        }
     }
 }

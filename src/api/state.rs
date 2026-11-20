@@ -39,6 +39,8 @@ pub struct StallRecord {
 /// Whether a pane's composer holds an unsent draft (`crate::switch::composer_has_draft`);
 /// tests swap it for a stub.
 pub type DraftProbe = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// Whether a typed prompt (`pane`, `text`) still sits unsent at the bottom of the pane.
+pub type UnsentProbe = Arc<dyn Fn(&str, &str) -> bool + Send + Sync>;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -67,6 +69,16 @@ pub struct ApiState {
     pub phone_prompt_token: Arc<super::phone::PhoneToken>,
     /// Draft check before the queue types into a pane.
     pub draft_probe: DraftProbe,
+    /// Check before the queue presses `Enter` again on a prompt the agent did not take.
+    pub unsent_probe: UnsentProbe,
+    /// The sleep and idle inhibitor held while agents work (`keep_awake`).
+    pub keep_awake: Arc<crate::keep_awake::KeepAwake>,
+    /// Where the prompts not typed yet are saved (`None`: memory only, as in tests).
+    pub queue_file: Option<Arc<std::path::PathBuf>>,
+    /// The last snapshot written to `queue_file`.
+    pub queue_saved: Arc<tokio::sync::Mutex<Option<super::queue_store::SavedPanes>>>,
+    /// When each pane last sent messages to other agents (`super::mail`), for the rate limit.
+    pub mail_sent: Arc<tokio::sync::Mutex<super::mail::Sent>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -80,6 +92,8 @@ pub struct Settings {
     pub phone: Option<crate::config::PhoneConfig>,
     /// Checkpoints kept per pane; `None` takes none.
     pub checkpoint_keep: Option<usize>,
+    /// Hold a sleep and idle inhibitor while an agent works (`keep_awake`, default on).
+    pub keep_awake: bool,
 }
 
 impl Settings {
@@ -104,6 +118,7 @@ impl Settings {
                 ),
                 Some(_) => None,
             },
+            keep_awake: config.keep_awake.unwrap_or(true),
         }
     }
 }
@@ -120,6 +135,7 @@ impl ApiState {
                 approvals: None,
                 phone: None,
                 checkpoint_keep: None,
+                keep_awake: false,
             })),
             pane_states: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             next_seq: Arc::new(std::sync::atomic::AtomicU64::new(1)),
@@ -133,7 +149,25 @@ impl ApiState {
             phone_token: Arc::default(),
             phone_prompt_token: Arc::default(),
             draft_probe: Arc::new(crate::switch::composer_has_draft),
+            unsent_probe: Arc::new(super::queue::prompt_still_unsent),
+            keep_awake: Arc::default(),
+            queue_file: None,
+            queue_saved: Arc::default(),
+            mail_sent: Arc::default(),
         }
+    }
+
+    /// Takes or releases the inhibitor to match the panes: held while one works.
+    pub async fn sync_keep_awake(&self) {
+        let busy = self.settings().keep_awake
+            && self
+                .pane_states
+                .lock()
+                .await
+                .values()
+                .any(|i| crate::keep_awake::holds_lock(&i.state));
+        let k = self.keep_awake.clone();
+        let _ = tokio::task::spawn_blocking(move || k.set(busy)).await;
     }
 
     pub fn settings(&self) -> Settings {
@@ -205,6 +239,7 @@ impl ApiState {
                     let mut stalls = self.stall_records.lock().await;
                     stalls.remove(&pane_id);
                 }
+                self.sync_keep_awake().await;
             }
         }
     }
@@ -597,6 +632,7 @@ pub(crate) async fn dispatch_update(state: &ApiState, update: IncomingUpdate) {
     }
 
     super::queue::on_state(state, &update.pane_id, &update.state).await;
+    state.sync_keep_awake().await;
     // The end of a turn (or a stop on a prompt): save the pane's work tree.
     if prev_state.as_ref().is_some_and(AgentState::is_busy)
         && (update.state == AgentState::Permission
