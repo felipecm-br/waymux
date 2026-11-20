@@ -11,7 +11,11 @@ targets = [
 
 [advisories]
 # Every RustSec advisory (vulnerable, unmaintained, unsound, yanked) fails the check.
-ignore = []
+ignore = [
+  # chrono is unmaintained (2026-11-20) and has no safe upgrade; waymux only formats and parses
+  # timestamps with it. Remove once the quota and launch code moves to jiff.
+  { id = "RUSTSEC-2026-0543", reason = "unmaintained, no replacement release; migration to jiff pending" },
+]
 
 [licenses]
 allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]

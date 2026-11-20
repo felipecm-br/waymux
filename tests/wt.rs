@@ -680,11 +680,13 @@ fn old_worktree(env: &Env, name: &str, days: u64) -> std::path::PathBuf {
         .unwrap();
     assert!(out.status.success(), "{out:?}");
     let index = git_in(env, &wt, &["rev-parse", "--absolute-git-dir"]) + "/index";
-    let touch = std::process::Command::new("touch")
-        .args(["-d", &format!("@{then}"), &index])
-        .status()
+    // Not `touch -d @…`: BSD touch (macOS) has no `@epoch` form.
+    std::fs::File::options()
+        .write(true)
+        .open(&index)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(then))
         .unwrap();
-    assert!(touch.success());
     wt
 }
 
