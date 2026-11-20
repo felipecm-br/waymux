@@ -853,10 +853,13 @@ fn agents_message_each_other_through_the_queue() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // Wait for the whole message, its last line included: the fake agent writes it line by line.
+    let answer_line = format!("waymux tell {asker}");
     assert!(
-        eventually(|| std::fs::read_to_string(&input)
-            .unwrap_or_default()
-            .contains("│ please review src/auth.rs")),
+        eventually(|| {
+            let typed = std::fs::read_to_string(&input).unwrap_or_default();
+            typed.contains("│ please review src/auth.rs") && typed.contains(&answer_line)
+        }),
         "message never typed: {:?}",
         std::fs::read_to_string(&input)
     );
