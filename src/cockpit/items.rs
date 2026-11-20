@@ -745,7 +745,7 @@ pub fn generate_items(filter_agents: bool, orig_sess: &str, orig_win: &str) -> S
     }
 
     let need_origin = cur_session.is_empty() || cur_window.is_empty();
-    let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}";
+    let fmt = "#{session_name}\x1f#{window_index}\x1f#{window_name}\x1f#{pane_id}\x1f#{pane_pid}\x1f#{pane_current_path}\x1f#{pane_current_command}\x1f#{pane_title}\x1f#{?@ai_agent_state_raw,#{@ai_agent_state_raw},#{@w:@ai_agent_state_raw}}\x1f#{?@ai_agent_title,#{@ai_agent_title},#{@w:@ai_agent_title}}\x1f#{@awt_fan}";
 
     let (tmux_raw, acpd_map, (sess_agent, sess_etimes), theme, reg) = std::thread::scope(|scope| {
         let tmux_h = scope.spawn(move || {
@@ -901,6 +901,20 @@ struct PaneSources<'a> {
     git: &'a HashMap<String, GitMetadata>,
 }
 
+/// `󰘬2/3` for an attempt of a fan (`@awt_fan` = `<n>/<N>`, digits only), so the attempts of a
+/// running fan read as one group in the Cockpit.
+fn fan_badge(reg: &Registry, fan: &str) -> Option<String> {
+    let (n, total) = fan.split_once('/')?;
+    let digits = |s: &str| !s.is_empty() && s.len() <= 2 && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(n) || !digits(total) {
+        return None;
+    }
+    Some(format!(
+        "{}{n}/{total}",
+        reg.program("fan").unwrap_or("\u{f062c}")
+    ))
+}
+
 /// One row per pane of `tmux list-panes` (fields split by 0x1f), sorted waiting agents first.
 fn build_rows(
     list_out: &str,
@@ -933,6 +947,8 @@ fn build_rows(
         let ptitle = fields[7];
         let raw_state = fields[8];
         let ai_title = fields[9];
+        // `awt-fan new` tags each attempt's pane `@awt_fan` = `<n>/<N>`.
+        let fan = fields.get(10).map_or("", |f| f.trim());
 
         let detected_agent = sources
             .sess_agent
@@ -1006,11 +1022,14 @@ fn build_rows(
             ""
         };
 
-        let clean_label = raw_label
+        let mut clean_label = raw_label
             .replace(['\t', '\r', '\n'], " ")
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
+        if let Some(badge) = fan_badge(reg, fan) {
+            clean_label = format!("{badge} {clean_label}");
+        }
         let short_label = truncate_chars(&clean_label, 24);
 
         let is_cur = sess == cur_session && idx == cur_window;
@@ -2080,6 +2099,31 @@ mod tests {
             !rows[7].contains("󰀏"),
             "non-agent row in /shared keeps normal branch glyph"
         );
+    }
+
+    #[test]
+    fn test_fan_attempts_carry_their_badge() {
+        let line = |pane: &str, fan: &str| {
+            ["dev", "1", "w", pane, "0", "", "claude", "", "", "", fan].join("\x1f")
+        };
+        let list_out = [line("%1", "2/3"), line("%2", "x/3"), line("%3", "")].join("\n");
+        let sources = PaneSources {
+            agent_states: &HashMap::new(),
+            sess_agent: &HashMap::new(),
+            sess_etimes: &HashMap::new(),
+            git: &HashMap::new(),
+        };
+        let rows = build_rows(&list_out, &sources, &Registry::builtin(), 0, ("", ""));
+        let label = |pane: &str| {
+            rows.iter()
+                .find(|r| r.pid == pane)
+                .map(|r| r.agent_label.clone())
+                .unwrap()
+        };
+        assert_eq!(label("%1"), "\u{f062c}2/3 claude");
+        assert_eq!(label("%2"), "claude", "a malformed tag is ignored");
+        assert_eq!(label("%3"), "claude");
+        assert_eq!(fan_badge(&Registry::builtin(), "123/4"), None);
     }
 
     #[test]

@@ -19,6 +19,7 @@ const DEFAULT_PROGRAMS: &[(&str, &str)] = &[
     ("claude", ""),
     ("codex", ""),
     ("devin", ""),
+    ("fan", "\u{f062c}"),
     ("muse", "󱚣"),
     ("opencode", "󰅪"),
 ];

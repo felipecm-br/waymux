@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+- **Fan attempts carry a badge in the Cockpit (`src/cockpit/items.rs`, `src/icons.rs`)**: the attempts of a running `awt-fan` read as unrelated agents. A pane tagged `@awt_fan` = `<n>/<N>` (digits only; `awt-fan new` sets it) now shows `󰘬2/3` before its label; the glyph is the `fan` key of the icon registry (`[icons] fan` overrides it). No column is added and no key changes (P10).
+
 ## [0.15.0] - 2026-11-20
 
 - **`waymux send-file <pane> <file | --clipboard>` (`src/send_file.rs`)**: a local path means nothing to an agent on another host. For a pane running `ssh` the file (or the clipboard image, from `wl-paste`, `xclip` or `pngpaste`) is copied over that connection into `~/.cache/waymux/drop/` on the remote host (0600 in a 0700 folder, under a sanitized, stamped name, so nothing lands outside it); for a local pane the local path is used. The path is then typed into the prompt, quoted and without Enter, so it joins the draft. Up to 64 MiB; `--print` prints the path instead. Tested on a local pane; the upload is not yet tested against a live SSH host. Idea from Rex's drag-and-drop upload.
