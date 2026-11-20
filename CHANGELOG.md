@@ -4,6 +4,8 @@ All notable changes to **Waymux** are documented in this file.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-20
+
 - **Messages between agents: `waymux tell <pane> <text | ->` and `agent/send` (`src/api/mail.rs`, `src/verbs.rs`, `src/api/hook_tokens.rs`)**: an agent could only reach another by typing into it. `tell` puts a message in the recipient's delivery queue (typed only at rest, never into a turn, a prompt or a draft), framed: the sending pane and window, a line saying it is another agent's text and not the user's, every line behind a `│ ` gutter, and the command that answers. Escapes and invisible characters are stripped; 4 KiB per message and 6 per minute per sender; the recipient must be a tracked agent pane. A hook token may send only as its own pane (403 otherwise, and still on `tmux.*` and `inject`); starting agents stays out of its reach, since a jailed agent would start one outside the jail. An integration test has one agent ask another for a review and get the answer through the queue (P9; idea from TUIOS mail, herdr and agent-deck's scoped tokens).
 
 - **Fan attempts carry a badge in the Cockpit (`src/cockpit/items.rs`, `src/icons.rs`)**: the attempts of a running `awt-fan` read as unrelated agents. A pane tagged `@awt_fan` = `<n>/<N>` (digits only; `awt-fan new` sets it) now shows `󰘬2/3` before its label; the glyph is the `fan` key of the icon registry (`[icons] fan` overrides it). No column is added and no key changes (P10).
