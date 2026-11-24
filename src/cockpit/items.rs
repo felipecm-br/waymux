@@ -40,7 +40,7 @@ const AGENT_NAMES: &[&str] = &[
 ];
 
 pub fn is_agent_binary_name(name: &str) -> bool {
-    AGENT_NAMES.contains(&name)
+    AGENT_NAMES.contains(&name.strip_suffix(".exe").unwrap_or(name))
 }
 
 pub fn contains_agent_name(title: &str) -> bool {

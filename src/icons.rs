@@ -22,6 +22,7 @@ const DEFAULT_PROGRAMS: &[(&str, &str)] = &[
     ("fan", "\u{f062c}"),
     ("muse", "󱚣"),
     ("opencode", "󰅪"),
+    ("opencode.exe", "󰅪"),
 ];
 
 const DEFAULT_STATES: &[(&str, &str)] = &[

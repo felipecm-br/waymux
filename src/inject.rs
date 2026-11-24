@@ -27,6 +27,7 @@ pub fn sanitize_workspace_key(path: &str) -> String {
 }
 
 pub(crate) fn is_agent_command(cmd: &str) -> bool {
+    let cmd = cmd.strip_suffix(".exe").unwrap_or(cmd);
     matches!(
         cmd,
         "agy"
