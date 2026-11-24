@@ -892,6 +892,43 @@ fn agents_message_each_other_through_the_queue() {
         .to_string();
     assert_eq!(wm(&asker, &["tell", &shell, "hi"]).status.code(), Some(1));
 
+    // A freshly opened known agent (e.g. Codex before its first hook fires) is accepted by
+    // foreground command (`#{pane_current_command}`) and receives the framed message.
+    let cold_bin = env.dir.join("bin/codex");
+    let cold_log = env.dir.join("codex-cold.in");
+    std::os::unix::fs::symlink(common::which("cat"), &cold_bin).unwrap();
+    let cold_cmd = format!("exec '{}' > '{}'", cold_bin.display(), cold_log.display());
+    let cold = tmux
+        .run(&["split-window", "-d", "-P", "-F", "#{pane_id}", &cold_cmd])
+        .trim()
+        .to_string();
+    assert!(eventually(|| {
+        tmux.run(&[
+            "display-message",
+            "-p",
+            "-t",
+            &cold,
+            "#{pane_current_command}",
+        ])
+        .trim()
+            == "codex"
+    }));
+    let cold_out = wm(&asker, &["tell", &cold, "wake up codex"]);
+    assert!(
+        cold_out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cold_out.stderr)
+    );
+    assert!(
+        eventually(|| {
+            std::fs::read_to_string(&cold_log)
+                .unwrap_or_default()
+                .contains("│ wake up codex")
+        }),
+        "cold-start agent never received message: {:?}",
+        std::fs::read_to_string(&cold_log)
+    );
+
     // A hook token: agent/send as itself only; tmux.* and inject refused with 403.
     let token = String::from_utf8_lossy(&wm(&asker, &["hook-token", &asker]).stdout)
         .trim()
@@ -934,6 +971,42 @@ fn agents_message_each_other_through_the_queue() {
             r#"{"jsonrpc":"2.0","id":1,"method":"inject","params":{"workspace":"/","prompt":"x"}}"#;
         assert_eq!(http_code(inject), "403");
     }
+
+    // Drop the leftover "ok" probe from reviewer's queue, then verify `waymux mcp` delivers
+    // a framed peer message via tools/call `waymux_tell`.
+    wm(&asker, &["queue", "rm", &reviewer]);
+    let mcp_in = format!(
+        concat!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{{\"protocolVersion\":\"2024-11-05\"}}}}\n",
+            "{{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}}\n",
+            "{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"waymux_tell\",\"arguments\":{{\"pane\":\"{reviewer}\",\"text\":\"hello over mcp\"}}}}}}\n"
+        ),
+        reviewer = reviewer
+    );
+    let mut mcp = env
+        .command(&["mcp"])
+        .env("WAYMUX_PORT", port.to_string())
+        .env("TMUX_PANE", &asker)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    mcp.stdin
+        .take()
+        .unwrap()
+        .write_all(mcp_in.as_bytes())
+        .unwrap();
+    let mcp_out = mcp.wait_with_output().unwrap();
+    assert!(mcp_out.status.success());
+    let mcp_stdout = String::from_utf8_lossy(&mcp_out.stdout);
+    assert!(
+        mcp_stdout.contains("\"isError\":false"),
+        "mcp response: {mcp_stdout}"
+    );
+    set(&reviewer, "idle");
+    assert!(eventually(|| std::fs::read_to_string(&input)
+        .unwrap_or_default()
+        .contains("│ hello over mcp")));
 }
 
 /// `waymux mute` toggles the window option the adapters read, and `--status` reports it.

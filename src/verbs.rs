@@ -196,6 +196,19 @@ fn unreachable(command: &str) -> i32 {
     exit::UNREACHABLE
 }
 
+fn sandbox_blocked(command: &str) -> i32 {
+    let hint = if command == "tell" {
+        "use the waymux_tell MCP tool or re-run outside the network sandbox"
+    } else {
+        "re-run outside the network sandbox"
+    };
+    eprintln!(
+        "waymux {command}: connection to 127.0.0.1:{} was blocked by a sandbox (permission denied); {hint}",
+        crate::rpc_client::daemon_port()
+    );
+    exit::UNREACHABLE
+}
+
 fn usage(spec: &str) -> i32 {
     eprintln!("Usage: waymux {spec}");
     exit::USAGE
@@ -264,6 +277,7 @@ pub fn wait_cli(args: &[String]) -> i32 {
         secs.saturating_mul(1000).saturating_add(3000),
     ) {
         Ok(result) => result,
+        Err(CallError::Blocked) => return sandbox_blocked("wait"),
         Err(CallError::Unreachable) => return unreachable("wait"),
         Err(CallError::Rejected(reason)) => {
             eprintln!("waymux wait: {reason}");
@@ -340,6 +354,7 @@ fn wait_for(pane: &str, state: &str, secs: u64) -> Result<bool, i32> {
             }
             _ => Ok(false),
         },
+        Err(CallError::Blocked) => Err(sandbox_blocked("goal")),
         Err(CallError::Unreachable) => Err(unreachable("goal")),
         Err(CallError::Rejected(reason)) => {
             eprintln!("waymux goal: {reason}");
@@ -648,6 +663,7 @@ pub fn tell_cli(args: &[String]) -> i32 {
             println!("queued for {to} (position {position}); it is typed once that agent rests");
             exit::OK
         }
+        Err(crate::rpc_client::CallError::Blocked) => sandbox_blocked("tell"),
         Err(crate::rpc_client::CallError::Unreachable) => unreachable("tell"),
         Err(crate::rpc_client::CallError::Rejected(code)) => {
             let why = match code.as_str() {
@@ -1015,6 +1031,7 @@ pub fn api_cli(args: &[String]) -> i32 {
                     print_json(&result);
                     exit::OK
                 }
+                Err(CallError::Blocked) => sandbox_blocked("api"),
                 Err(CallError::Unreachable) => unreachable("api"),
                 Err(CallError::Rejected(reason)) => {
                     eprintln!("waymux api: {reason}");

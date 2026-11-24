@@ -109,6 +109,20 @@ pub fn take_rate(sent: &mut Sent, from: &str, now: u64) -> bool {
     true
 }
 
+/// Fallback for an agent that just opened and has not fired its first hook yet (Codex defers
+/// `SessionStart` until its first turn). Checks `#{pane_current_command}` strictly against
+/// known agent binaries — never shells, editors, or generic runtimes.
+fn pane_runs_known_agent(pane: &str) -> bool {
+    crate::tmux_cmd::tmux_out(&[
+        "display-message",
+        "-p",
+        "-t",
+        pane,
+        "#{pane_current_command}",
+    ])
+    .is_some_and(|cmd| crate::inject::is_agent_command(cmd.trim()))
+}
+
 /// Queues `text` from agent pane `from` for agent pane `to`. Returns the queue id and position.
 pub async fn send(
     state: &ApiState,
@@ -116,6 +130,25 @@ pub async fn send(
     to: &str,
     text: &str,
 ) -> Result<(u64, usize), SendError> {
+    send_with(state, from, to, text, |pane| async move {
+        tokio::task::spawn_blocking(move || pane_runs_known_agent(&pane))
+            .await
+            .unwrap_or(false)
+    })
+    .await
+}
+
+async fn send_with<F, Fut>(
+    state: &ApiState,
+    from: &str,
+    to: &str,
+    text: &str,
+    is_live_agent: F,
+) -> Result<(u64, usize), SendError>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
     use super::hook_tokens::valid_pane;
     if !valid_pane(from) || !valid_pane(to) {
         return Err(SendError::BadPane);
@@ -130,12 +163,27 @@ pub async fn send(
     if text.len() > MAX_MESSAGE_BYTES {
         return Err(SendError::TooLarge);
     }
-    let known = state
+    let state_opt = state
         .pane_states
         .lock()
         .await
         .get(to)
-        .is_some_and(|i| i.state != AgentState::Closed);
+        .map(|i| i.state.clone());
+    let known = match state_opt {
+        Some(AgentState::Closed) | None => {
+            if is_live_agent(to.to_string()).await {
+                if matches!(state_opt, Some(AgentState::Closed)) {
+                    // A new agent was launched in the same pane after the previous one exited:
+                    // drop the stale Closed record so the delivery queue treats it as at rest.
+                    state.pane_states.lock().await.remove(to);
+                }
+                true
+            } else {
+                false
+            }
+        }
+        Some(_) => true,
+    };
     if !known {
         return Err(SendError::NotAnAgent);
     }
@@ -239,15 +287,17 @@ mod tests {
             Err(SendError::TooLarge)
         );
         assert_eq!(
-            send(&state, "%1", "%9", "hi").await,
+            send_with(&state, "%1", "%9", "hi", |_| async { false }).await,
             Err(SendError::NotAnAgent)
         );
         assert_eq!(
-            send(&state, "%1", "%6", "hi").await,
+            send_with(&state, "%1", "%6", "hi", |_| async { false }).await,
             Err(SendError::NotAnAgent)
         );
 
-        let (_, position) = send(&state, "%1", "%5", "please review").await.unwrap();
+        let (_, position) = send_with(&state, "%1", "%5", "please review", |_| async { false })
+            .await
+            .unwrap();
         assert_eq!(position, 1);
         let queued = crate::api::queue_list_for_tests(&state, "%5").await;
         assert_eq!(queued[0]["by"], "agent:%1");
@@ -256,5 +306,26 @@ mod tests {
         assert!(text.contains("waymux tell %1"));
         // Still working: nothing typed into the turn.
         assert_eq!(queued[0]["status"], "queued");
+
+        // A freshly opened known agent pane (no hook reported yet) is accepted when tmux
+        // reports a known agent command, and a restarted agent in a previously Closed pane
+        // clears the stale Closed state so the queue can deliver.
+        let (_, cold_pos) = send_with(&state, "%1", "%8", "wake up", |_| async { true })
+            .await
+            .unwrap();
+        assert_eq!(cold_pos, 1);
+        let cold_queued = crate::api::queue_list_for_tests(&state, "%8").await;
+        assert_eq!(cold_queued[0]["by"], "agent:%1");
+        assert!(
+            cold_queued[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("│ wake up")
+        );
+        let (_, restarted_pos) = send_with(&state, "%1", "%6", "restarted", |_| async { true })
+            .await
+            .unwrap();
+        assert_eq!(restarted_pos, 1);
+        assert!(state.pane_states.lock().await.get("%6").is_none());
     }
 }

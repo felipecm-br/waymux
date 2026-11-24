@@ -26,7 +26,7 @@ pub fn sanitize_workspace_key(path: &str) -> String {
         .collect()
 }
 
-fn is_agent_command(cmd: &str) -> bool {
+pub(crate) fn is_agent_command(cmd: &str) -> bool {
     matches!(
         cmd,
         "agy"

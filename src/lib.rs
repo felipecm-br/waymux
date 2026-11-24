@@ -18,6 +18,7 @@ pub mod inject;
 pub mod keep_awake;
 pub mod keylog;
 pub mod launch;
+pub mod mcp;
 pub mod mute;
 pub mod pid;
 pub mod presets;
@@ -165,6 +166,12 @@ const COMMANDS: &[CommandSpec] = &[
         name: "tell",
         usage: "tell <pane> <text | ->",
         about: "Send the agent in a pane a message from this one, through its queue",
+        plumbing: false,
+    },
+    CommandSpec {
+        name: "mcp",
+        usage: "mcp",
+        about: "Run a stdio MCP server exposing waymux_list and waymux_tell to sandboxed agents",
         plumbing: false,
     },
     CommandSpec {
@@ -443,6 +450,7 @@ pub fn entry() -> anyhow::Result<()> {
         "events" => Some(verbs::events_cli(&args[2..])),
         "report" => Some(verbs::report_cli(&args[2..])),
         "tell" => Some(verbs::tell_cli(&args[2..])),
+        "mcp" => Some(mcp::run_cli(&args[2..])),
         "api" => Some(verbs::api_cli(&args[2..])),
         "checkpoint" | "checkpoints" => Some(checkpoint::run_cli(&args[2..])),
         "window-create" => Some(cockpit::actions::run_window_create()),

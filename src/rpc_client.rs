@@ -49,17 +49,34 @@ pub fn read_token() -> Option<String> {
     None
 }
 
-fn http_request(
+#[derive(Debug, PartialEq, Eq)]
+enum HttpError {
+    /// Connecting to loopback was denied by a sandbox (Linux seccomp/Landlock EPERM/EACCES).
+    Blocked,
+    Unreachable,
+}
+
+fn is_sandbox_blocked(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::PermissionDenied
+}
+
+fn http_request_result(
     method: &str,
     path: &str,
     port: u16,
     token: Option<&str>,
     body: Option<&str>,
     timeout_ms: u64,
-) -> Option<(u16, String)> {
+) -> Result<(u16, String), HttpError> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let timeout = Duration::from_millis(timeout_ms);
-    let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
+    let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|e| {
+        if is_sandbox_blocked(&e) {
+            HttpError::Blocked
+        } else {
+            HttpError::Unreachable
+        }
+    })?;
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
 
@@ -81,19 +98,35 @@ fn http_request(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{auth_header}{content_headers}Connection: close\r\n\r\n{body_str}"
     );
 
-    stream.write_all(req.as_bytes()).ok()?;
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|_| HttpError::Unreachable)?;
     let mut resp = Vec::new();
     let _ = stream.read_to_end(&mut resp);
     let resp_str = String::from_utf8_lossy(&resp);
 
-    let (headers, resp_body) = resp_str.split_once("\r\n\r\n")?;
-    let status_line = headers.lines().next()?;
+    let (headers, resp_body) = resp_str
+        .split_once("\r\n\r\n")
+        .ok_or(HttpError::Unreachable)?;
+    let status_line = headers.lines().next().ok_or(HttpError::Unreachable)?;
     let status_code = status_line
         .split_whitespace()
         .nth(1)
-        .and_then(|s| s.parse::<u16>().ok())?;
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or(HttpError::Unreachable)?;
 
-    Some((status_code, resp_body.to_string()))
+    Ok((status_code, resp_body.to_string()))
+}
+
+fn http_request(
+    method: &str,
+    path: &str,
+    port: u16,
+    token: Option<&str>,
+    body: Option<&str>,
+    timeout_ms: u64,
+) -> Option<(u16, String)> {
+    http_request_result(method, path, port, token, body, timeout_ms).ok()
 }
 
 pub fn http_get_json(port: u16, path: &str, timeout_ms: u64) -> Option<(u16, serde_json::Value)> {
@@ -195,6 +228,8 @@ pub fn fetch_agent_states() -> HashMap<String, AgentPaneEntry> {
 pub enum CallError {
     /// No token, no daemon, or no answer in time.
     Unreachable,
+    /// Connecting to loopback was denied by a sandbox (EPERM / `PermissionDenied`).
+    Blocked,
     /// The daemon answered with a JSON-RPC error; the message is its reason.
     Rejected(String),
 }
@@ -212,8 +247,19 @@ pub fn rpc_call(
         "params": params,
         "id": 1
     });
-    let (_, body) = http_post_json(daemon_port(), "/rpc", Some(&token), &payload, timeout_ms)
-        .ok_or(CallError::Unreachable)?;
+    let payload_body = serde_json::to_string(&payload).map_err(|_| CallError::Unreachable)?;
+    let (_, body) = http_request_result(
+        "POST",
+        "/rpc",
+        daemon_port(),
+        Some(&token),
+        Some(&payload_body),
+        timeout_ms,
+    )
+    .map_err(|e| match e {
+        HttpError::Blocked => CallError::Blocked,
+        HttpError::Unreachable => CallError::Unreachable,
+    })?;
     let val: serde_json::Value = serde_json::from_str(&body).map_err(|_| CallError::Unreachable)?;
     if let Some(err) = val.get("error") {
         let msg = err
@@ -252,8 +298,8 @@ pub fn post_agent_status_with_session(
 }
 
 pub fn check_health_cli() -> i32 {
-    match http_request("GET", "/health", daemon_port(), None, None, 1500) {
-        Some((200, body)) => {
+    match http_request_result("GET", "/health", daemon_port(), None, None, 1500) {
+        Ok((200, body)) => {
             let trimmed = body.trim();
             if trimmed.is_empty() {
                 println!("healthy");
@@ -262,11 +308,18 @@ pub fn check_health_cli() -> i32 {
             }
             0
         }
-        Some((code, _)) => {
+        Ok((code, _)) => {
             eprintln!("unhealthy: unexpected HTTP {code} from waymux daemon");
             1
         }
-        None => {
+        Err(HttpError::Blocked) => {
+            eprintln!(
+                "waymux health: connection to 127.0.0.1:{} was blocked by a sandbox (permission denied); re-run outside the network sandbox",
+                daemon_port()
+            );
+            1
+        }
+        Err(HttpError::Unreachable) => {
             eprintln!(
                 "waymux daemon is not running or unreachable on port {}",
                 daemon_port()
@@ -324,6 +377,13 @@ pub fn hook_token_cli(args: &[String]) -> i32 {
             eprintln!("waymux hook-token: {reason}");
             1
         }
+        Err(CallError::Blocked) => {
+            eprintln!(
+                "waymux hook-token: connection to 127.0.0.1:{} was blocked by a sandbox (permission denied)",
+                daemon_port()
+            );
+            1
+        }
         Err(CallError::Unreachable) => {
             eprintln!("waymux hook-token: the daemon is not running");
             1
@@ -340,6 +400,13 @@ pub fn phone_alert_cli() -> i32 {
         }
         Err(CallError::Rejected(reason)) => {
             eprintln!("waymux phone-alert: {reason}");
+            1
+        }
+        Err(CallError::Blocked) => {
+            eprintln!(
+                "waymux phone-alert: connection to 127.0.0.1:{} was blocked by a sandbox (permission denied)",
+                daemon_port()
+            );
             1
         }
         Err(CallError::Unreachable) => {
@@ -363,6 +430,13 @@ pub fn phone_token_cli(args: &[String]) -> i32 {
         Ok(result) => result["token"].as_str().unwrap_or_default().to_string(),
         Err(CallError::Rejected(reason)) => {
             eprintln!("waymux phone-token: {reason}");
+            return 1;
+        }
+        Err(CallError::Blocked) => {
+            eprintln!(
+                "waymux phone-token: connection to 127.0.0.1:{} was blocked by a sandbox (permission denied)",
+                daemon_port()
+            );
             return 1;
         }
         Err(CallError::Unreachable) => {
@@ -475,5 +549,18 @@ mod tests {
         assert_eq!(hook_token_cli(&["   ".into()]), 2);
         assert_eq!(daemon_port(), 4040);
         assert_eq!(dismiss_pane_cli(&[String::new()]), 0);
+    }
+
+    #[test]
+    fn test_is_sandbox_blocked_matches_permission_denied_only() {
+        assert!(is_sandbox_blocked(&std::io::Error::from(
+            std::io::ErrorKind::PermissionDenied
+        )));
+        assert!(!is_sandbox_blocked(&std::io::Error::from(
+            std::io::ErrorKind::ConnectionRefused
+        )));
+        assert!(!is_sandbox_blocked(&std::io::Error::from(
+            std::io::ErrorKind::TimedOut
+        )));
     }
 }

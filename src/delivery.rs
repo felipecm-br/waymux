@@ -176,7 +176,7 @@ fn dispatch_prompt_with(
             "too_large" => "the prompt is too large".into(),
             other => other.to_string(),
         }),
-        Err(CallError::Unreachable) => {
+        Err(CallError::Unreachable | CallError::Blocked) => {
             if let Some(state) = hook(pane).filter(|s| blocks_typing(s)) {
                 let doing = if matches!(state.as_str(), "working" | "busy") {
                     "mid-turn"
@@ -314,7 +314,7 @@ fn run_cli_with(
                     eprintln!("Not edited ({code}): only a prompt not typed yet can change");
                     1
                 }
-                Err(CallError::Unreachable) => {
+                Err(CallError::Unreachable | CallError::Blocked) => {
                     eprintln!("waymux daemon is not running");
                     1
                 }
@@ -344,7 +344,7 @@ fn run_cli_with(
                     eprintln!("Nothing to send for {pane} ({code})");
                     1
                 }
-                Err(CallError::Unreachable) => {
+                Err(CallError::Unreachable | CallError::Blocked) => {
                     eprintln!("waymux daemon is not running");
                     1
                 }

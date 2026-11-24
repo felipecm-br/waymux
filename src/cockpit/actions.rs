@@ -168,7 +168,7 @@ fn answer_held(pid: &str, held: &serde_json::Value, approve: bool, now: u64) -> 
             ));
             false
         }
-        Err(crate::rpc_client::CallError::Unreachable) => {
+        Err(crate::rpc_client::CallError::Unreachable | crate::rpc_client::CallError::Blocked) => {
             tmux_display_msg("Action ignored: waymux daemon is not running");
             false
         }
