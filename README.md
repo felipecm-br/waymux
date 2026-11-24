@@ -339,7 +339,24 @@ Blocking alerts (permission, question, stalled, error) within 1.5 s of each othe
 
 ### Messages between agents
 
-`waymux tell <pane> <text | ->` (`agent/send`) sends the agent in `<pane>` a message from the agent in `$TMUX_PANE`, through the recipient's delivery queue, so it is typed only while that agent rests. The typed text names the sending pane and window, says it is another agent's text and not the user's, puts every line behind a `│ ` gutter, and ends with the command that answers (`waymux tell <sender> "<your reply>"`). Escape sequences and invisible characters are removed; a message is at most 4 KiB, and a pane may send 6 a minute, which stops two agents from answering each other forever. The recipient must be a pane the daemon tracks as an agent. A sandboxed agent's hook token may send only as its own pane and still reaches nothing else (no `tmux.*`, no `inject`, no starting agents: one started from a jail would run outside it).
+`waymux tell <pane> <text | ->` (`agent/send`) sends the agent in `<pane>` a message from the agent in `$TMUX_PANE`, through the recipient's delivery queue, so it is typed only while that agent rests. The typed text names the sending pane and window, says it is another agent's text and not the user's, puts every line behind a `│ ` gutter, and ends with the command that answers (`waymux tell <sender> "<your reply>"`). Escape sequences and invisible characters are removed; a message is at most 4 KiB, and a pane may send 6 a minute, which stops two agents from answering each other forever. The recipient must be a pane the daemon tracks as an agent, or a freshly opened / restarted pane whose foreground command (`#{pane_current_command}`) is a known agent binary (`codex`, `claude`, `agy`, `opencode`, `devin`, etc.; shells and editors are always refused). A sandboxed agent's hook token may send only as its own pane and still reaches nothing else (no `tmux.*`, no `inject`, no starting agents: one started from a jail would run outside it).
+
+#### Sandboxed agents via stdio MCP (`waymux mcp`)
+
+Agents whose shell sandbox blocks loopback `127.0.0.1:4040` (such as Codex under `:workspace` with `network = restricted`) cannot call `waymux tell` from a shell command without relaxing their network sandbox. `waymux mcp` runs a synchronous stdio MCP server on the host exposing only `waymux_list` (read-only live agent panes across tmux sessions) and `waymux_tell` (framed `agent/send`). Example `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.waymux]
+command = "/home/user/.local/bin/waymux"
+args = ["mcp"]
+env_vars = ["TMUX_PANE", "TMUX", "WAYMUX_PORT", "XDG_RUNTIME_DIR"]
+
+[mcp_servers.waymux.tools.waymux_list]
+approval_mode = "approve"
+
+[mcp_servers.waymux.tools.waymux_tell]
+approval_mode = "approve"
+```
 
 ### Delivery queue
 
